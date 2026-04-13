@@ -1,26 +1,111 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #e7e0d5;
+  --foreground: #16232b;
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-soft: rgba(247, 244, 238, 0.76);
+  --line: rgba(22, 35, 43, 0.12);
+  --muted: #5d6870;
+  --brand: #d96f2b;
+  --accent: #0d6d7a;
+  --shadow: 0 24px 70px rgba(22, 35, 43, 0.08);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: var(--font-ibm-plex-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(217, 111, 43, 0.24), transparent 0, transparent 28%),
+    radial-gradient(circle at 84% 4%, rgba(13, 109, 122, 0.18), transparent 0, transparent 22%),
+    linear-gradient(180deg, #f3ede4 0%, #ece4d8 46%, #e2dbce 100%);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-space-grotesk), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(217, 111, 43, 0.2);
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 1.75rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.74) 100%);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.soft-panel {
+  border: 1px solid rgba(22, 35, 43, 0.08);
+  border-radius: 1.5rem;
+  background: var(--surface-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.data-table {
+  overflow-x: auto;
+}
+
+.data-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th {
+  padding-bottom: 0.85rem;
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.data-table td {
+  border-top: 1px solid rgba(22, 35, 43, 0.08);
+  padding: 0.95rem 0;
+  vertical-align: top;
+}
+
+.data-table td + td,
+.data-table th + th {
+  padding-left: 1rem;
+}
+
+.grid-lines {
+  background-image:
+    linear-gradient(rgba(22, 35, 43, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 35, 43, 0.04) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+.mono {
+  font-family: var(--font-ibm-plex-mono), monospace;
 }
