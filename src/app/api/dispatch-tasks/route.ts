@@ -7,11 +7,19 @@ import {
   confirmDispatchTask,
   createDispatchTask,
   listDispatchTasks,
-} from "@/lib/server/platform-service";
+} from "@/lib/server/platform";
+import {
+  requireApiPermission,
+  requireStaffApiPermission,
+  resolveAssetScope,
+  resolveDispatchTaskScope,
+} from "@/lib/server/authorization";
 
 export async function GET(request: Request) {
+  await requireStaffApiPermission(request, "dispatch.view");
+
   const { searchParams } = new URL(request.url);
-  const data = listDispatchTasks({
+  const data = await listDispatchTasks({
     status: searchParams.get("status") ?? undefined,
     branch: searchParams.get("branch") ?? undefined,
     type: searchParams.get("type") ?? undefined,
@@ -30,12 +38,31 @@ export async function POST(request: Request) {
     if ("outcome" in payload) {
       const parsedConfirm = dispatchConfirmationSchema.parse(payload);
       const taskId = String((payload as Record<string, unknown>).taskId ?? "");
-      const data = confirmDispatchTask(taskId, parsedConfirm);
+      const scope = await resolveDispatchTaskScope(taskId);
+
+      if (!scope) {
+        return ok({ error: "Dispatch task not found" }, { status: 404 });
+      }
+
+      const actor = await requireApiPermission(request, "dispatch.manage", {
+        branchId: scope.branchId ?? undefined,
+        customerId: scope.customerId ?? undefined,
+      });
+      const data = await confirmDispatchTask(taskId, parsedConfirm, actor.userId ?? undefined);
       return ok({ message: "Dispatch task confirmed.", data });
     }
 
     const parsed = dispatchTaskSchema.parse(payload);
-    const data = createDispatchTask(parsed);
+    const scope = await resolveAssetScope(parsed.assetNumber);
+
+    if (!scope) {
+      return ok({ error: "Asset not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "dispatch.manage", {
+      branchId: scope.branchId ?? undefined,
+    });
+    const data = await createDispatchTask(parsed, actor.userId ?? undefined);
     return created({ message: "Dispatch task created.", data });
   } catch (error) {
     return errorResponse(error);

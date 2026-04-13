@@ -22,6 +22,7 @@ export function SignatureExecutionForm({
   const [pending, startTransition] = useTransition();
   const [signatureText, setSignatureText] = useState(signerName);
   const [title, setTitle] = useState(signerTitle ?? "");
+  const [otpCode, setOtpCode] = useState("");
   const [intentAccepted, setIntentAccepted] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [certificationAccepted, setCertificationAccepted] = useState(false);
@@ -56,9 +57,28 @@ export function SignatureExecutionForm({
             className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
           />
         </label>
+
+        <label className="space-y-2 text-sm text-slate-700">
+          <span className="font-medium">Email verification code</span>
+          <input
+            value={otpCode}
+            onChange={(event) =>
+              setOtpCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+            }
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="6-digit code"
+            disabled={!canSign || pending}
+            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </label>
       </div>
 
       <div className="mt-5 space-y-3 text-sm text-slate-700">
+        <p className="rounded-2xl border border-[rgba(19,35,45,0.08)] bg-[rgba(255,255,255,0.7)] px-4 py-3 text-slate-600">
+          Metro Trailer emails a one-time verification code before the agreement
+          can be completed.
+        </p>
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -97,6 +117,7 @@ export function SignatureExecutionForm({
           disabled={
             !canSign ||
             pending ||
+            otpCode.length !== 6 ||
             !intentAccepted ||
             !consentAccepted ||
             !certificationAccepted
@@ -113,6 +134,7 @@ export function SignatureExecutionForm({
                 body: JSON.stringify({
                   signerId,
                   token,
+                  otpCode,
                   signatureText,
                   signerTitle: title || undefined,
                   intentAccepted: true,
@@ -138,6 +160,38 @@ export function SignatureExecutionForm({
           }
         >
           {pending ? "Recording..." : "Sign agreement"}
+        </button>
+        <button
+          type="button"
+          disabled={!canSign || pending}
+          className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() =>
+            startTransition(async () => {
+              setFeedback(null);
+              const response = await fetch(`/api/signatures/${signatureId}/otp`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  signerId,
+                  token,
+                }),
+              });
+
+              const result = (await response.json().catch(() => null)) as
+                | { message?: string; error?: string }
+                | null;
+
+              setFeedback(
+                response.ok
+                  ? (result?.message ?? "Verification code sent.")
+                  : (result?.error ?? "Unable to send verification code."),
+              );
+            })
+          }
+        >
+          {pending ? "Working..." : "Resend code"}
         </button>
       </div>
 

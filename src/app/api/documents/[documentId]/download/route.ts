@@ -1,5 +1,6 @@
 import { errorResponse } from "@/lib/server/api";
-import { getDocumentDownload } from "@/lib/server/esign-service";
+import { requireScopedResourceAccess, resolveDocumentScope } from "@/lib/server/authorization";
+import { getDocumentDownload } from "@/lib/server/esign";
 
 type DownloadDocumentRouteParams = {
   params: Promise<{
@@ -8,11 +9,22 @@ type DownloadDocumentRouteParams = {
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: DownloadDocumentRouteParams,
 ) {
   try {
     const { documentId } = await params;
+    const scope = await resolveDocumentScope(documentId);
+
+    if (!scope) {
+      return Response.json({ error: "Document not found" }, { status: 404 });
+    }
+
+    await requireScopedResourceAccess(request, scope, {
+      allowPortal: true,
+      portalPermission: "documents.view",
+      staffPermissions: ["documents.view", "contracts.view", "accounting.view"],
+    });
     const { document, body } = await getDocumentDownload(documentId);
 
     return new Response(new Uint8Array(body), {

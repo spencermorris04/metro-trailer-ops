@@ -1,9 +1,15 @@
 import { documentSchema } from "@/lib/domain/validators";
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
-import { requireApiPermission } from "@/lib/server/authorization";
+import {
+  requireApiPermission,
+  requireStaffApiPermission,
+  resolveContractScope,
+} from "@/lib/server/authorization";
 import { createDocument, listDocuments } from "@/lib/server/esign";
 
 export async function GET(request: Request) {
+  await requireStaffApiPermission(request, "documents.view");
+
   const { searchParams } = new URL(request.url);
   const contractNumber = searchParams.get("contractNumber") ?? undefined;
   const data = await listDocuments(contractNumber);
@@ -16,10 +22,19 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requireApiPermission(request, "documents.manage");
     const payload = await readJson(request);
     const parsed = documentSchema.parse(payload);
-    const data = await createDocument(parsed);
+    const scope = await resolveContractScope(parsed.contractNumber);
+
+    if (!scope) {
+      return ok({ error: "Contract not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "documents.manage", {
+      branchId: scope.branchId ?? undefined,
+      customerId: scope.customerId ?? undefined,
+    });
+    const data = await createDocument(parsed, actor.userId ?? undefined);
     return created({ message: "Document created.", data });
   } catch (error) {
     return errorResponse(error);

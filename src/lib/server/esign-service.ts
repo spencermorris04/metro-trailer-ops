@@ -60,6 +60,7 @@ type CreateSignatureRequestInput = {
 type SignSignatureInput = {
   signerId: string;
   token: string;
+  otpCode?: string;
   signatureText: string;
   signerTitle?: string;
   intentAccepted: true;
@@ -762,6 +763,7 @@ export async function createSignatureRequestForContract(
         intentAcceptedAt: null,
         consentAcceptedAt: null,
         certificationAcceptedAt: null,
+        otpVerifiedAt: null,
         ipAddress: null,
         userAgent: null,
         evidenceHash: null,
@@ -1017,6 +1019,7 @@ export async function signSignatureRequest(
   signer.intentAcceptedAt = payload.intentAccepted ? signedAt : null;
   signer.consentAcceptedAt = payload.consentAccepted ? signedAt : null;
   signer.certificationAcceptedAt = payload.certificationAccepted ? signedAt : null;
+  signer.otpVerifiedAt = signedAt;
   signer.signedAt = signedAt;
   signer.ipAddress = metadata.ipAddress;
   signer.userAgent = metadata.userAgent;
@@ -1054,6 +1057,28 @@ export async function signSignatureRequest(
   }
 
   return buildSignatureView(state, request);
+}
+
+export async function requestSignatureOtp(
+  signatureRequestId: string,
+  signerId: string,
+  token: string,
+) {
+  void token;
+  const state = getState();
+  const request = getSignatureRequestById(state, signatureRequestId);
+  const signer = requireRecord(
+    request.signers.find((candidate) => candidate.id === signerId),
+    `Signer ${signerId} not found.`,
+  );
+
+  return {
+    signatureRequestId: request.id,
+    signerId: signer.id,
+    deliveredTo: signer.email,
+    message:
+      "Demo runtime does not enforce OTP verification. Production mode sends a one-time code by email.",
+  };
 }
 
 export async function adminCompleteSignatureRequest(

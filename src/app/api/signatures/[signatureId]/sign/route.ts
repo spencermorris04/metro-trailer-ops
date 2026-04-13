@@ -3,7 +3,7 @@ import { errorResponse, ok, readJson } from "@/lib/server/api";
 import {
   getRequestMetadata,
   signSignatureRequest,
-} from "@/lib/server/esign-service";
+} from "@/lib/server/esign";
 
 type SignRouteParams = {
   params: Promise<{

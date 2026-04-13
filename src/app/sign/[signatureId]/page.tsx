@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { SignatureExecutionForm } from "@/components/signature-execution-form";
 import { StatusPill } from "@/components/status-pill";
-import { getSigningSession } from "@/lib/server/esign-service";
+import { getSigningSession } from "@/lib/server/esign";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +25,11 @@ async function loadSigningSession(options: {
 }) {
   try {
     return {
-      session: getSigningSession(options.signatureId, options.signer, options.token),
+      session: await getSigningSession(
+        options.signatureId,
+        options.signer,
+        options.token,
+      ),
       error: null,
     };
   } catch (error) {

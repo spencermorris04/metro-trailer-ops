@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import Link from "next/link";
 
 import { JsonActionButton } from "@/components/json-action-button";
@@ -5,52 +6,46 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate } from "@/lib/format";
-import {
-  listDocuments,
-  listSignatureRequests,
-} from "@/lib/server/esign";
-import { getPortalOverview, listCustomers } from "@/lib/server/platform";
+import type { PaymentTransactionRecord } from "@/lib/platform-types";
+import { getCurrentPortalOverview } from "@/lib/server/portal-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function PortalPage() {
-  const customers = await listCustomers();
-  const defaultCustomer =
-    customers.find((customer) => customer.portalEnabled) ?? customers[0];
+  const portalContext = await getCurrentPortalOverview(
+    new Headers(await headers()),
+  ).catch(() => null);
 
-  if (!defaultCustomer) {
+  if (!portalContext) {
     return (
       <>
         <PageHeader
-          eyebrow="Phase 6"
-          title="Customer portal for invoices, contracts, payments, and damage history"
-          description="No customer accounts are available in the current demo runtime."
+          eyebrow="Portal"
+          title="Customer account access is required"
+          description="Sign in with a customer portal account to view contracts, invoices, inspections, payments, and signed documents."
         />
       </>
     );
   }
 
-  const portal = await getPortalOverview(defaultCustomer.customerNumber);
-  const contractNumbers = new Set(portal.contracts.map((contract) => contract.contractNumber));
-  const portalDocuments = (await listDocuments()).filter((document) =>
-    contractNumbers.has(document.contractNumber),
-  );
-  const portalSignatures = (await listSignatureRequests()).filter((request) =>
-    contractNumbers.has(request.contractNumber),
-  );
+  const portal = portalContext;
+  const paymentHistory: PaymentTransactionRecord[] =
+    "paymentHistory" in portal && Array.isArray(portal.paymentHistory)
+      ? portal.paymentHistory
+      : [];
 
   return (
     <>
       <PageHeader
-        eyebrow="Phase 6"
+        eyebrow="Portal"
         title="Customer portal for invoices, contracts, payments, and damage history"
-        description="Customers can view contract status, open invoices, stored payment methods, inspection history, and the handoff points to Stripe-hosted payment and account management flows."
+        description="Customer-scoped access to rental status, invoices, payment activity, inspections, documents, and signature records."
         actions={
           <Link
             href={portal.portalSession.url}
             className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
           >
-            Open demo billing portal
+            Open billing portal
           </Link>
         }
       />
@@ -58,7 +53,7 @@ export default async function PortalPage() {
       <SectionCard
         eyebrow="Portal Account"
         title={portal.customer.name}
-        description="This page is currently wired to a demo customer account to exercise the portal flows end to end."
+        description="The portal account is scoped to its customer record and only exposes contracts, invoices, inspections, documents, and payments tied to that account."
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div className="soft-panel p-5">
@@ -89,9 +84,39 @@ export default async function PortalPage() {
       </SectionCard>
 
       <SectionCard
+        eyebrow="Contracts"
+        title="Rental status by site"
+        description="Contract visibility is limited to the locations and contracts assigned to this portal account."
+      >
+        <div className="grid gap-4 xl:grid-cols-2">
+          {portal.contracts.map((contract) => (
+            <div key={contract.id} className="soft-panel p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                    {contract.contractNumber}
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                    {contract.locationName}
+                  </h3>
+                </div>
+                <StatusPill label={contract.status} />
+              </div>
+              <div className="mt-4 space-y-2 text-sm text-slate-600">
+                <p>Branch: {contract.branch}</p>
+                <p>Assets: {contract.assets.join(", ") || "None assigned"}</p>
+                <p>Start: {formatDate(contract.startDate)}</p>
+                <p>End: {contract.endDate ? formatDate(contract.endDate) : "Open ended"}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
         eyebrow="Open Invoices"
         title="Self-service payment activity"
-        description="The pay action below creates a Stripe payment intent in demo mode and the record-payment endpoint updates invoice state in the platform."
+        description="Review open balances and trigger the portal payment flow for invoices assigned to this customer."
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {portal.invoices.map((invoice) => (
@@ -118,14 +143,73 @@ export default async function PortalPage() {
                   label="Create payment intent"
                   body={{ invoiceId: invoice.id }}
                 />
-                {invoice.balanceAmount > 0 ? (
+              </div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        eyebrow="Payment Methods"
+        title="Saved billing methods"
+        description="Default payment methods are customer-scoped and used by the Stripe-backed payment flow."
+      >
+        <div className="grid gap-4 xl:grid-cols-2">
+          {portal.paymentMethods.map((method) => (
+            <div key={method.id} className="soft-panel p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                    {method.provider}
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                    {method.label}
+                  </h3>
+                </div>
+                <StatusPill label={method.isDefault ? "default" : method.methodType} />
+              </div>
+              <div className="mt-4 space-y-2 text-sm text-slate-600">
+                <p>Type: {method.methodType}</p>
+                <p>Last four: {method.last4}</p>
+              </div>
+              {!method.isDefault ? (
+                <div className="mt-5">
                   <JsonActionButton
-                    endpoint={`/api/invoices/${invoice.id}/pay`}
-                    label="Apply demo payment"
-                    body={{ amount: Math.min(invoice.balanceAmount, 500) }}
+                    endpoint={`/api/payment-methods/${method.id}/default`}
+                    label="Set as default"
+                    body={{}}
                     variant="light"
                   />
-                ) : null}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        eyebrow="Payment History"
+        title="Recorded customer payment activity"
+        description="Stripe-backed payment attempts, applications, and refunds appear here as they are persisted to the platform ledger."
+      >
+        <div className="grid gap-4 xl:grid-cols-2">
+          {paymentHistory.map((payment) => (
+            <div key={payment.id} className="soft-panel p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                    {payment.invoiceNumber ?? "Unassigned"}
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                    {payment.transactionType}
+                  </h3>
+                </div>
+                <StatusPill label={payment.status} />
+              </div>
+              <div className="mt-4 space-y-2 text-sm text-slate-600">
+                <p>Amount: {formatCurrency(payment.amount)}</p>
+                <p>Method: {payment.paymentMethodLabel ?? "Unspecified"}</p>
+                <p>Created: {formatDate(payment.createdAt)}</p>
               </div>
             </div>
           ))}
@@ -166,7 +250,7 @@ export default async function PortalPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="space-y-4">
-            {portalDocuments.map((document) => (
+            {portal.documents.map((document) => (
               <div key={document.id} className="soft-panel p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -191,7 +275,7 @@ export default async function PortalPage() {
             ))}
           </div>
           <div className="space-y-4">
-            {portalSignatures.map((signature) => (
+            {portal.signatureRequests.map((signature) => (
               <div key={signature.id} className="soft-panel p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
