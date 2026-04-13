@@ -24,7 +24,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 ## Runtime Notes
 
 - The current application includes a broad demo runtime that exercises the end-to-end modules without requiring live third-party credentials.
-- Stripe, QuickBooks Online, Record360, SkyBitz, and AWS S3-backed storage are represented through integration adapters and job tracking. E-sign execution is now owned internally by Metro Trailer with signer tokens, consent capture, audit evidence, generated signature certificates, and S3-backed retained documents.
+- Stripe, QuickBooks Online, Record360, SkyBitz, and AWS S3-backed storage are represented through integration adapters and job tracking. QuickBooks now includes persisted OAuth connection state, external entity mappings, webhook receipt handling, replayable outbox jobs, and an accounting mismatch review queue. E-sign execution is now owned internally by Metro Trailer with signer tokens, consent capture, audit evidence, generated signature certificates, and S3-backed retained documents.
 - Generated PDFs now flow through the shared object-storage adapter. Contract packets, signed agreements, signature certificates, manually created documents, and invoice PDFs will store to S3 when `S3_BUCKET` and `S3_REGION` are configured, with inline demo fallback when they are not.
 - Optional S3 object-lock retention can be applied per upload through `S3_OBJECT_LOCK_MODE` and `S3_OBJECT_LOCK_DAYS`. Review your bucket configuration against AWS S3 Object Lock requirements before enabling it in production.
 - The App Router pages call the same server-side platform service used by the REST endpoints, so demo interactions from the UI and API stay aligned.
@@ -35,6 +35,12 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 - `npm run build` builds the production app.
 - `npm run lint` runs ESLint across the project.
 - `npm run typecheck` runs TypeScript without emitting files.
+- `npm test` runs the current unit and harness-level tests.
+- `npm run legacy:import` normalizes Dynamics/RMI exports into a dry-run Metro Trailer snapshot.
+- `npm run legacy:reconcile` compares a legacy snapshot against a production snapshot or live database.
+- `npm run perf:harness` runs the 50,000-asset synthetic benchmark and optional live endpoint latency checks.
+- `npm run security:audit` scans the API surface for auth, scope, and demo-runtime risks.
+- `npm run e2e:smoke` runs environment-driven smoke scenarios for lifecycle, portal, payments, and signatures.
 - `npm run db:generate` generates SQL migrations and Drizzle metadata from the TypeScript schema.
 - `npm run db:validate` checks the generated migration history against the current Drizzle schema.
 - `npm run db:push` syncs the schema directly to a database.
@@ -51,7 +57,11 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 - `src/lib/domain`: domain entities, validation rules, and lifecycle constraints
 - `src/lib/platform-data.ts`: seeded demo records and high-level platform content
 - `src/lib/server`: demo runtime store, platform services, integration adapters, API helpers, PDF generation, and AWS S3 object storage
+- `src/lib/legacy`: dry-run import normalization and parity-report helpers for legacy cutover
+- `src/lib/testing`: performance and security harnesses used during rollout validation
+- `scripts`: build, legacy import/reconciliation, performance, security audit, and smoke-test entrypoints
 - `docs/architecture.md`: architecture notes and phase-by-phase implementation mapping
+- `docs/cutover-playbook.md`: branch-by-branch rollout, reconciliation, performance, security, and rollback guidance
 
 ## Implementation Direction
 
