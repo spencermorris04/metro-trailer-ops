@@ -2,12 +2,12 @@ import { JsonActionButton } from "@/components/json-action-button";
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
-import { listWorkOrders } from "@/lib/server/platform-service";
+import { listWorkOrders } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function MaintenancePage() {
-  const workOrders = listWorkOrders();
+export default async function MaintenancePage() {
+  const workOrders = await listWorkOrders();
 
   return (
     <>

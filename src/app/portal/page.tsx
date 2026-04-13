@@ -5,12 +5,16 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { getPortalOverview, listCustomers } from "@/lib/server/platform-service";
+import {
+  listDocuments,
+  listSignatureRequests,
+} from "@/lib/server/esign";
+import { getPortalOverview, listCustomers } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
 export default async function PortalPage() {
-  const customers = listCustomers();
+  const customers = await listCustomers();
   const defaultCustomer =
     customers.find((customer) => customer.portalEnabled) ?? customers[0];
 
@@ -27,6 +31,13 @@ export default async function PortalPage() {
   }
 
   const portal = await getPortalOverview(defaultCustomer.customerNumber);
+  const contractNumbers = new Set(portal.contracts.map((contract) => contract.contractNumber));
+  const portalDocuments = (await listDocuments()).filter((document) =>
+    contractNumbers.has(document.contractNumber),
+  );
+  const portalSignatures = (await listSignatureRequests()).filter((request) =>
+    contractNumbers.has(request.contractNumber),
+  );
 
   return (
     <>
@@ -145,6 +156,64 @@ export default async function PortalPage() {
               </p>
             </div>
           ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        eyebrow="Documents and Signatures"
+        title="Downloadable records and signature status"
+        description="Customers can retrieve packet copies, signed agreements, and signature certificates from the same portal workspace."
+      >
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="space-y-4">
+            {portalDocuments.map((document) => (
+              <div key={document.id} className="soft-panel p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                      {document.documentType}
+                    </p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                      {document.filename}
+                    </h3>
+                  </div>
+                  <StatusPill label={document.status} />
+                </div>
+                <div className="mt-4">
+                  <Link
+                    href={`/api/documents/${document.id}/download`}
+                    className="text-sm font-semibold text-slate-900 underline"
+                  >
+                    Download document
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-4">
+            {portalSignatures.map((signature) => (
+              <div key={signature.id} className="soft-panel p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                      {signature.contractNumber}
+                    </p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                      {signature.title}
+                    </h3>
+                  </div>
+                  <StatusPill label={signature.status} />
+                </div>
+                <div className="mt-4 space-y-2 text-sm text-slate-600">
+                  {signature.signers.map((signer) => (
+                    <p key={signer.id}>
+                      {signer.name}: {signer.status}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </SectionCard>
     </>

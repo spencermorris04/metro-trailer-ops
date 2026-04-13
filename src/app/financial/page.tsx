@@ -6,13 +6,13 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import {
   listFinancialEvents,
   listInvoices,
-} from "@/lib/server/platform-service";
+} from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function FinancialPage() {
-  const events = listFinancialEvents();
-  const invoices = listInvoices();
+export default async function FinancialPage() {
+  const events = await listFinancialEvents();
+  const invoices = await listInvoices();
 
   return (
     <>

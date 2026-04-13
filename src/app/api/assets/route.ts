@@ -1,10 +1,11 @@
 import { assetSchema } from "@/lib/domain/validators";
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
-import { createAsset, listAssets } from "@/lib/server/platform-service";
+import { requireApiPermission } from "@/lib/server/authorization";
+import { createAsset, listAssets } from "@/lib/server/platform";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const data = listAssets({
+  const data = await listAssets({
     q: searchParams.get("q") ?? undefined,
     branch: searchParams.get("branch") ?? undefined,
     status: searchParams.get("status") ?? undefined,
@@ -19,9 +20,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    await requireApiPermission(request, "assets.manage");
     const payload = await readJson(request);
     const parsed = assetSchema.parse(payload);
-    const data = createAsset(parsed);
+    const data = await createAsset(parsed);
 
     return created({
       message: "Asset created.",

@@ -2,12 +2,12 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { integrationBlueprint } from "@/lib/platform-data";
-import { listIntegrationJobs } from "@/lib/server/platform-service";
+import { listIntegrationJobs } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function IntegrationsPage() {
-  const jobs = listIntegrationJobs();
+export default async function IntegrationsPage() {
+  const jobs = await listIntegrationJobs();
 
   return (
     <>

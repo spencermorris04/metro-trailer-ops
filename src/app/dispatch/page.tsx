@@ -2,12 +2,12 @@ import { JsonActionButton } from "@/components/json-action-button";
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
-import { listDispatchTasks } from "@/lib/server/platform-service";
+import { listDispatchTasks } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function DispatchPage() {
-  const tasks = listDispatchTasks();
+export default async function DispatchPage() {
+  const tasks = await listDispatchTasks();
 
   return (
     <>

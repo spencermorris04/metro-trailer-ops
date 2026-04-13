@@ -99,7 +99,7 @@ const integrationProviders = [
   "quickbooks",
   "record360",
   "skybitz",
-  "dropbox_sign",
+  "internal_esign",
   "internal",
 ] as const;
 
@@ -116,6 +116,112 @@ const integrationSyncStatuses = [
   "failed",
   "skipped",
 ] as const;
+
+const roleScopeTypes = ["global", "branch", "customer"] as const;
+
+const assetAllocationTypes = [
+  "reservation",
+  "on_rent",
+  "maintenance_hold",
+  "inspection_hold",
+  "swap_out",
+  "swap_in",
+] as const;
+
+const contractAmendmentTypes = [
+  "extension",
+  "asset_swap",
+  "partial_return",
+  "rate_adjustment",
+  "cancellation",
+  "note",
+] as const;
+
+const documentStatuses = [
+  "draft",
+  "ready_for_signature",
+  "signature_in_progress",
+  "signed",
+  "evidence_locked",
+  "archived",
+] as const;
+
+const documentSources = [
+  "internal_esign",
+  "record360_sync",
+  "invoice_generation",
+  "portal_upload",
+  "internal",
+] as const;
+
+const storageProviders = ["inline", "s3"] as const;
+
+const retentionModes = ["governance", "compliance"] as const;
+
+const signatureRequestStatuses = [
+  "sent",
+  "in_progress",
+  "partially_signed",
+  "completed",
+  "cancelled",
+  "expired",
+] as const;
+
+const signatureSignerStatuses = [
+  "pending",
+  "viewed",
+  "signed",
+  "declined",
+  "cancelled",
+  "expired",
+] as const;
+
+const collectionActivityTypes = [
+  "email",
+  "call",
+  "note",
+  "promise_to_pay",
+  "dispute",
+  "escalation",
+  "telematics_recovery",
+] as const;
+
+const paymentTransactionTypes = [
+  "payment_intent",
+  "charge",
+  "refund",
+  "credit_memo",
+  "payment_application",
+] as const;
+
+const paymentTransactionStatuses = [
+  "pending",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "refunded",
+] as const;
+
+const webhookProcessingStatuses = [
+  "received",
+  "processed",
+  "failed",
+  "ignored",
+] as const;
+
+const outboxJobStatuses = [
+  "pending",
+  "processing",
+  "succeeded",
+  "failed",
+  "dead_letter",
+] as const;
+
+const notificationChannels = ["email", "sms", "internal"] as const;
+
+const notificationStatuses = ["queued", "sent", "failed", "skipped"] as const;
+
+const signatureAccessTokenPurposes = ["sign", "otp"] as const;
 
 export const assetTypeEnum = pgEnum("asset_type", assetTypes);
 export const assetStatusEnum = pgEnum("asset_status", assetStatuses);
@@ -182,6 +288,59 @@ export const integrationSyncStatusEnum = pgEnum(
   "integration_sync_status",
   integrationSyncStatuses,
 );
+export const roleScopeTypeEnum = pgEnum("role_scope_type", roleScopeTypes);
+export const assetAllocationTypeEnum = pgEnum(
+  "asset_allocation_type",
+  assetAllocationTypes,
+);
+export const contractAmendmentTypeEnum = pgEnum(
+  "contract_amendment_type",
+  contractAmendmentTypes,
+);
+export const documentStatusEnum = pgEnum("document_status", documentStatuses);
+export const documentSourceEnum = pgEnum("document_source", documentSources);
+export const storageProviderEnum = pgEnum("storage_provider", storageProviders);
+export const retentionModeEnum = pgEnum("retention_mode", retentionModes);
+export const signatureRequestStatusEnum = pgEnum(
+  "signature_request_status",
+  signatureRequestStatuses,
+);
+export const signatureSignerStatusEnum = pgEnum(
+  "signature_signer_status",
+  signatureSignerStatuses,
+);
+export const collectionActivityTypeEnum = pgEnum(
+  "collection_activity_type",
+  collectionActivityTypes,
+);
+export const paymentTransactionTypeEnum = pgEnum(
+  "payment_transaction_type",
+  paymentTransactionTypes,
+);
+export const paymentTransactionStatusEnum = pgEnum(
+  "payment_transaction_status",
+  paymentTransactionStatuses,
+);
+export const webhookProcessingStatusEnum = pgEnum(
+  "webhook_processing_status",
+  webhookProcessingStatuses,
+);
+export const outboxJobStatusEnum = pgEnum(
+  "outbox_job_status",
+  outboxJobStatuses,
+);
+export const notificationChannelEnum = pgEnum(
+  "notification_channel",
+  notificationChannels,
+);
+export const notificationStatusEnum = pgEnum(
+  "notification_status",
+  notificationStatuses,
+);
+export const signatureAccessTokenPurposeEnum = pgEnum(
+  "signature_access_token_purpose",
+  signatureAccessTokenPurposes,
+);
 
 export const branches = pgTable(
   "branches",
@@ -210,6 +369,8 @@ export const customers = pgTable(
     customerType: customerTypeEnum().notNull(),
     contactInfo: jsonb().$type<Record<string, unknown>>().notNull(),
     billingAddress: jsonb().$type<Record<string, unknown>>().notNull(),
+    portalEnabled: boolean().default(false).notNull(),
+    branchCoverage: jsonb().$type<string[]>().default([]).notNull(),
     taxExempt: boolean().default(false).notNull(),
     creditLimit: numeric({ precision: 12, scale: 2 }),
     notes: text(),
@@ -249,6 +410,7 @@ export const users = pgTable(
   "users",
   {
     id: text().primaryKey(),
+    authUserId: text(),
     email: text().notNull(),
     name: text().notNull(),
     role: userRoleEnum().notNull(),
@@ -258,6 +420,7 @@ export const users = pgTable(
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
+    authUserIdUnique: uniqueIndex("users_auth_user_id_unique").on(table.authUserId),
     emailUnique: uniqueIndex("users_email_unique").on(table.email),
     branchRoleIdx: index("users_branch_role_idx").on(table.branchId, table.role),
   }),
@@ -708,6 +871,673 @@ export const integrationSyncJobs = pgTable(
     entityIdx: index("integration_sync_jobs_entity_idx").on(
       table.entityType,
       table.entityId,
+    ),
+  }),
+);
+
+export const authUsers = pgTable(
+  "auth_users",
+  {
+    id: text().primaryKey(),
+    name: text().notNull(),
+    email: text().notNull(),
+    emailVerified: boolean().default(false).notNull(),
+    image: text(),
+    twoFactorEnabled: boolean().default(false).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    emailUnique: uniqueIndex("auth_users_email_unique").on(table.email),
+  }),
+);
+
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: text().primaryKey(),
+    token: text().notNull(),
+    userId: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    ipAddress: text(),
+    userAgent: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    tokenUnique: uniqueIndex("auth_sessions_token_unique").on(table.token),
+    userIdx: index("auth_sessions_user_id_idx").on(table.userId),
+  }),
+);
+
+export const authAccounts = pgTable(
+  "auth_accounts",
+  {
+    id: text().primaryKey(),
+    accountId: text().notNull(),
+    providerId: text().notNull(),
+    userId: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    accessToken: text(),
+    refreshToken: text(),
+    idToken: text(),
+    accessTokenExpiresAt: timestamp({ withTimezone: true }),
+    refreshTokenExpiresAt: timestamp({ withTimezone: true }),
+    scope: text(),
+    password: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    providerAccountUnique: uniqueIndex("auth_accounts_provider_account_unique").on(
+      table.providerId,
+      table.accountId,
+    ),
+    userIdx: index("auth_accounts_user_id_idx").on(table.userId),
+  }),
+);
+
+export const authVerifications = pgTable(
+  "auth_verifications",
+  {
+    id: text().primaryKey(),
+    identifier: text().notNull(),
+    value: text().notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    identifierIdx: index("auth_verifications_identifier_idx").on(table.identifier),
+  }),
+);
+
+export const authTwoFactors = pgTable(
+  "auth_two_factors",
+  {
+    id: text().primaryKey(),
+    userId: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    secret: text().notNull(),
+    backupCodes: jsonb().$type<string[]>().default([]).notNull(),
+    verified: boolean().default(false).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userUnique: uniqueIndex("auth_two_factors_user_id_unique").on(table.userId),
+  }),
+);
+
+export const permissions = pgTable(
+  "permissions",
+  {
+    id: text().primaryKey(),
+    key: text().notNull(),
+    resource: text().notNull(),
+    action: text().notNull(),
+    description: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    keyUnique: uniqueIndex("permissions_key_unique").on(table.key),
+    resourceActionUnique: uniqueIndex("permissions_resource_action_unique").on(
+      table.resource,
+      table.action,
+    ),
+  }),
+);
+
+export const roles = pgTable(
+  "roles",
+  {
+    id: text().primaryKey(),
+    key: text().notNull(),
+    name: text().notNull(),
+    description: text(),
+    isSystem: boolean().default(false).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    keyUnique: uniqueIndex("roles_key_unique").on(table.key),
+  }),
+);
+
+export const rolePermissions = pgTable(
+  "role_permissions",
+  {
+    id: text().primaryKey(),
+    roleId: text()
+      .notNull()
+      .references(() => roles.id, { onDelete: "cascade" }),
+    permissionId: text()
+      .notNull()
+      .references(() => permissions.id, { onDelete: "cascade" }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    rolePermissionUnique: uniqueIndex("role_permissions_role_permission_unique").on(
+      table.roleId,
+      table.permissionId,
+    ),
+  }),
+);
+
+export const userBranchMemberships = pgTable(
+  "user_branch_memberships",
+  {
+    id: text().primaryKey(),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    branchId: text()
+      .notNull()
+      .references(() => branches.id, { onDelete: "cascade" }),
+    isPrimary: boolean().default(false).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userBranchUnique: uniqueIndex("user_branch_memberships_user_branch_unique").on(
+      table.userId,
+      table.branchId,
+    ),
+  }),
+);
+
+export const userRoleAssignments = pgTable(
+  "user_role_assignments",
+  {
+    id: text().primaryKey(),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    roleId: text()
+      .notNull()
+      .references(() => roles.id, { onDelete: "cascade" }),
+    scopeType: roleScopeTypeEnum().default("global").notNull(),
+    branchId: text().references(() => branches.id),
+    customerId: text().references(() => customers.id),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userScopeIdx: index("user_role_assignments_user_scope_idx").on(
+      table.userId,
+      table.scopeType,
+      table.branchId,
+      table.customerId,
+    ),
+  }),
+);
+
+export const portalAccounts = pgTable(
+  "portal_accounts",
+  {
+    id: text().primaryKey(),
+    authUserId: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    customerId: text()
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    locationIds: jsonb().$type<string[]>().default([]).notNull(),
+    active: boolean().default(true).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    authUserUnique: uniqueIndex("portal_accounts_auth_user_id_unique").on(
+      table.authUserId,
+    ),
+    customerIdx: index("portal_accounts_customer_id_idx").on(table.customerId),
+  }),
+);
+
+export const assetAllocations = pgTable(
+  "asset_allocations",
+  {
+    id: text().primaryKey(),
+    assetId: text()
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    contractId: text().references(() => contracts.id, { onDelete: "cascade" }),
+    contractLineId: text().references(() => contractLines.id, {
+      onDelete: "cascade",
+    }),
+    dispatchTaskId: text().references(() => dispatchTasks.id),
+    allocationType: assetAllocationTypeEnum().notNull(),
+    startsAt: timestamp({ withTimezone: true }).notNull(),
+    endsAt: timestamp({ withTimezone: true }),
+    sourceEvent: text().notNull(),
+    active: boolean().default(true).notNull(),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    assetWindowIdx: index("asset_allocations_asset_window_idx").on(
+      table.assetId,
+      table.startsAt,
+      table.endsAt,
+    ),
+    contractIdx: index("asset_allocations_contract_id_idx").on(table.contractId),
+  }),
+);
+
+export const contractAmendments = pgTable(
+  "contract_amendments",
+  {
+    id: text().primaryKey(),
+    contractId: text()
+      .notNull()
+      .references(() => contracts.id, { onDelete: "cascade" }),
+    amendmentType: contractAmendmentTypeEnum().notNull(),
+    requestedByUserId: text().references(() => users.id),
+    approvedByUserId: text().references(() => users.id),
+    effectiveAt: timestamp({ withTimezone: true }),
+    notes: text(),
+    deltaPayload: jsonb().$type<Record<string, unknown>>(),
+    approvedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    contractIdx: index("contract_amendments_contract_id_idx").on(table.contractId),
+  }),
+);
+
+export const documents = pgTable(
+  "documents",
+  {
+    id: text().primaryKey(),
+    contractId: text().references(() => contracts.id),
+    customerId: text().references(() => customers.id),
+    documentType: text().notNull(),
+    status: documentStatusEnum().notNull(),
+    filename: text().notNull(),
+    source: documentSourceEnum().notNull(),
+    hash: text().notNull(),
+    contentType: text().notNull(),
+    sizeBytes: integer().notNull(),
+    storageProvider: storageProviderEnum().notNull(),
+    storageBucket: text(),
+    storageKey: text(),
+    storageVersionId: text(),
+    storageETag: text(),
+    objectLocked: boolean().default(false).notNull(),
+    retentionMode: retentionModeEnum(),
+    retentionUntil: timestamp({ withTimezone: true }),
+    lockedAt: timestamp({ withTimezone: true }),
+    legalHold: boolean().default(false).notNull(),
+    relatedSignatureRequestId: text(),
+    supersedesDocumentId: text(),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    contractIdx: index("documents_contract_id_idx").on(table.contractId),
+    customerIdx: index("documents_customer_id_idx").on(table.customerId),
+    signatureIdx: index("documents_related_signature_request_id_idx").on(
+      table.relatedSignatureRequestId,
+    ),
+  }),
+);
+
+export const signatureRequests = pgTable(
+  "signature_requests",
+  {
+    id: text().primaryKey(),
+    contractId: text()
+      .notNull()
+      .references(() => contracts.id, { onDelete: "cascade" }),
+    customerId: text()
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    provider: text().default("Metro Trailer").notNull(),
+    status: signatureRequestStatusEnum().notNull(),
+    title: text().notNull(),
+    subject: text().notNull(),
+    message: text().notNull(),
+    consentTextVersion: text().notNull(),
+    certificationText: text().notNull(),
+    documentId: text().references(() => documents.id),
+    finalDocumentId: text().references(() => documents.id),
+    certificateDocumentId: text().references(() => documents.id),
+    expiresAt: timestamp({ withTimezone: true }),
+    cancelledAt: timestamp({ withTimezone: true }),
+    evidenceHash: text(),
+    requestedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp({ withTimezone: true }),
+    createdByUserId: text().references(() => users.id),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    contractIdx: index("signature_requests_contract_id_idx").on(table.contractId),
+    customerIdx: index("signature_requests_customer_id_idx").on(table.customerId),
+    statusIdx: index("signature_requests_status_idx").on(table.status),
+  }),
+);
+
+export const signatureSigners = pgTable(
+  "signature_signers",
+  {
+    id: text().primaryKey(),
+    signatureRequestId: text()
+      .notNull()
+      .references(() => signatureRequests.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    email: text().notNull(),
+    title: text(),
+    routingOrder: integer().notNull(),
+    status: signatureSignerStatusEnum().default("pending").notNull(),
+    requestedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    viewedAt: timestamp({ withTimezone: true }),
+    signedAt: timestamp({ withTimezone: true }),
+    declinedAt: timestamp({ withTimezone: true }),
+    reminderCount: integer().default(0).notNull(),
+    lastReminderAt: timestamp({ withTimezone: true }),
+    signatureText: text(),
+    intentAcceptedAt: timestamp({ withTimezone: true }),
+    consentAcceptedAt: timestamp({ withTimezone: true }),
+    certificationAcceptedAt: timestamp({ withTimezone: true }),
+    otpVerifiedAt: timestamp({ withTimezone: true }),
+    ipAddress: text(),
+    userAgent: text(),
+    evidenceHash: text(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    requestOrderUnique: uniqueIndex("signature_signers_request_order_unique").on(
+      table.signatureRequestId,
+      table.routingOrder,
+    ),
+    requestIdx: index("signature_signers_signature_request_id_idx").on(
+      table.signatureRequestId,
+    ),
+  }),
+);
+
+export const signatureEvents = pgTable(
+  "signature_events",
+  {
+    id: text().primaryKey(),
+    signatureRequestId: text()
+      .notNull()
+      .references(() => signatureRequests.id, { onDelete: "cascade" }),
+    signerId: text().references(() => signatureSigners.id, { onDelete: "cascade" }),
+    type: text().notNull(),
+    actor: text().notNull(),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    requestIdx: index("signature_events_signature_request_id_idx").on(
+      table.signatureRequestId,
+    ),
+  }),
+);
+
+export const signatureAccessTokens = pgTable(
+  "signature_access_tokens",
+  {
+    id: text().primaryKey(),
+    signatureRequestId: text()
+      .notNull()
+      .references(() => signatureRequests.id, { onDelete: "cascade" }),
+    signerId: text()
+      .notNull()
+      .references(() => signatureSigners.id, { onDelete: "cascade" }),
+    purpose: signatureAccessTokenPurposeEnum().notNull(),
+    tokenHash: text().notNull(),
+    otpCodeHash: text(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    consumedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    signerPurposeIdx: index("signature_access_tokens_signer_purpose_idx").on(
+      table.signerId,
+      table.purpose,
+    ),
+  }),
+);
+
+export const collectionActivities = pgTable(
+  "collection_activities",
+  {
+    id: text().primaryKey(),
+    collectionCaseId: text()
+      .notNull()
+      .references(() => collectionCases.id, { onDelete: "cascade" }),
+    activityType: collectionActivityTypeEnum().notNull(),
+    performedByUserId: text().references(() => users.id),
+    note: text(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    caseIdx: index("collection_activities_collection_case_id_idx").on(
+      table.collectionCaseId,
+    ),
+  }),
+);
+
+export const promisedPayments = pgTable(
+  "promised_payments",
+  {
+    id: text().primaryKey(),
+    collectionCaseId: text()
+      .notNull()
+      .references(() => collectionCases.id, { onDelete: "cascade" }),
+    amount: numeric({ precision: 12, scale: 2 }).notNull(),
+    promisedFor: timestamp({ withTimezone: true }).notNull(),
+    status: text().default("open").notNull(),
+    notes: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => ({
+    caseIdx: index("promised_payments_collection_case_id_idx").on(
+      table.collectionCaseId,
+    ),
+  }),
+);
+
+export const paymentTransactions = pgTable(
+  "payment_transactions",
+  {
+    id: text().primaryKey(),
+    invoiceId: text().references(() => invoices.id),
+    customerId: text().references(() => customers.id),
+    paymentMethodId: text().references(() => paymentMethods.id),
+    provider: integrationProviderEnum().default("stripe").notNull(),
+    transactionType: paymentTransactionTypeEnum().notNull(),
+    status: paymentTransactionStatusEnum().notNull(),
+    externalId: text(),
+    amount: numeric({ precision: 12, scale: 2 }).notNull(),
+    currency: text().default("usd").notNull(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    errorMessage: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    settledAt: timestamp({ withTimezone: true }),
+  },
+  (table) => ({
+    invoiceIdx: index("payment_transactions_invoice_id_idx").on(table.invoiceId),
+    externalIdUnique: uniqueIndex("payment_transactions_external_id_unique").on(
+      table.provider,
+      table.externalId,
+    ),
+  }),
+);
+
+export const externalEntityMappings = pgTable(
+  "external_entity_mappings",
+  {
+    id: text().primaryKey(),
+    provider: integrationProviderEnum().notNull(),
+    entityType: text().notNull(),
+    internalId: text().notNull(),
+    externalId: text().notNull(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    providerEntityUnique: uniqueIndex("external_entity_mappings_provider_entity_unique").on(
+      table.provider,
+      table.entityType,
+      table.internalId,
+    ),
+    externalLookupUnique: uniqueIndex("external_entity_mappings_external_lookup_unique").on(
+      table.provider,
+      table.entityType,
+      table.externalId,
+    ),
+  }),
+);
+
+export const webhookReceipts = pgTable(
+  "webhook_receipts",
+  {
+    id: text().primaryKey(),
+    provider: integrationProviderEnum().notNull(),
+    signature: text(),
+    externalEventId: text(),
+    headers: jsonb().$type<Record<string, unknown>>().notNull(),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    status: webhookProcessingStatusEnum().default("received").notNull(),
+    processingError: text(),
+    receivedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    processedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => ({
+    providerEventUnique: uniqueIndex("webhook_receipts_provider_event_unique").on(
+      table.provider,
+      table.externalEventId,
+    ),
+  }),
+);
+
+export const outboxJobs = pgTable(
+  "outbox_jobs",
+  {
+    id: text().primaryKey(),
+    jobType: text().notNull(),
+    status: outboxJobStatusEnum().default("pending").notNull(),
+    aggregateType: text().notNull(),
+    aggregateId: text().notNull(),
+    provider: integrationProviderEnum(),
+    idempotencyKey: text(),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    attempts: integer().default(0).notNull(),
+    availableAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp({ withTimezone: true }),
+    finishedAt: timestamp({ withTimezone: true }),
+    lastError: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusAvailableIdx: index("outbox_jobs_status_available_at_idx").on(
+      table.status,
+      table.availableAt,
+    ),
+    aggregateIdx: index("outbox_jobs_aggregate_idx").on(
+      table.aggregateType,
+      table.aggregateId,
+    ),
+  }),
+);
+
+export const idempotencyKeys = pgTable(
+  "idempotency_keys",
+  {
+    id: text().primaryKey(),
+    key: text().notNull(),
+    requestPath: text().notNull(),
+    requestMethod: text().notNull(),
+    requestHash: text().notNull(),
+    responseStatus: integer(),
+    responseBody: jsonb().$type<Record<string, unknown>>(),
+    lockedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    keyUnique: uniqueIndex("idempotency_keys_key_unique").on(
+      table.key,
+      table.requestMethod,
+      table.requestPath,
+    ),
+  }),
+);
+
+export const workOrderLaborEntries = pgTable(
+  "work_order_labor_entries",
+  {
+    id: text().primaryKey(),
+    workOrderId: text()
+      .notNull()
+      .references(() => workOrders.id, { onDelete: "cascade" }),
+    technicianUserId: text().references(() => users.id),
+    hours: numeric({ precision: 8, scale: 2 }).notNull(),
+    hourlyRate: numeric({ precision: 12, scale: 2 }),
+    notes: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workOrderIdx: index("work_order_labor_entries_work_order_id_idx").on(
+      table.workOrderId,
+    ),
+  }),
+);
+
+export const workOrderPartEntries = pgTable(
+  "work_order_part_entries",
+  {
+    id: text().primaryKey(),
+    workOrderId: text()
+      .notNull()
+      .references(() => workOrders.id, { onDelete: "cascade" }),
+    partNumber: text(),
+    description: text().notNull(),
+    quantity: numeric({ precision: 8, scale: 2 }).notNull(),
+    unitCost: numeric({ precision: 12, scale: 2 }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workOrderIdx: index("work_order_part_entries_work_order_id_idx").on(
+      table.workOrderId,
+    ),
+  }),
+);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: text().primaryKey(),
+    channel: notificationChannelEnum().notNull(),
+    status: notificationStatusEnum().default("queued").notNull(),
+    toAddress: text().notNull(),
+    subject: text(),
+    body: text().notNull(),
+    relatedEntityType: text(),
+    relatedEntityId: text(),
+    providerMessageId: text(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    sentAt: timestamp({ withTimezone: true }),
+    failedAt: timestamp({ withTimezone: true }),
+    errorMessage: text(),
+  },
+  (table) => ({
+    statusIdx: index("notifications_status_idx").on(table.status),
+    entityIdx: index("notifications_entity_idx").on(
+      table.relatedEntityType,
+      table.relatedEntityId,
     ),
   }),
 );

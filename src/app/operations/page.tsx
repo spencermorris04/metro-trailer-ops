@@ -8,7 +8,7 @@ import {
   listInspections,
   listTelematics,
   listWorkOrders,
-} from "@/lib/server/platform-service";
+} from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
@@ -35,11 +35,17 @@ const operationalLinks = [
   },
 ] as const;
 
-export default function OperationsPage() {
-  const dispatchCount = listDispatchTasks().length;
-  const inspectionCount = listInspections().length;
-  const workOrderCount = listWorkOrders().length;
-  const telematicsCount = listTelematics().length;
+export default async function OperationsPage() {
+  const [dispatchTasks, inspections, workOrders, telematics] = await Promise.all([
+    listDispatchTasks(),
+    listInspections(),
+    listWorkOrders(),
+    listTelematics(),
+  ]);
+  const dispatchCount = dispatchTasks.length;
+  const inspectionCount = inspections.length;
+  const workOrderCount = workOrders.length;
+  const telematicsCount = telematics.length;
 
   return (
     <>

@@ -201,7 +201,36 @@ export const documentSchema = z.object({
   filename: z.string().min(5),
 });
 
+export const signatureSignerSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  title: z.string().min(2).max(120).optional(),
+  routingOrder: z.number().int().positive().optional(),
+});
+
 export const signatureRequestSchema = z.object({
   contractNumber: z.string().min(3),
-  signers: z.array(z.string().email()).min(1),
+  signers: z.array(signatureSignerSchema).min(1),
+  title: z.string().min(3).max(180).optional(),
+  subject: z.string().min(3).max(180).optional(),
+  message: z.string().min(3).max(2000).optional(),
+  expiresInDays: z.number().int().min(1).max(90).default(14),
+});
+
+export const signatureReminderSchema = z.object({
+  signerId: z.string().min(1).optional(),
+});
+
+export const signatureCancelSchema = z.object({
+  reason: z.string().min(3).max(500),
+});
+
+export const signatureSignSchema = z.object({
+  signerId: z.string().min(1),
+  token: z.string().min(24),
+  signatureText: z.string().min(2).max(160),
+  signerTitle: z.string().min(2).max(120).optional(),
+  intentAccepted: z.literal(true),
+  consentAccepted: z.literal(true),
+  certificationAccepted: z.literal(true),
 });

@@ -1,5 +1,5 @@
 import { errorResponse, ok } from "@/lib/server/api";
-import { completeSignatureRequest } from "@/lib/server/platform-service";
+import { adminCompleteSignatureRequest } from "@/lib/server/esign-service";
 
 type CompleteSignatureRouteParams = {
   params: Promise<{
@@ -13,8 +13,8 @@ export async function POST(
 ) {
   try {
     const { signatureId } = await params;
-    const data = completeSignatureRequest(signatureId);
-    return ok({ message: "Signature request completed.", data });
+    const data = await adminCompleteSignatureRequest(signatureId);
+    return ok({ message: "Signature request force-completed.", data });
   } catch (error) {
     return errorResponse(error);
   }

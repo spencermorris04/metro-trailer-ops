@@ -3,12 +3,12 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { formatCurrency } from "@/lib/format";
-import { getReports } from "@/lib/server/platform-service";
+import { getReports } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function ReportsPage() {
-  const reports = getReports();
+export default async function ReportsPage() {
+  const reports = await getReports();
 
   return (
     <>

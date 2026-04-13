@@ -8,13 +8,13 @@ import {
   contractTransitionMap,
 } from "@/lib/domain/lifecycle";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
-import { listContracts, listFinancialEvents } from "@/lib/server/platform-service";
+import { listContracts, listFinancialEvents } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function ContractsPage() {
-  const sampleContracts = listContracts();
-  const financialEvents = listFinancialEvents();
+export default async function ContractsPage() {
+  const sampleContracts = await listContracts();
+  const financialEvents = await listFinancialEvents();
 
   return (
     <>

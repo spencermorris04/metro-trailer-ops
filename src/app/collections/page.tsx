@@ -3,12 +3,12 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { formatCurrency } from "@/lib/format";
-import { listCollectionCases } from "@/lib/server/platform-service";
+import { listCollectionCases } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function CollectionsPage() {
-  const collectionCases = listCollectionCases();
+export default async function CollectionsPage() {
+  const collectionCases = await listCollectionCases();
 
   return (
     <>

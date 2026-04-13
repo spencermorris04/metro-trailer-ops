@@ -1,7 +1,7 @@
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { titleize } from "@/lib/format";
-import { listCustomers } from "@/lib/server/platform-service";
+import { listCustomers } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +13,8 @@ const searchDimensions = [
   "Branch coverage and collections status",
 ];
 
-export default function CustomersPage() {
-  const sampleCustomers = listCustomers();
+export default async function CustomersPage() {
+  const sampleCustomers = await listCustomers();
 
   return (
     <>

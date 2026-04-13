@@ -5,12 +5,12 @@ import { StatusPill } from "@/components/status-pill";
 import { assetGuardrails } from "@/lib/domain/lifecycle";
 import { titleize } from "@/lib/format";
 import { branchSnapshots } from "@/lib/platform-data";
-import { listAssets } from "@/lib/server/platform-service";
+import { listAssets } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function AssetsPage() {
-  const sampleAssets = listAssets();
+export default async function AssetsPage() {
+  const sampleAssets = await listAssets();
   const statusCounts = sampleAssets.reduce<Record<string, number>>((acc, asset) => {
     acc[asset.status] = (acc[asset.status] ?? 0) + 1;
     return acc;

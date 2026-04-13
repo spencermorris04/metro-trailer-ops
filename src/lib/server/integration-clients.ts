@@ -193,6 +193,10 @@ export async function buildDocumentRecord(options: {
   filename: string;
 }) {
   const createdAt = new Date().toISOString();
+  const content = Buffer.from(
+    `Metro Trailer internal document for ${options.contractNumber}.`,
+    "utf8",
+  );
 
   return {
     mode: "demo",
@@ -205,8 +209,23 @@ export async function buildDocumentRecord(options: {
       status: "draft",
       filename: options.filename,
       objectLocked: true,
+      lockedAt: createdAt,
+      source: "internal_esign",
       hash: buildHash(`${options.contractNumber}:${options.filename}:${createdAt}`),
       createdAt,
+      contentType: "application/pdf",
+      sizeBytes: content.byteLength,
+      contentBase64: content.toString("base64"),
+      storageProvider: "inline",
+      storageBucket: null,
+      storageKey: null,
+      storageVersionId: null,
+      storageETag: null,
+      retentionUntil: null,
+      relatedSignatureRequestId: null,
+      supersedesDocumentId: null,
+      retentionMode: "compliance",
+      metadata: {},
     } satisfies DocumentRecord,
   } satisfies IntegrationResult<DocumentRecord>;
 }
@@ -216,17 +235,54 @@ export async function buildSignatureRequest(options: {
   customerName: string;
   signers: string[];
 }) {
+  const requestedAt = new Date().toISOString();
+
   return {
     mode: "demo",
-    provider: "Dropbox Sign",
+    provider: "Metro Trailer",
     data: {
       id: `sig_${Math.random().toString(36).slice(2, 10)}`,
       contractNumber: options.contractNumber,
       customerName: options.customerName,
-      provider: "Dropbox Sign",
+      provider: "Metro Trailer",
       status: "sent",
-      signers: options.signers,
-      requestedAt: new Date().toISOString(),
+      title: `${options.contractNumber} rental agreement`,
+      subject: "Please sign your Metro Trailer rental agreement",
+      message:
+        "This request was generated in demo mode. The bespoke e-sign service owns the production workflow.",
+      consentTextVersion: "metro-esign-consent-v1",
+      certificationText:
+        "By signing electronically, you confirm your authority and intent to sign.",
+      documentId: `doc_${Math.random().toString(36).slice(2, 10)}`,
+      finalDocumentId: null,
+      certificateDocumentId: null,
+      expiresAt: null,
+      cancelledAt: null,
+      signers: options.signers.map((email, index) => ({
+        id: `signer_${Math.random().toString(36).slice(2, 10)}`,
+        name: email.split("@")[0] ?? email,
+        email,
+        title: null,
+        routingOrder: index + 1,
+        status: "pending",
+        requestedAt,
+        viewedAt: null,
+        signedAt: null,
+        declinedAt: null,
+        reminderCount: 0,
+        lastReminderAt: null,
+        accessNonce: `nonce_${Math.random().toString(36).slice(2, 10)}`,
+        signatureText: null,
+        intentAcceptedAt: null,
+        consentAcceptedAt: null,
+        certificationAcceptedAt: null,
+        ipAddress: null,
+        userAgent: null,
+        evidenceHash: null,
+      })),
+      events: [],
+      evidenceHash: null,
+      requestedAt,
       completedAt: null,
     } satisfies SignatureRequestRecord,
   } satisfies IntegrationResult<SignatureRequestRecord>;

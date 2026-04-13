@@ -1,9 +1,9 @@
 import { errorResponse, ok } from "@/lib/server/api";
-import { exportRevenueReport, getReports } from "@/lib/server/platform-service";
+import { exportRevenueReport, getReports } from "@/lib/server/platform";
 
 export async function GET() {
   return ok({
-    data: getReports(),
+    data: await getReports(),
   });
 }
 

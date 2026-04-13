@@ -13,7 +13,7 @@ CREATE TYPE "public"."financial_event_type" AS ENUM('rent', 'damage', 'delivery'
 CREATE TYPE "public"."inspection_status" AS ENUM('requested', 'in_progress', 'passed', 'failed', 'needs_review');--> statement-breakpoint
 CREATE TYPE "public"."inspection_type" AS ENUM('delivery', 'return', 'damage_assessment', 'maintenance_release', 'spot_check');--> statement-breakpoint
 CREATE TYPE "public"."integration_direction" AS ENUM('push', 'pull', 'bidirectional', 'webhook');--> statement-breakpoint
-CREATE TYPE "public"."integration_provider" AS ENUM('stripe', 'quickbooks', 'record360', 'skybitz', 'dropbox_sign', 'internal');--> statement-breakpoint
+CREATE TYPE "public"."integration_provider" AS ENUM('stripe', 'quickbooks', 'record360', 'skybitz', 'internal_esign', 'internal');--> statement-breakpoint
 CREATE TYPE "public"."integration_sync_status" AS ENUM('pending', 'success', 'failed', 'skipped');--> statement-breakpoint
 CREATE TYPE "public"."invoice_status" AS ENUM('draft', 'sent', 'partially_paid', 'paid', 'overdue', 'voided');--> statement-breakpoint
 CREATE TYPE "public"."maintenance_status" AS ENUM('clear', 'scheduled', 'under_repair', 'waiting_on_parts', 'inspection_required');--> statement-breakpoint

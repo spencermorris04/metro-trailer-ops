@@ -1,10 +1,10 @@
 import { ok } from "@/lib/server/api";
-import { getDashboardSummary, listBranches, listUsers } from "@/lib/server/platform-service";
+import { getDashboardSummary, listBranches, listUsers } from "@/lib/server/platform";
 
 export async function GET() {
   return ok({
-    summary: getDashboardSummary(),
-    branches: listBranches(),
-    users: listUsers(),
+    summary: await getDashboardSummary(),
+    branches: await listBranches(),
+    users: await listUsers(),
   });
 }

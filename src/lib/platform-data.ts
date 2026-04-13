@@ -244,13 +244,13 @@ export const roadmapPhases: PhaseDefinition[] = [
   },
   {
     phase: "8",
-    title: "Conditional e-signature",
+    title: "Internal e-signature",
     summary:
-      "Start with a third-party provider and only internalize signature infrastructure if economics demand it.",
+      "Run signing directly inside Metro Trailer so consent capture, routing, audit evidence, and immutable signed artifacts stay under first-party control.",
     deliverables: [
-      "Dropbox Sign or equivalent",
-      "Immutable document strategy",
-      "Consent and hashing controls if internalized",
+      "Internal signing sessions and signer routing",
+      "Immutable signed agreement and certificate generation",
+      "Consent, hashing, and evidence controls",
     ],
   },
 ];

@@ -9,7 +9,7 @@ Metro Trailer is a domain-first Next.js platform for managing large trailer and 
 - Domain lifecycle rules for assets and rental contracts
 - Route Handlers that expose starter REST endpoints for assets, customers, contracts, and lifecycle transitions
 - Product shell pages for assets, customers, contracts, financials, operations, and integrations
-- Environment scaffolding for Stripe, QuickBooks Online, Record360, SkyBitz, and object storage
+- Environment scaffolding for Stripe, QuickBooks Online, Record360, SkyBitz, internal e-sign secrets, and AWS S3 object storage
 
 ## Local Development
 
@@ -24,7 +24,9 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 ## Runtime Notes
 
 - The current application includes a broad demo runtime that exercises the end-to-end modules without requiring live third-party credentials.
-- Stripe, QuickBooks Online, Record360, SkyBitz, Dropbox Sign, and S3-compatible storage are represented through integration adapters and job tracking. Live credentials are still required before those providers can perform real external calls.
+- Stripe, QuickBooks Online, Record360, SkyBitz, and AWS S3-backed storage are represented through integration adapters and job tracking. E-sign execution is now owned internally by Metro Trailer with signer tokens, consent capture, audit evidence, generated signature certificates, and S3-backed retained documents.
+- Generated PDFs now flow through the shared object-storage adapter. Contract packets, signed agreements, signature certificates, manually created documents, and invoice PDFs will store to S3 when `S3_BUCKET` and `S3_REGION` are configured, with inline demo fallback when they are not.
+- Optional S3 object-lock retention can be applied per upload through `S3_OBJECT_LOCK_MODE` and `S3_OBJECT_LOCK_DAYS`. Review your bucket configuration against AWS S3 Object Lock requirements before enabling it in production.
 - The App Router pages call the same server-side platform service used by the REST endpoints, so demo interactions from the UI and API stay aligned.
 
 ## Scripts
@@ -48,7 +50,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 - `src/components`: product shell, navigation, and reusable UI primitives
 - `src/lib/domain`: domain entities, validation rules, and lifecycle constraints
 - `src/lib/platform-data.ts`: seeded demo records and high-level platform content
-- `src/lib/server`: demo runtime store, platform services, integration adapters, API helpers, and PDF generation
+- `src/lib/server`: demo runtime store, platform services, integration adapters, API helpers, PDF generation, and AWS S3 object storage
 - `docs/architecture.md`: architecture notes and phase-by-phase implementation mapping
 
 ## Implementation Direction

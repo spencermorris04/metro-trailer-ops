@@ -2,12 +2,12 @@ import { JsonActionButton } from "@/components/json-action-button";
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
-import { listInspections } from "@/lib/server/platform-service";
+import { listInspections } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default function InspectionsPage() {
-  const inspections = listInspections();
+export default async function InspectionsPage() {
+  const inspections = await listInspections();
 
   return (
     <>

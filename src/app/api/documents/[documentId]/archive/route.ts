@@ -1,5 +1,5 @@
 import { errorResponse, ok } from "@/lib/server/api";
-import { markDocumentArchived } from "@/lib/server/platform-service";
+import { markDocumentArchived } from "@/lib/server/esign-service";
 
 type ArchiveDocumentRouteParams = {
   params: Promise<{

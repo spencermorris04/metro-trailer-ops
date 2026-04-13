@@ -80,8 +80,54 @@ export interface DocumentRecord {
   status: string;
   filename: string;
   objectLocked: boolean;
+  lockedAt: string | null;
+  source: string;
   hash: string;
   createdAt: string;
+  contentType: string;
+  sizeBytes: number;
+  contentBase64: string | null;
+  storageProvider: "inline" | "s3";
+  storageBucket: string | null;
+  storageKey: string | null;
+  storageVersionId: string | null;
+  storageETag: string | null;
+  retentionUntil: string | null;
+  relatedSignatureRequestId: string | null;
+  supersedesDocumentId: string | null;
+  retentionMode: "governance" | "compliance";
+  metadata: Record<string, string | number | boolean | null>;
+}
+
+export interface SignatureSignerRecord {
+  id: string;
+  name: string;
+  email: string;
+  title: string | null;
+  routingOrder: number;
+  status: string;
+  requestedAt: string;
+  viewedAt: string | null;
+  signedAt: string | null;
+  declinedAt: string | null;
+  reminderCount: number;
+  lastReminderAt: string | null;
+  accessNonce: string;
+  signatureText: string | null;
+  intentAcceptedAt: string | null;
+  consentAcceptedAt: string | null;
+  certificationAcceptedAt: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  evidenceHash: string | null;
+}
+
+export interface SignatureEventRecord {
+  id: string;
+  type: string;
+  actor: string;
+  timestamp: string;
+  metadata: Record<string, string | number | boolean | null>;
 }
 
 export interface SignatureRequestRecord {
@@ -90,7 +136,19 @@ export interface SignatureRequestRecord {
   customerName: string;
   provider: string;
   status: string;
-  signers: string[];
+  title: string;
+  subject: string;
+  message: string;
+  consentTextVersion: string;
+  certificationText: string;
+  documentId: string;
+  finalDocumentId: string | null;
+  certificateDocumentId: string | null;
+  expiresAt: string | null;
+  cancelledAt: string | null;
+  signers: SignatureSignerRecord[];
+  events: SignatureEventRecord[];
+  evidenceHash: string | null;
   requestedAt: string;
   completedAt: string | null;
 }

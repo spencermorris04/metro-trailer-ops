@@ -1,10 +1,11 @@
 import { customerSchema } from "@/lib/domain/validators";
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
-import { createCustomer, listCustomers } from "@/lib/server/platform-service";
+import { requireApiPermission } from "@/lib/server/authorization";
+import { createCustomer, listCustomers } from "@/lib/server/platform";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const data = listCustomers({
+  const data = await listCustomers({
     q: searchParams.get("q") ?? undefined,
     customerType: searchParams.get("customerType") ?? undefined,
     portalEnabled: searchParams.get("portalEnabled") ?? undefined,
@@ -18,9 +19,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    await requireApiPermission(request, "customers.manage");
     const payload = await readJson(request);
     const parsed = customerSchema.parse(payload);
-    const data = createCustomer(parsed);
+    const data = await createCustomer(parsed);
 
     return created({
       message: "Customer created.",

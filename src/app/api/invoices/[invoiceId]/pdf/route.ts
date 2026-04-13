@@ -1,6 +1,6 @@
 import { errorResponse } from "@/lib/server/api";
+import { getInvoicePdfArtifact } from "@/lib/server/invoice-artifacts";
 import { listFinancialEvents, listInvoices } from "@/lib/server/platform-service";
-import { renderInvoicePdf } from "@/lib/server/pdf";
 
 type InvoicePdfRouteParams = {
   params: Promise<{
@@ -23,19 +23,20 @@ export async function GET(_request: Request, { params }: InvoicePdfRouteParams) 
       contractNumber: invoice.contractNumber,
     });
 
-    const pdf = await renderInvoicePdf({
+    const artifact = await getInvoicePdfArtifact({
       invoice,
-      customerName: invoice.customerName,
       lineItems: events.map((event) => ({
         description: event.description,
         amount: event.amount,
       })),
     });
 
-    return new Response(new Uint8Array(pdf), {
+    return new Response(new Uint8Array(artifact.body), {
       headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${invoice.invoiceNumber}.pdf"`,
+        "Content-Type": artifact.contentType,
+        "Content-Disposition": `inline; filename="${artifact.filename}"`,
+        "X-Document-Hash": artifact.hash,
+        "X-Storage-Provider": artifact.storageProvider,
       },
     });
   } catch (error) {
