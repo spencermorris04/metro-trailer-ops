@@ -1,5 +1,5 @@
 import { errorResponse, ok, readJson } from "@/lib/server/api";
-import { requireApiPermission } from "@/lib/server/authorization";
+import { requireApiPermission, requireStaffApiPermission } from "@/lib/server/authorization";
 import { listInvoices, generateInvoiceForContract } from "@/lib/server/platform";
 import { z } from "zod";
 
@@ -8,6 +8,8 @@ const invoiceGenerationSchema = z.object({
 });
 
 export async function GET(request: Request) {
+  await requireStaffApiPermission(request, "accounting.view");
+
   const { searchParams } = new URL(request.url);
   const data = await listInvoices({
     status: searchParams.get("status") ?? undefined,
@@ -23,10 +25,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requireApiPermission(request, "accounting.manage");
+    const actor = await requireApiPermission(request, "accounting.manage");
     const payload = await readJson(request);
     const parsed = invoiceGenerationSchema.parse(payload);
-    const data = await generateInvoiceForContract(parsed.contractId);
+    const data = await generateInvoiceForContract(parsed.contractId, actor.userId ?? undefined);
 
     return ok(
       {

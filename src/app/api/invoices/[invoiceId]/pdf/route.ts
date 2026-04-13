@@ -1,6 +1,7 @@
 import { errorResponse } from "@/lib/server/api";
 import { getInvoicePdfArtifact } from "@/lib/server/invoice-artifacts";
-import { listFinancialEvents, listInvoices } from "@/lib/server/platform-service";
+import { listFinancialEvents, listInvoices } from "@/lib/server/platform";
+import { requireScopedResourceAccess, resolveInvoiceScope } from "@/lib/server/authorization";
 
 type InvoicePdfRouteParams = {
   params: Promise<{
@@ -8,10 +9,21 @@ type InvoicePdfRouteParams = {
   }>;
 };
 
-export async function GET(_request: Request, { params }: InvoicePdfRouteParams) {
+export async function GET(request: Request, { params }: InvoicePdfRouteParams) {
   try {
     const { invoiceId } = await params;
-    const invoice = listInvoices().find(
+    const scope = await resolveInvoiceScope(invoiceId);
+
+    if (!scope) {
+      return Response.json({ error: "Invoice not found" }, { status: 404 });
+    }
+
+    await requireScopedResourceAccess(request, scope, {
+      allowPortal: true,
+      portalPermission: "documents.view",
+      staffPermissions: ["accounting.view", "documents.view"],
+    });
+    const invoice = (await listInvoices()).find(
       (entry) => entry.id === invoiceId || entry.invoiceNumber === invoiceId,
     );
 
@@ -19,7 +31,7 @@ export async function GET(_request: Request, { params }: InvoicePdfRouteParams) 
       return Response.json({ error: "Invoice not found" }, { status: 404 });
     }
 
-    const events = listFinancialEvents({
+    const events = await listFinancialEvents({
       contractNumber: invoice.contractNumber,
     });
 
