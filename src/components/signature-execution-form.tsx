@@ -30,7 +30,7 @@ export function SignatureExecutionForm({
 
   return (
     <div className="soft-panel p-5">
-      <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+      <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
         Sign electronically
       </p>
       <h2 className="mt-2 text-xl font-semibold text-slate-900">
@@ -44,7 +44,7 @@ export function SignatureExecutionForm({
             value={signatureText}
             onChange={(event) => setSignatureText(event.target.value)}
             disabled={!canSign || pending}
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
           />
         </label>
 
@@ -54,7 +54,7 @@ export function SignatureExecutionForm({
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             disabled={!canSign || pending}
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
           />
         </label>
 
@@ -69,13 +69,13 @@ export function SignatureExecutionForm({
             autoComplete="one-time-code"
             placeholder="6-digit code"
             disabled={!canSign || pending}
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:opacity-60"
           />
         </label>
       </div>
 
       <div className="mt-5 space-y-3 text-sm text-slate-700">
-        <p className="rounded-2xl border border-[rgba(19,35,45,0.08)] bg-[rgba(255,255,255,0.7)] px-4 py-3 text-slate-600">
+        <p className="rounded-md border border-[var(--line)] bg-white px-4 py-3 text-slate-600">
           Metro Trailer emails a one-time verification code before the agreement
           can be completed.
         </p>
@@ -122,7 +122,7 @@ export function SignatureExecutionForm({
             !consentAccepted ||
             !certificationAccepted
           }
-          className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white disabled:cursor-not-allowed disabled:opacity-60"
           onClick={() =>
             startTransition(async () => {
               setFeedback(null);
@@ -164,7 +164,7 @@ export function SignatureExecutionForm({
         <button
           type="button"
           disabled={!canSign || pending}
-          className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           onClick={() =>
             startTransition(async () => {
               setFeedback(null);

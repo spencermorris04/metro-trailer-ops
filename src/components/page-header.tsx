@@ -12,18 +12,20 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <section className="panel overflow-hidden p-6 sm:p-8">
-      <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
+    <section className="panel overflow-hidden">
+      <div className="grid gap-4 border-b border-[var(--line)] px-5 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <div>
           <p className="eyebrow">{eyebrow}</p>
-          <h2 className="mt-3 text-4xl font-semibold tracking-tight text-slate-950">
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
             {title}
           </h2>
-          <p className="mt-4 max-w-3xl text-base leading-8 text-slate-600">
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
             {description}
           </p>
         </div>
-        {actions ? <div className="flex flex-wrap gap-3 lg:justify-end">{actions}</div> : null}
+        {actions ? (
+          <div className="flex flex-wrap gap-2 lg:justify-end">{actions}</div>
+        ) : null}
       </div>
     </section>
   );

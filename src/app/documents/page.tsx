@@ -38,10 +38,10 @@ export default async function DocumentsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {documents.map((document) => (
-            <div key={document.id} className="soft-panel p-5">
+            <div key={document.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {document.documentType}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -61,7 +61,7 @@ export default async function DocumentsPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <Link
                   href={`/api/documents/${document.id}/download`}
-                  className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+                  className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white"
                 >
                   Download
                 </Link>
@@ -86,10 +86,10 @@ export default async function DocumentsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {signatures.map((signature) => (
-            <div key={signature.id} className="soft-panel p-5">
+            <div key={signature.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {signature.provider}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -128,7 +128,7 @@ export default async function DocumentsPage() {
                   return (
                     <div
                       key={signer.id}
-                      className="rounded-3xl border border-[rgba(19,35,45,0.08)] bg-white/75 p-4"
+                      className="rounded-md border border-[var(--line)] bg-white p-4"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -184,7 +184,7 @@ export default async function DocumentsPage() {
                 {signature.finalDocument ? (
                   <Link
                     href={`/api/documents/${signature.finalDocument.id}/download`}
-                    className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+                    className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white"
                   >
                     Signed PDF
                   </Link>
@@ -193,7 +193,7 @@ export default async function DocumentsPage() {
                 {signature.certificateDocument ? (
                   <Link
                     href={`/api/documents/${signature.certificateDocument.id}/download`}
-                    className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
                   >
                     Certificate
                   </Link>

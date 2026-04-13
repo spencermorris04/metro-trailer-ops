@@ -22,15 +22,15 @@ export function JsonActionButton({
 
   const classes =
     variant === "dark"
-      ? "bg-slate-950 text-white hover:bg-slate-800"
-      : "border border-[rgba(19,35,45,0.12)] bg-white text-slate-800 hover:bg-slate-50";
+      ? "border border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+      : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50";
 
   return (
     <div className="flex flex-col gap-2">
       <button
         type="button"
         disabled={pending}
-        className={`rounded-full px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
+        className={`rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] transition disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
         onClick={() =>
           startTransition(async () => {
             setMessage(null);

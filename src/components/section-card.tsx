@@ -14,19 +14,21 @@ export function SectionCard({
   className?: string;
 }) {
   return (
-    <section className={`panel p-6 sm:p-8 ${className}`}>
-      {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
-      <div className="mb-6 space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
-          {title}
-        </h2>
-        {description ? (
-          <p className="max-w-3xl text-sm leading-7 text-slate-600 sm:text-base">
-            {description}
-          </p>
-        ) : null}
+    <section className={`panel overflow-hidden ${className}`}>
+      <div className="border-b border-[var(--line)] px-5 py-4 sm:px-6">
+        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
+        <div className="mt-1 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
+            {title}
+          </h2>
+          {description ? (
+            <p className="max-w-3xl text-sm leading-6 text-slate-600">
+              {description}
+            </p>
+          ) : null}
+        </div>
       </div>
-      {children}
+      <div className="px-5 py-5 sm:px-6">{children}</div>
     </section>
   );
 }

@@ -1,21 +1,22 @@
 @import "tailwindcss";
 
 :root {
-  --background: #e7e0d5;
-  --foreground: #16232b;
-  --surface: rgba(255, 255, 255, 0.78);
-  --surface-soft: rgba(247, 244, 238, 0.76);
-  --line: rgba(22, 35, 43, 0.12);
-  --muted: #5d6870;
-  --brand: #d96f2b;
-  --accent: #0d6d7a;
-  --shadow: 0 24px 70px rgba(22, 35, 43, 0.08);
+  --background: #eef2f6;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --line: #d7e0ea;
+  --line-strong: #c7d1dc;
+  --muted: #5f6e7f;
+  --brand: #1d4ed8;
+  --accent: #0f766e;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-space-grotesk);
+  --font-sans: var(--font-ibm-plex-sans);
   --font-mono: var(--font-ibm-plex-mono);
 }
 
@@ -29,11 +30,11 @@ html {
 
 body {
   background:
-    radial-gradient(circle at 12% 8%, rgba(217, 111, 43, 0.24), transparent 0, transparent 28%),
-    radial-gradient(circle at 84% 4%, rgba(13, 109, 122, 0.18), transparent 0, transparent 22%),
-    linear-gradient(180deg, #f3ede4 0%, #ece4d8 46%, #e2dbce 100%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0, rgba(255, 255, 255, 0) 220px),
+    linear-gradient(180deg, #f6f8fb 0%, #eef2f6 100%);
   color: var(--foreground);
-  font-family: var(--font-space-grotesk), sans-serif;
+  font-family: var(--font-ibm-plex-sans), sans-serif;
+  font-size: 14px;
 }
 
 a {
@@ -42,35 +43,35 @@ a {
 }
 
 ::selection {
-  background: rgba(217, 111, 43, 0.2);
+  background: rgba(29, 78, 216, 0.14);
 }
 
 .panel {
-  border: 1px solid var(--line);
-  border-radius: 1.75rem;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.74) 100%);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.875rem;
+  background: var(--surface);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
 }
 
 .soft-panel {
-  border: 1px solid rgba(22, 35, 43, 0.08);
-  border-radius: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
   background: var(--surface-soft);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
 
 .eyebrow {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--muted);
 }
 
 .data-table {
   overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface);
 }
 
 .data-table table {
@@ -79,31 +80,36 @@ a {
 }
 
 .data-table th {
-  padding-bottom: 0.85rem;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+  padding: 0.8rem 1rem;
   text-align: left;
   font-size: 0.72rem;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
 .data-table td {
-  border-top: 1px solid rgba(22, 35, 43, 0.08);
-  padding: 0.95rem 0;
+  border-top: 1px solid var(--line);
+  padding: 0.8rem 1rem;
   vertical-align: top;
 }
 
 .data-table td + td,
 .data-table th + th {
-  padding-left: 1rem;
+  padding-left: 0.8rem;
 }
 
 .grid-lines {
   background-image:
-    linear-gradient(rgba(22, 35, 43, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(22, 35, 43, 0.04) 1px, transparent 1px);
-  background-size: 26px 26px;
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 .mono {

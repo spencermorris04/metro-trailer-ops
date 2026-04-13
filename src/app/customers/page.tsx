@@ -24,7 +24,7 @@ export default async function CustomersPage() {
         description="Commercial accounts often rent across multiple branches and delivery sites, so customer records and customer locations need to be separate but tightly linked."
       >
         <div className="grid gap-4 lg:grid-cols-[1.2fr_0.9fr]">
-          <div className="space-y-4 text-sm leading-7 text-slate-600">
+          <div className="space-y-4 text-sm leading-6 text-slate-600">
             <p>
               The customer model separates billing identity from operational
               site data. That keeps invoices, credit posture, and collections
@@ -39,12 +39,15 @@ export default async function CustomersPage() {
           </div>
 
           <div className="soft-panel p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
               Search and filter scope
             </p>
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
               {searchDimensions.map((dimension) => (
-                <li key={dimension} className="rounded-xl bg-white/75 px-3 py-2">
+                <li
+                  key={dimension}
+                  className="rounded-md border border-[var(--line)] bg-white px-3 py-2"
+                >
                   {dimension}
                 </li>
               ))}
@@ -60,13 +63,13 @@ export default async function CustomersPage() {
       >
         <div className="grid gap-4 xl:grid-cols-3">
           {sampleCustomers.map((customer) => (
-            <div key={customer.id} className="soft-panel p-5">
+            <div key={customer.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {customer.customerNumber}
                   </p>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
                     {customer.name}
                   </h3>
                 </div>
@@ -81,7 +84,7 @@ export default async function CustomersPage() {
                 {customer.branchCoverage.map((branch) => (
                   <span
                     key={branch}
-                    className="rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-slate-700"
+                    className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] font-medium text-slate-700"
                   >
                     {branch}
                   </span>
@@ -96,7 +99,7 @@ export default async function CustomersPage() {
                 {customer.locations.map((location) => (
                   <div
                     key={location.id}
-                    className="rounded-2xl border border-[rgba(19,35,45,0.08)] bg-white/80 p-4"
+                    className="rounded-md border border-[var(--line)] bg-white p-3"
                   >
                     <p className="font-semibold text-slate-900">{location.name}</p>
                     <p className="mt-1 text-sm text-slate-600">

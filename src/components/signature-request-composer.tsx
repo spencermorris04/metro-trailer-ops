@@ -47,14 +47,14 @@ export function SignatureRequestComposer({
     <div className="soft-panel p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+          <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
             New request
           </p>
           <h3 className="mt-2 text-lg font-semibold text-slate-900">
             Launch an internal signature workflow
           </h3>
         </div>
-        <span className="rounded-full border border-[rgba(13,109,122,0.18)] bg-[rgba(13,109,122,0.08)] px-3 py-1 text-xs font-semibold text-slate-700">
+        <span className="rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-slate-700">
           Bespoke e-sign
         </span>
       </div>
@@ -65,7 +65,7 @@ export function SignatureRequestComposer({
           <select
             value={contractNumber}
             onChange={(event) => setContractNumber(event.target.value)}
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
           >
             {contracts.map((contract) => (
               <option key={contract.contractNumber} value={contract.contractNumber}>
@@ -83,7 +83,7 @@ export function SignatureRequestComposer({
             max={90}
             value={expiresInDays}
             onChange={(event) => setExpiresInDays(Number(event.target.value))}
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
           />
         </label>
 
@@ -93,7 +93,7 @@ export function SignatureRequestComposer({
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Master rental agreement"
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
           />
         </label>
 
@@ -103,7 +103,7 @@ export function SignatureRequestComposer({
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
             placeholder="Please review and sign"
-            className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+            className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
           />
         </label>
       </div>
@@ -115,7 +115,7 @@ export function SignatureRequestComposer({
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder="Explain what the signer is approving and any timing expectations."
-          className="w-full rounded-3xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+          className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
         />
       </label>
 
@@ -123,7 +123,7 @@ export function SignatureRequestComposer({
         {signers.map((signer, index) => (
           <div
             key={`signer-${index}`}
-            className="rounded-3xl border border-[rgba(19,35,45,0.08)] bg-white/75 p-4"
+            className="rounded-md border border-[var(--line)] bg-white p-4"
           >
             <div className="grid gap-4 md:grid-cols-3">
               <label className="space-y-2 text-sm text-slate-700">
@@ -131,7 +131,7 @@ export function SignatureRequestComposer({
                 <input
                   value={signer.name}
                   onChange={(event) => updateSigner(index, "name", event.target.value)}
-                  className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+                  className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
                 />
               </label>
               <label className="space-y-2 text-sm text-slate-700">
@@ -140,7 +140,7 @@ export function SignatureRequestComposer({
                   type="email"
                   value={signer.email}
                   onChange={(event) => updateSigner(index, "email", event.target.value)}
-                  className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+                  className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
                 />
               </label>
               <label className="space-y-2 text-sm text-slate-700">
@@ -148,7 +148,7 @@ export function SignatureRequestComposer({
                 <input
                   value={signer.title}
                   onChange={(event) => updateSigner(index, "title", event.target.value)}
-                  className="w-full rounded-2xl border border-[rgba(19,35,45,0.12)] bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+                  className="w-full rounded-md border border-[var(--line)] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none"
                 />
               </label>
             </div>
@@ -159,7 +159,7 @@ export function SignatureRequestComposer({
       <div className="mt-4 flex flex-wrap gap-3">
         <button
           type="button"
-          className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
           onClick={() => setSigners((current) => [...current, emptySigner()])}
         >
           Add signer
@@ -167,7 +167,7 @@ export function SignatureRequestComposer({
         {signers.length > 1 ? (
           <button
             type="button"
-            className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
             onClick={() => setSigners((current) => current.slice(0, -1))}
           >
             Remove last signer
@@ -176,7 +176,7 @@ export function SignatureRequestComposer({
         <button
           type="button"
           disabled={pending || !contractNumber}
-          className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white disabled:cursor-not-allowed disabled:opacity-60"
           onClick={() =>
             startTransition(async () => {
               setFeedback(null);

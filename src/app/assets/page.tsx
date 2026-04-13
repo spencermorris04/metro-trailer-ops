@@ -25,7 +25,7 @@ export default async function AssetsPage() {
       >
         <div className="grid gap-4 lg:grid-cols-[1.25fr_0.95fr]">
           <div className="space-y-4">
-            <p className="text-sm leading-7 text-slate-600">
+            <p className="text-sm leading-6 text-slate-600">
               The starter schema models asset type, dimensions, branch, status,
               availability, GPS device mapping, and maintenance posture so a
               single trailer record can drive reservations, dispatch, billing,
@@ -35,9 +35,9 @@ export default async function AssetsPage() {
               {Object.entries(statusCounts).map(([status, count]) => (
                 <div
                   key={status}
-                  className="rounded-2xl border border-[rgba(19,35,45,0.08)] bg-white/80 px-4 py-3"
+                  className="rounded-md border border-[var(--line)] bg-white px-4 py-3"
                 >
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {status}
                   </p>
                   <p className="mt-2 text-xl font-semibold text-slate-950">
@@ -49,23 +49,23 @@ export default async function AssetsPage() {
           </div>
 
           <div className="soft-panel p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
               API Surface
             </p>
-            <p className="mt-3 text-sm leading-7 text-slate-600">
+            <p className="mt-3 text-sm leading-6 text-slate-600">
               Starter route handlers already validate asset payloads and expose
               sample fleet data while persistence is being wired in.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
                 href="/api/assets"
-                className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+                className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white"
               >
                 GET /api/assets
               </Link>
               <Link
                 href="/api/domain"
-                className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
               >
                 GET /api/domain
               </Link>
@@ -81,8 +81,8 @@ export default async function AssetsPage() {
       >
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
           {branchSnapshots.map((branch) => (
-            <div key={branch.branch} className="soft-panel p-5">
-              <h3 className="text-xl font-semibold text-slate-900">
+            <div key={branch.branch} className="soft-panel p-4">
+              <h3 className="text-lg font-semibold text-slate-900">
                 {branch.branch}
               </h3>
               <div className="mt-4 space-y-2 text-sm text-slate-600">
@@ -158,9 +158,9 @@ export default async function AssetsPage() {
       >
         <div className="grid gap-4 lg:grid-cols-2">
           {Object.entries(assetGuardrails).map(([status, rules]) => (
-            <div key={status} className="soft-panel p-5">
+            <div key={status} className="soft-panel p-4">
               <StatusPill label={titleize(status)} />
-              <ul className="mt-4 space-y-2 text-sm leading-7 text-slate-600">
+              <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
                 {rules.map((rule) => (
                   <li key={rule}>{rule}</li>
                 ))}

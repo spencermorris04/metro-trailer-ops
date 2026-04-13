@@ -43,7 +43,7 @@ export default async function PortalPage() {
         actions={
           <Link
             href={portal.portalSession.url}
-            className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
           >
             Open billing portal
           </Link>
@@ -56,26 +56,26 @@ export default async function PortalPage() {
         description="The portal account is scoped to its customer record and only exposes contracts, invoices, inspections, documents, and payments tied to that account."
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Customer</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Customer</p>
             <p className="mt-3 text-xl font-semibold text-slate-900">
               {portal.customer.customerNumber}
             </p>
           </div>
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Contracts</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Contracts</p>
             <p className="mt-3 text-xl font-semibold text-slate-900">
               {portal.contracts.length}
             </p>
           </div>
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Invoices</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Invoices</p>
             <p className="mt-3 text-xl font-semibold text-slate-900">
               {portal.invoices.length}
             </p>
           </div>
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Payment methods</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Payment methods</p>
             <p className="mt-3 text-xl font-semibold text-slate-900">
               {portal.paymentMethods.length}
             </p>
@@ -90,10 +90,10 @@ export default async function PortalPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {portal.contracts.map((contract) => (
-            <div key={contract.id} className="soft-panel p-5">
+            <div key={contract.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {contract.contractNumber}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -120,10 +120,10 @@ export default async function PortalPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {portal.invoices.map((invoice) => (
-            <div key={invoice.id} className="soft-panel p-5">
+            <div key={invoice.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {invoice.invoiceNumber}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -156,10 +156,10 @@ export default async function PortalPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {portal.paymentMethods.map((method) => (
-            <div key={method.id} className="soft-panel p-5">
+            <div key={method.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {method.provider}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -194,10 +194,10 @@ export default async function PortalPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {paymentHistory.map((payment) => (
-            <div key={payment.id} className="soft-panel p-5">
+            <div key={payment.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {payment.invoiceNumber ?? "Unassigned"}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -223,10 +223,10 @@ export default async function PortalPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {portal.inspections.map((inspection) => (
-            <div key={inspection.id} className="soft-panel p-5">
+            <div key={inspection.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {inspection.assetNumber}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -235,7 +235,7 @@ export default async function PortalPage() {
                 </div>
                 <StatusPill label={inspection.status} />
               </div>
-              <p className="mt-4 text-sm leading-7 text-slate-600">
+              <p className="mt-4 text-sm leading-6 text-slate-600">
                 {inspection.damageSummary}
               </p>
             </div>
@@ -251,10 +251,10 @@ export default async function PortalPage() {
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="space-y-4">
             {portal.documents.map((document) => (
-              <div key={document.id} className="soft-panel p-5">
+              <div key={document.id} className="soft-panel p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                    <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                       {document.documentType}
                     </p>
                     <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -276,10 +276,10 @@ export default async function PortalPage() {
           </div>
           <div className="space-y-4">
             {portal.signatureRequests.map((signature) => (
-              <div key={signature.id} className="soft-panel p-5">
+              <div key={signature.id} className="soft-panel p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                    <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                       {signature.contractNumber}
                     </p>
                     <h3 className="mt-2 text-lg font-semibold text-slate-900">

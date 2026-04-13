@@ -1,11 +1,11 @@
 type StatusTone = "slate" | "amber" | "emerald" | "sky" | "rose";
 
 const toneClasses: Record<StatusTone, string> = {
-  slate: "border-slate-300/70 bg-slate-100/80 text-slate-700",
-  amber: "border-amber-300/70 bg-amber-100/90 text-amber-800",
-  emerald: "border-emerald-300/70 bg-emerald-100/90 text-emerald-800",
-  sky: "border-sky-300/70 bg-sky-100/90 text-sky-800",
-  rose: "border-rose-300/70 bg-rose-100/90 text-rose-800",
+  slate: "border-slate-300 bg-slate-100 text-slate-700",
+  amber: "border-amber-300 bg-amber-50 text-amber-800",
+  emerald: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  sky: "border-sky-300 bg-sky-50 text-sky-800",
+  rose: "border-rose-300 bg-rose-50 text-rose-800",
 };
 
 export function statusToneFromValue(value: string): StatusTone {
@@ -80,7 +80,7 @@ export function StatusPill({
 
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.18em] ${toneClasses[resolvedTone]}`}
+      className={`inline-flex items-center rounded-md border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] ${toneClasses[resolvedTone]}`}
     >
       {label}
     </span>

@@ -25,10 +25,10 @@ export default async function CollectionsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {collectionCases.map((caseRecord) => (
-            <div key={caseRecord.id} className="soft-panel p-5">
+            <div key={caseRecord.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {caseRecord.invoiceNumber}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -53,7 +53,10 @@ export default async function CollectionsPage() {
               </div>
               <div className="mt-5 space-y-2 text-sm text-slate-600">
                 {caseRecord.notes.map((note) => (
-                  <p key={note} className="rounded-xl bg-white/80 px-3 py-2">
+                  <p
+                    key={note}
+                    className="rounded-md border border-[var(--line)] bg-white px-3 py-2"
+                  >
                     {note}
                   </p>
                 ))}

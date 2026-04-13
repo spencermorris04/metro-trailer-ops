@@ -22,42 +22,54 @@ export default async function DispatchPage() {
         title="Dispatch tasks"
         description="Assignments are tied directly to assets and customer sites so execution can update the contract and fleet state machine."
       >
-        <div className="grid gap-4 xl:grid-cols-3">
-          {tasks.map((task) => (
-            <div key={task.id} className="soft-panel p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
-                    {task.branch}
-                  </p>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                    {task.type}
-                  </h3>
-                </div>
-                <StatusPill label={task.status} />
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-slate-600">
-                <p>Asset: {task.assetNumber}</p>
-                <p>Site: {task.customerSite}</p>
-                <p>Scheduled: {task.scheduledFor}</p>
-              </div>
-              {task.status !== "completed" ? (
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <JsonActionButton
-                    endpoint={`/api/dispatch-tasks/${task.id}/confirm`}
-                    label="Confirm delivery"
-                    body={{ outcome: "delivery_confirmed" }}
-                  />
-                  <JsonActionButton
-                    endpoint={`/api/dispatch-tasks/${task.id}/confirm`}
-                    label="Confirm pickup"
-                    body={{ outcome: "pickup_confirmed" }}
-                    variant="light"
-                  />
-                </div>
-              ) : null}
-            </div>
-          ))}
+        <div className="data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Asset</th>
+                <th>Site</th>
+                <th>Scheduled</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => (
+                <tr key={task.id}>
+                  <td>
+                    <p className="font-semibold text-slate-900">{task.type}</p>
+                    <p className="mt-1 text-xs text-slate-500">{task.branch}</p>
+                  </td>
+                  <td className="text-sm text-slate-700">{task.assetNumber}</td>
+                  <td className="text-sm text-slate-700">{task.customerSite}</td>
+                  <td className="text-sm text-slate-700">{task.scheduledFor}</td>
+                  <td>
+                    <StatusPill label={task.status} />
+                  </td>
+                  <td>
+                    {task.status !== "completed" ? (
+                      <div className="flex flex-wrap gap-2">
+                        <JsonActionButton
+                          endpoint={`/api/dispatch-tasks/${task.id}/confirm`}
+                          label="Delivery"
+                          body={{ outcome: "delivery_confirmed" }}
+                        />
+                        <JsonActionButton
+                          endpoint={`/api/dispatch-tasks/${task.id}/confirm`}
+                          label="Pickup"
+                          body={{ outcome: "pickup_confirmed" }}
+                          variant="light"
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-500">Completed</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </SectionCard>
     </>

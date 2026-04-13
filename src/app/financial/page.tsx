@@ -29,12 +29,12 @@ export default async function FinancialPage() {
       >
         <div className="grid gap-4 xl:grid-cols-4">
           {events.map((event) => (
-            <div key={event.id} className="soft-panel p-5">
+            <div key={event.id} className="soft-panel p-4">
               <StatusPill label={event.eventType} />
-              <p className="mt-4 text-lg font-semibold text-slate-900">
+              <p className="mt-4 text-base font-semibold text-slate-900">
                 {event.contractNumber}
               </p>
-              <p className="mt-2 text-sm leading-7 text-slate-600">
+              <p className="mt-2 text-sm leading-6 text-slate-600">
                 {event.description}
               </p>
               <p className="mt-3 text-sm font-semibold text-slate-900">
@@ -52,10 +52,10 @@ export default async function FinancialPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {invoices.map((invoice) => (
-            <div key={invoice.id} className="soft-panel p-5">
+            <div key={invoice.id} className="soft-panel p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                     {invoice.invoiceNumber}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -80,7 +80,7 @@ export default async function FinancialPage() {
                   href={`/api/invoices/${invoice.id}/pdf`}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
                 >
                   View PDF
                 </a>

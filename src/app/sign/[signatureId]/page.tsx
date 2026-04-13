@@ -88,7 +88,7 @@ export default async function SignaturePage({
         actions={
           <Link
             href={`/api/documents/${session.packetDocument.id}/download`}
-            className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
           >
             Download packet
           </Link>
@@ -101,26 +101,26 @@ export default async function SignaturePage({
         description={session.request.message}
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Customer</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Customer</p>
             <p className="mt-3 text-lg font-semibold text-slate-900">
               {session.request.customerName}
             </p>
           </div>
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Signer</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Signer</p>
             <p className="mt-3 text-lg font-semibold text-slate-900">
               {session.signer.name}
             </p>
           </div>
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Routing order</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Routing order</p>
             <p className="mt-3 text-lg font-semibold text-slate-900">
               {session.signer.routingOrder}
             </p>
           </div>
-          <div className="soft-panel p-5">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Status</p>
+          <div className="soft-panel p-4">
+            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Status</p>
             <div className="mt-3">
               <StatusPill label={session.request.status} />
             </div>
@@ -134,7 +134,7 @@ export default async function SignaturePage({
         description="Metro Trailer captures signer identity, typed signature adoption, timestamps, IP address when available, user agent, and document hashes for the final certificate."
       >
         <div className="grid gap-4 xl:grid-cols-2">
-          <div className="soft-panel p-5 text-sm leading-7 text-slate-600">
+          <div className="soft-panel p-4 text-sm leading-6 text-slate-600">
             <p>
               Consent version: <span className="font-medium text-slate-900">{session.request.consentTextVersion}</span>
             </p>
@@ -142,7 +142,7 @@ export default async function SignaturePage({
               Certification: {session.request.certificationText}
             </p>
           </div>
-          <div className="soft-panel p-5 text-sm leading-7 text-slate-600">
+          <div className="soft-panel p-4 text-sm leading-6 text-slate-600">
             <p>Current signer status: {session.signer.status}</p>
             <p className="mt-2">
               Packet hash: <span className="mono text-xs">{session.packetDocument.hash.slice(0, 24)}...</span>

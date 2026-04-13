@@ -32,8 +32,11 @@ export default async function ReportsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-4">
           {reports.utilization.map((record) => (
-            <div key={record.branch} className="soft-panel p-5">
-              <h3 className="text-xl font-semibold text-slate-900">{record.branch}</h3>
+            <div key={record.branch} className="soft-panel p-4">
+              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Branch
+              </p>
+              <h3 className="mt-2 text-lg font-semibold text-slate-900">{record.branch}</h3>
               <p className="mt-4 text-sm text-slate-600">
                 Fleet count: {record.fleetCount}
               </p>
@@ -55,7 +58,7 @@ export default async function ReportsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-4">
           {reports.revenueSeries.map((point) => (
-            <div key={point.label} className="soft-panel p-5">
+            <div key={point.label} className="soft-panel p-4">
               <StatusPill label={point.label} />
               <p className="mt-4 text-2xl font-semibold text-slate-900">
                 {formatCurrency(point.revenue)}
@@ -72,7 +75,7 @@ export default async function ReportsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-5">
           {reports.overdueAging.map((bucket) => (
-            <div key={bucket.label} className="soft-panel p-5">
+            <div key={bucket.label} className="soft-panel p-4">
               <StatusPill label={bucket.label} />
               <p className="mt-4 text-sm text-slate-600">
                 Invoices: {bucket.invoiceCount}
@@ -91,25 +94,25 @@ export default async function ReportsPage() {
         description="Maintenance exposure is derived from open work orders, assigned labor, and estimated versus actual cost."
       >
         <div className="grid gap-4 xl:grid-cols-4">
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Open work orders</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {reports.maintenanceSummary.openWorkOrders}
             </p>
           </div>
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Assigned work orders</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {reports.maintenanceSummary.assignedWorkOrders}
             </p>
           </div>
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Estimated cost</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {formatCurrency(reports.maintenanceSummary.estimatedCost)}
             </p>
           </div>
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Actual cost</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {formatCurrency(reports.maintenanceSummary.actualCost)}
@@ -132,7 +135,7 @@ export default async function ReportsPage() {
             ["Needs review", reports.inspectionDamageSummary.needsReview],
             ["Damaged assets", reports.inspectionDamageSummary.damagedAssets],
           ].map(([label, value]) => (
-            <div key={label} className="soft-panel p-5">
+            <div key={label} className="soft-panel p-4">
               <p className="text-sm text-slate-600">{label}</p>
               <p className="mt-3 text-2xl font-semibold text-slate-900">{value}</p>
             </div>
@@ -147,8 +150,8 @@ export default async function ReportsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-3">
           {reports.auditTrail.map((event) => (
-            <div key={event.id} className="soft-panel p-5">
-              <p className="mono text-xs uppercase tracking-[0.18em] text-slate-500">
+            <div key={event.id} className="soft-panel p-4">
+              <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
                 {event.entityType}
               </p>
               <h3 className="mt-2 text-lg font-semibold text-slate-900">
@@ -167,25 +170,25 @@ export default async function ReportsPage() {
         description="This combines audit coverage, queue backlog, failed webhooks, and current feature-flag posture."
       >
         <div className="grid gap-4 xl:grid-cols-4">
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Events last 7 days</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {reports.auditHealth.totalEventsLast7Days}
             </p>
           </div>
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Actor coverage</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {reports.auditHealth.actorCoverageRate}%
             </p>
           </div>
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Pending outbox jobs</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {reports.auditHealth.pendingOutboxJobs}
             </p>
           </div>
-          <div className="soft-panel p-5">
+          <div className="soft-panel p-4">
             <p className="text-sm text-slate-600">Failed webhooks</p>
             <p className="mt-3 text-2xl font-semibold text-slate-900">
               {reports.auditHealth.failedWebhookReceipts}

@@ -24,7 +24,7 @@ export default async function ContractsPage() {
         description="Quote, reservation, active rent, completion, closure, and cancellation are explicit states with clear operational consequences."
       >
         <div className="grid gap-4 lg:grid-cols-[1.2fr_0.9fr]">
-          <div className="space-y-4 text-sm leading-7 text-slate-600">
+          <div className="space-y-4 text-sm leading-6 text-slate-600">
             <p>
               This foundation encodes the contract workflow directly into the
               domain layer. That makes it easier to enforce dispatch readiness,
@@ -34,13 +34,13 @@ export default async function ContractsPage() {
             <div className="flex flex-wrap gap-3">
               <Link
                 href="/api/contracts"
-                className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+                className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white"
               >
                 GET /api/contracts
               </Link>
               <Link
                 href="/api/contracts/contract_002/transition"
-                className="rounded-full border border-[rgba(19,35,45,0.12)] bg-white px-4 py-2 text-sm font-semibold text-slate-800"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
               >
                 POST transition preview
               </Link>
@@ -48,20 +48,20 @@ export default async function ContractsPage() {
           </div>
 
           <div className="soft-panel p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
               Amendment paths
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {amendmentActions.map((action) => (
                 <span
                   key={action}
-                  className="mono rounded-full border border-[rgba(19,35,45,0.08)] bg-white/80 px-3 py-1 text-xs text-slate-700"
+                  className="mono rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] text-slate-700"
                 >
                   {action}
                 </span>
               ))}
             </div>
-            <p className="mt-4 text-sm leading-7 text-slate-600">
+            <p className="mt-4 text-sm leading-6 text-slate-600">
               Extensions, swaps, partial returns, and rate adjustments are
               modeled as amendments on the same agreement rather than detached
               side records.
@@ -132,7 +132,7 @@ export default async function ContractsPage() {
       >
         <div className="grid gap-4 xl:grid-cols-2">
           {Object.entries(contractGuardrails).map(([status, rules]) => (
-            <div key={status} className="soft-panel p-5">
+            <div key={status} className="soft-panel p-4">
               <div className="flex flex-wrap items-center gap-3">
                 <StatusPill label={titleize(status)} />
                 <div className="flex flex-wrap gap-2">
@@ -140,7 +140,7 @@ export default async function ContractsPage() {
                     (nextState) => (
                       <span
                         key={nextState}
-                        className="mono rounded-full bg-white/80 px-3 py-1 text-xs text-slate-600"
+                        className="mono rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] text-slate-600"
                       >
                         {nextState}
                       </span>
@@ -148,7 +148,7 @@ export default async function ContractsPage() {
                   )}
                 </div>
               </div>
-              <ul className="mt-4 space-y-2 text-sm leading-7 text-slate-600">
+              <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
                 {rules.map((rule) => (
                   <li key={rule}>{rule}</li>
                 ))}
@@ -165,12 +165,12 @@ export default async function ContractsPage() {
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {financialEvents.map((event) => (
-            <div key={event.id} className="soft-panel p-5">
+            <div key={event.id} className="soft-panel p-4">
               <StatusPill label={titleize(event.eventType)} />
-              <p className="mt-4 text-lg font-semibold text-slate-900">
+              <p className="mt-4 text-base font-semibold text-slate-900">
                 {event.contractNumber}
               </p>
-              <p className="mt-2 text-sm leading-7 text-slate-600">
+              <p className="mt-2 text-sm leading-6 text-slate-600">
                 {event.description}
               </p>
               <p className="mt-3 text-sm font-semibold text-slate-900">
