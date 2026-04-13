@@ -1,33 +1,31 @@
 import { errorResponse, ok } from "@/lib/server/api";
 import { enqueueOutboxJob, recordWebhookReceipt } from "@/lib/server/outbox";
+import { validateRecord360Webhook } from "@/lib/server/webhooks";
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as Record<string, unknown>;
-    const externalEventId =
-      typeof payload.id === "string"
-        ? payload.id
-        : typeof payload.inspectionId === "string"
-          ? payload.inspectionId
-          : null;
+    const validated = await validateRecord360Webhook(request);
 
     const receiptId = await recordWebhookReceipt({
       provider: "record360",
-      signature: request.headers.get("x-record360-signature"),
-      externalEventId,
+      signature: validated.signature,
+      externalEventId: validated.externalEventId,
       headers: Object.fromEntries(request.headers.entries()),
-      payload,
+      payload: validated.payload,
+      verified: validated.verified,
+      verificationError: validated.verificationError,
     });
 
     if (receiptId) {
       await enqueueOutboxJob({
-        jobType: "inspection.ingest.record360",
+        jobType: "webhook.process.record360",
         aggregateType: "webhook_receipt",
         aggregateId: receiptId,
         provider: "record360",
         payload: {
           receiptId,
-          externalEventId,
+          externalEventId: validated.externalEventId,
+          verified: validated.verified,
         },
       });
     }

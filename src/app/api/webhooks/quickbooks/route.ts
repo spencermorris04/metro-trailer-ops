@@ -1,31 +1,19 @@
 import { errorResponse, ok } from "@/lib/server/api";
 import { enqueueOutboxJob, recordWebhookReceipt } from "@/lib/server/outbox";
+import { validateQuickBooksWebhook } from "@/lib/server/webhooks";
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as Record<string, unknown>;
-    const notifications = Array.isArray(payload.eventNotifications)
-      ? payload.eventNotifications
-      : [];
-    const firstNotification =
-      notifications.length > 0 &&
-      notifications[0] &&
-      typeof notifications[0] === "object"
-        ? (notifications[0] as Record<string, unknown>)
-        : null;
-    const externalEventId =
-      typeof payload.eventId === "string"
-        ? payload.eventId
-        : typeof firstNotification?.realmId === "string"
-          ? String(firstNotification.realmId)
-          : null;
+    const validated = await validateQuickBooksWebhook(request);
 
     const receiptId = await recordWebhookReceipt({
       provider: "quickbooks",
-      signature: request.headers.get("intuit-signature"),
-      externalEventId,
+      signature: validated.signature,
+      externalEventId: validated.externalEventId,
       headers: Object.fromEntries(request.headers.entries()),
-      payload,
+      payload: validated.payload,
+      verified: validated.verified,
+      verificationError: validated.verificationError,
     });
 
     if (receiptId) {
@@ -36,7 +24,8 @@ export async function POST(request: Request) {
         provider: "quickbooks",
         payload: {
           receiptId,
-          externalEventId,
+          externalEventId: validated.externalEventId,
+          verified: validated.verified,
         },
       });
     }

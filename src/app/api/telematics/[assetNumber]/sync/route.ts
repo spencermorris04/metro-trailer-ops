@@ -1,8 +1,9 @@
 import { errorResponse, ok } from "@/lib/server/api";
+import { requireApiPermission, resolveTelematicsScopeByAssetNumber } from "@/lib/server/authorization";
 import {
   getCollectionsRecoverySnapshot,
   syncTelematics,
-} from "@/lib/server/platform-service";
+} from "@/lib/server/platform";
 
 type SyncTelematicsRouteParams = {
   params: Promise<{
@@ -11,12 +12,21 @@ type SyncTelematicsRouteParams = {
 };
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: SyncTelematicsRouteParams,
 ) {
   try {
     const { assetNumber } = await params;
-    const ping = await syncTelematics(assetNumber);
+    const scope = await resolveTelematicsScopeByAssetNumber(assetNumber);
+
+    if (!scope) {
+      return ok({ error: "Asset not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "integrations.manage", {
+      branchId: scope.branchId ?? undefined,
+    });
+    const ping = await syncTelematics(assetNumber, actor.userId ?? undefined);
     const recovery = await getCollectionsRecoverySnapshot(assetNumber);
 
     return ok({
