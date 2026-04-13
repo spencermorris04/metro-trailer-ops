@@ -58,6 +58,12 @@ const rateScopes = [
   "promotional",
 ] as const;
 
+const billingCadences = [
+  "immediate",
+  "weekly_arrears",
+  "monthly_arrears",
+] as const;
+
 const dispatchTaskTypes = [
   "delivery",
   "pickup",
@@ -223,6 +229,18 @@ const notificationStatuses = ["queued", "sent", "failed", "skipped"] as const;
 
 const signatureAccessTokenPurposes = ["sign", "otp"] as const;
 
+const quickbooksConnectionStatuses = [
+  "pending",
+  "active",
+  "refresh_required",
+  "disconnected",
+  "error",
+] as const;
+
+const quickbooksEnvironments = ["sandbox", "production"] as const;
+
+const accountingSyncIssueStatuses = ["open", "resolved", "ignored"] as const;
+
 export const assetTypeEnum = pgEnum("asset_type", assetTypes);
 export const assetStatusEnum = pgEnum("asset_status", assetStatuses);
 export const assetAvailabilityEnum = pgEnum(
@@ -251,6 +269,7 @@ export const auditEntityTypeEnum = pgEnum(
 );
 export const userRoleEnum = pgEnum("user_role", userRoles);
 export const rateScopeEnum = pgEnum("rate_scope", rateScopes);
+export const billingCadenceEnum = pgEnum("billing_cadence", billingCadences);
 export const dispatchTaskTypeEnum = pgEnum(
   "dispatch_task_type",
   dispatchTaskTypes,
@@ -340,6 +359,18 @@ export const notificationStatusEnum = pgEnum(
 export const signatureAccessTokenPurposeEnum = pgEnum(
   "signature_access_token_purpose",
   signatureAccessTokenPurposes,
+);
+export const quickbooksConnectionStatusEnum = pgEnum(
+  "quickbooks_connection_status",
+  quickbooksConnectionStatuses,
+);
+export const quickbooksEnvironmentEnum = pgEnum(
+  "quickbooks_environment",
+  quickbooksEnvironments,
+);
+export const accountingSyncIssueStatusEnum = pgEnum(
+  "accounting_sync_issue_status",
+  accountingSyncIssueStatuses,
 );
 
 export const branches = pgTable(
@@ -477,6 +508,7 @@ export const rateCards = pgTable(
     name: text().notNull(),
     scope: rateScopeEnum().notNull(),
     customerId: text().references(() => customers.id),
+    branchId: text().references(() => branches.id),
     assetType: assetTypeEnum(),
     dailyRate: numeric({ precision: 12, scale: 2 }),
     weeklyRate: numeric({ precision: 12, scale: 2 }),
@@ -493,6 +525,10 @@ export const rateCards = pgTable(
   (table) => ({
     customerActiveIdx: index("rate_cards_customer_active_idx").on(
       table.customerId,
+      table.active,
+    ),
+    branchActiveIdx: index("rate_cards_branch_active_idx").on(
+      table.branchId,
       table.active,
     ),
     assetTypeActiveIdx: index("rate_cards_asset_type_active_idx").on(
@@ -519,6 +555,10 @@ export const contracts = pgTable(
     salesRepId: text().references(() => users.id),
     startDate: timestamp({ withTimezone: true }).notNull(),
     endDate: timestamp({ withTimezone: true }),
+    billingCadence: billingCadenceEnum()
+      .default("monthly_arrears")
+      .notNull(),
+    paymentTermsDays: integer().default(14).notNull(),
     status: contractStatusEnum().default("quoted").notNull(),
     quotedAt: timestamp({ withTimezone: true }),
     reservedAt: timestamp({ withTimezone: true }),
@@ -872,6 +912,53 @@ export const integrationSyncJobs = pgTable(
       table.entityType,
       table.entityId,
     ),
+  }),
+);
+
+export const quickbooksConnections = pgTable(
+  "quickbooks_connections",
+  {
+    id: text().primaryKey(),
+    realmId: text().notNull(),
+    companyName: text(),
+    environment: quickbooksEnvironmentEnum().default("sandbox").notNull(),
+    status: quickbooksConnectionStatusEnum().default("pending").notNull(),
+    scopes: jsonb().$type<string[]>().default([]).notNull(),
+    tokenType: text(),
+    accessTokenEncrypted: text(),
+    refreshTokenEncrypted: text(),
+    accessTokenExpiresAt: timestamp({ withTimezone: true }),
+    refreshTokenExpiresAt: timestamp({ withTimezone: true }),
+    connectedByUserId: text().references(() => users.id),
+    connectedAt: timestamp({ withTimezone: true }),
+    lastRefreshedAt: timestamp({ withTimezone: true }),
+    disconnectedAt: timestamp({ withTimezone: true }),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    realmUnique: uniqueIndex("quickbooks_connections_realm_id_unique").on(
+      table.realmId,
+    ),
+    statusIdx: index("quickbooks_connections_status_idx").on(table.status),
+  }),
+);
+
+export const quickbooksAuthStates = pgTable(
+  "quickbooks_auth_states",
+  {
+    id: text().primaryKey(),
+    state: text().notNull(),
+    requestedByUserId: text().references(() => users.id),
+    redirectPath: text(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    consumedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    stateUnique: uniqueIndex("quickbooks_auth_states_state_unique").on(table.state),
+    expiresIdx: index("quickbooks_auth_states_expires_at_idx").on(table.expiresAt),
   }),
 );
 
@@ -1400,6 +1487,37 @@ export const externalEntityMappings = pgTable(
   }),
 );
 
+export const accountingSyncIssues = pgTable(
+  "accounting_sync_issues",
+  {
+    id: text().primaryKey(),
+    provider: integrationProviderEnum().default("quickbooks").notNull(),
+    connectionId: text().references(() => quickbooksConnections.id),
+    syncJobId: text().references(() => integrationSyncJobs.id),
+    entityType: text().notNull(),
+    internalEntityId: text(),
+    externalEntityId: text(),
+    status: accountingSyncIssueStatusEnum().default("open").notNull(),
+    reasonCode: text().notNull(),
+    summary: text().notNull(),
+    details: jsonb().$type<Record<string, unknown>>(),
+    resolvedByUserId: text().references(() => users.id),
+    resolvedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("accounting_sync_issues_status_idx").on(
+      table.provider,
+      table.status,
+    ),
+    entityIdx: index("accounting_sync_issues_entity_idx").on(
+      table.entityType,
+      table.internalEntityId,
+    ),
+  }),
+);
+
 export const webhookReceipts = pgTable(
   "webhook_receipts",
   {
@@ -1409,9 +1527,13 @@ export const webhookReceipts = pgTable(
     externalEventId: text(),
     headers: jsonb().$type<Record<string, unknown>>().notNull(),
     payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    verified: boolean().default(false).notNull(),
+    verificationError: text(),
     status: webhookProcessingStatusEnum().default("received").notNull(),
+    attempts: integer().default(0).notNull(),
     processingError: text(),
     receivedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    lastAttemptAt: timestamp({ withTimezone: true }),
     processedAt: timestamp({ withTimezone: true }),
   },
   (table) => ({
@@ -1432,12 +1554,18 @@ export const outboxJobs = pgTable(
     aggregateId: text().notNull(),
     provider: integrationProviderEnum(),
     idempotencyKey: text(),
+    correlationId: text(),
     payload: jsonb().$type<Record<string, unknown>>().notNull(),
     attempts: integer().default(0).notNull(),
+    maxAttempts: integer().default(10).notNull(),
     availableAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    lockedBy: text(),
     startedAt: timestamp({ withTimezone: true }),
+    lastAttemptAt: timestamp({ withTimezone: true }),
     finishedAt: timestamp({ withTimezone: true }),
     lastError: text(),
+    deadLetteredAt: timestamp({ withTimezone: true }),
+    deadLetterReason: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({

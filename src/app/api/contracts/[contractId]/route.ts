@@ -1,5 +1,6 @@
-import { listContracts } from "@/lib/server/platform-service";
+import { listContracts } from "@/lib/server/platform";
 import { ok } from "@/lib/server/api";
+import { requireStaffApiPermission, resolveContractScope } from "@/lib/server/authorization";
 
 type ContractRouteParams = {
   params: Promise<{
@@ -7,9 +8,19 @@ type ContractRouteParams = {
   }>;
 };
 
-export async function GET(_request: Request, { params }: ContractRouteParams) {
+export async function GET(request: Request, { params }: ContractRouteParams) {
   const { contractId } = await params;
-  const contract = listContracts().find(
+  const scope = await resolveContractScope(contractId);
+
+  if (!scope) {
+    return ok({ error: "Contract not found" }, { status: 404 });
+  }
+
+  await requireStaffApiPermission(request, "contracts.view", {
+    branchId: scope.branchId ?? undefined,
+    customerId: scope.customerId ?? undefined,
+  });
+  const contract = (await listContracts()).find(
     (entry) => entry.id === contractId || entry.contractNumber === contractId,
   );
 

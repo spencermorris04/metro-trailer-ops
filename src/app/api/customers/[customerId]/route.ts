@@ -3,8 +3,13 @@ import {
   deleteCustomer,
   listCustomers,
   updateCustomer,
-} from "@/lib/server/platform-service";
+} from "@/lib/server/platform";
 import { errorResponse, noContent, ok, readJson } from "@/lib/server/api";
+import {
+  requireApiPermission,
+  requireStaffApiPermission,
+  resolveCustomerScope,
+} from "@/lib/server/authorization";
 
 type CustomerRouteParams = {
   params: Promise<{
@@ -12,9 +17,18 @@ type CustomerRouteParams = {
   }>;
 };
 
-export async function GET(_request: Request, { params }: CustomerRouteParams) {
+export async function GET(request: Request, { params }: CustomerRouteParams) {
   const { customerId } = await params;
-  const customer = listCustomers().find(
+  const scope = await resolveCustomerScope(customerId);
+
+  if (!scope) {
+    return ok({ error: "Customer not found" }, { status: 404 });
+  }
+
+  await requireStaffApiPermission(request, "customers.view", {
+    customerId: scope.customerId ?? undefined,
+  });
+  const customer = (await listCustomers()).find(
     (entry) =>
       entry.id === customerId ||
       entry.customerNumber === customerId ||
@@ -29,19 +43,37 @@ export async function GET(_request: Request, { params }: CustomerRouteParams) {
 export async function PATCH(request: Request, { params }: CustomerRouteParams) {
   try {
     const { customerId } = await params;
+    const scope = await resolveCustomerScope(customerId);
+
+    if (!scope) {
+      return ok({ error: "Customer not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "customers.manage", {
+      customerId: scope.customerId ?? undefined,
+    });
     const payload = await readJson(request);
     const parsed = customerUpdateSchema.parse(payload);
-    const data = updateCustomer(customerId, parsed);
+    const data = await updateCustomer(customerId, parsed, actor.userId ?? undefined);
     return ok({ message: "Customer updated.", data });
   } catch (error) {
     return errorResponse(error);
   }
 }
 
-export async function DELETE(_request: Request, { params }: CustomerRouteParams) {
+export async function DELETE(request: Request, { params }: CustomerRouteParams) {
   try {
     const { customerId } = await params;
-    deleteCustomer(customerId);
+    const scope = await resolveCustomerScope(customerId);
+
+    if (!scope) {
+      return ok({ error: "Customer not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "customers.manage", {
+      customerId: scope.customerId ?? undefined,
+    });
+    await deleteCustomer(customerId, actor.userId ?? undefined);
     return noContent();
   } catch (error) {
     return errorResponse(error);

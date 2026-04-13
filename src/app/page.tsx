@@ -5,7 +5,7 @@ import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { assetTransitionMap, contractTransitionMap } from "@/lib/domain/lifecycle";
 import { titleize } from "@/lib/format";
-import { getDashboardSummary } from "@/lib/server/platform-service";
+import { getDashboardSummary } from "@/lib/server/platform";
 import {
   domainCards,
   integrationBlueprint,
@@ -15,8 +15,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage() {
-  const summary = getDashboardSummary();
+export default async function HomePage() {
+  const summary = await getDashboardSummary();
 
   return (
     <>

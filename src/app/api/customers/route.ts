@@ -1,9 +1,11 @@
 import { customerSchema } from "@/lib/domain/validators";
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
-import { requireApiPermission } from "@/lib/server/authorization";
+import { requireApiPermission, requireStaffApiPermission } from "@/lib/server/authorization";
 import { createCustomer, listCustomers } from "@/lib/server/platform";
 
 export async function GET(request: Request) {
+  await requireStaffApiPermission(request, "customers.view");
+
   const { searchParams } = new URL(request.url);
   const data = await listCustomers({
     q: searchParams.get("q") ?? undefined,
@@ -19,10 +21,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requireApiPermission(request, "customers.manage");
+    const actor = await requireApiPermission(request, "customers.manage");
     const payload = await readJson(request);
     const parsed = customerSchema.parse(payload);
-    const data = await createCustomer(parsed);
+    const data = await createCustomer(parsed, actor.userId ?? undefined);
 
     return created({
       message: "Customer created.",

@@ -15,6 +15,13 @@
       "when": 1776104968358,
       "tag": "0001_crazy_baron_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776110066233,
+      "tag": "0002_aromatic_ben_parker",
+      "breakpoints": true
     }
   ]
 }

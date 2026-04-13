@@ -1,7 +1,12 @@
 import { canTransitionContract, contractTransitionMap } from "@/lib/domain/lifecycle";
 import { contractTransitionSchema } from "@/lib/domain/validators";
-import { errorResponse, ok, readJson } from "@/lib/server/api";
-import { listContracts, transitionContract } from "@/lib/server/platform-service";
+import { errorResponse, getIdempotencyKey, ok, readJson } from "@/lib/server/api";
+import {
+  requireApiPermission,
+  requireStaffApiPermission,
+  resolveContractScope,
+} from "@/lib/server/authorization";
+import { listContracts, transitionContract } from "@/lib/server/platform";
 
 type TransitionRouteParams = {
   params: Promise<{
@@ -10,11 +15,21 @@ type TransitionRouteParams = {
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: TransitionRouteParams,
 ) {
   const { contractId } = await params;
-  const contract = listContracts().find(
+  const scope = await resolveContractScope(contractId);
+
+  if (!scope) {
+    return ok({ error: "Contract not found" }, { status: 404 });
+  }
+
+  await requireStaffApiPermission(request, "contracts.view", {
+    branchId: scope.branchId ?? undefined,
+    customerId: scope.customerId ?? undefined,
+  });
+  const contract = (await listContracts()).find(
     (entry) => entry.id === contractId || entry.contractNumber === contractId,
   );
 
@@ -34,7 +49,17 @@ export async function POST(
 ) {
   try {
     const { contractId } = await params;
-    const contract = listContracts().find(
+    const scope = await resolveContractScope(contractId);
+
+    if (!scope) {
+      return ok({ error: "Contract not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "contracts.manage", {
+      branchId: scope.branchId ?? undefined,
+      customerId: scope.customerId ?? undefined,
+    });
+    const contract = (await listContracts()).find(
       (entry) => entry.id === contractId || entry.contractNumber === contractId,
     );
 
@@ -42,8 +67,13 @@ export async function POST(
       return ok({ error: "Contract not found" }, { status: 404 });
     }
 
-    const payload = await readJson(request);
-    const parsed = contractTransitionSchema.parse(payload);
+    const payload = await readJson<Record<string, unknown>>(request);
+    const parsed = contractTransitionSchema.parse({
+      ...payload,
+      idempotencyKey:
+        (typeof payload.idempotencyKey === "string" ? payload.idempotencyKey : undefined) ??
+        getIdempotencyKey(request),
+    });
 
     if (contract.status !== parsed.fromStatus) {
       return ok(
@@ -65,7 +95,16 @@ export async function POST(
       );
     }
 
-    const data = transitionContract(contractId, parsed.toStatus, "System", parsed.reason);
+    const data = await transitionContract(
+      contractId,
+      parsed.toStatus,
+      actor.userId ?? undefined,
+      parsed.reason,
+      {
+        effectiveAt: parsed.effectiveAt,
+        idempotencyKey: parsed.idempotencyKey,
+      },
+    );
 
     return ok({
       message: "Contract transitioned.",

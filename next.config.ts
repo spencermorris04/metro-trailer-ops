@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    prerenderEarlyExit: false,
+    serverMinification: false,
+  },
 };
 
 export default nextConfig;

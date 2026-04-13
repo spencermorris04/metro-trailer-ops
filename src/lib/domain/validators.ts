@@ -46,6 +46,7 @@ export const assetUpdateSchema = assetSchema.partial();
 export const assetTransitionSchema = z.object({
   toStatus: z.enum(assetStatuses),
   reason: z.string().min(3).default("Manual asset lifecycle transition"),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const customerLocationInputSchema = z.object({
@@ -96,6 +97,7 @@ export const contractSchema = z
     endDate: z.coerce.date().nullable().optional(),
     status: z.enum(contractStatuses).default("quoted"),
     lines: z.array(contractLineSchema).min(1),
+    idempotencyKey: z.string().min(8).max(200).optional(),
   })
   .refine(
     (contract) => !contract.endDate || contract.endDate >= contract.startDate,
@@ -107,6 +109,7 @@ export const contractTransitionSchema = z.object({
   toStatus: z.enum(contractStatuses),
   reason: z.string().min(3),
   effectiveAt: z.coerce.date().optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const contractAmendmentSchema = z.object({
@@ -120,6 +123,8 @@ export const contractAmendmentSchema = z.object({
   extendedEndDate: z.string().optional(),
   assetNumbersToAdd: z.array(z.string()).optional(),
   assetNumbersToRemove: z.array(z.string()).optional(),
+  effectiveAt: z.coerce.date().optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const financialEventSchema = z.object({
@@ -144,12 +149,20 @@ export const dispatchTaskSchema = z.object({
   status: z.enum(["unassigned", "assigned", "in_progress", "completed", "cancelled"]).optional(),
   branch: z.string().min(2),
   assetNumber: z.string().min(3),
+  contractNumber: z.string().min(3).optional(),
   customerSite: z.string().min(2),
   scheduledFor: z.string().min(3),
+  scheduledEnd: z.string().min(3).optional(),
+  driverName: z.string().min(2).max(120).optional(),
+  notes: z.string().min(2).max(2000).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const dispatchConfirmationSchema = z.object({
   outcome: z.enum(["delivery_confirmed", "pickup_confirmed", "swap_confirmed"]),
+  notes: z.string().min(2).max(2000).optional(),
+  completedAt: z.string().optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const inspectionRequestSchema = z.object({
@@ -163,6 +176,9 @@ export const inspectionCompletionSchema = z.object({
   status: z.enum(["passed", "failed", "needs_review"]),
   damageSummary: z.string().min(3),
   photos: z.array(z.string().url()).optional(),
+  damageScore: z.number().int().min(0).max(100).optional(),
+  media: z.array(z.record(z.string(), z.unknown())).optional(),
+  externalInspectionId: z.string().min(2).optional(),
 });
 
 export const workOrderSchema = z.object({
@@ -171,6 +187,46 @@ export const workOrderSchema = z.object({
   branch: z.string().min(2),
   priority: z.string().min(2),
   source: z.string().min(2),
+  inspectionId: z.string().min(1).optional(),
+  technicianUserId: z.string().min(1).optional(),
+  vendorName: z.string().min(2).max(200).optional(),
+  estimatedCost: z.number().nonnegative().optional(),
+  laborHours: z.number().nonnegative().optional(),
+  status: z.enum(["open", "assigned", "in_progress", "awaiting_parts"]).optional(),
+  laborEntries: z.array(z.object({
+    technicianUserId: z.string().min(1).optional(),
+    hours: z.number().positive(),
+    hourlyRate: z.number().nonnegative().optional(),
+    notes: z.string().max(2000).optional(),
+  })).optional(),
+  partEntries: z.array(z.object({
+    partNumber: z.string().max(120).optional(),
+    description: z.string().min(2).max(200),
+    quantity: z.number().positive(),
+    unitCost: z.number().nonnegative().optional(),
+  })).optional(),
+  notes: z.string().max(2000).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderCompletionSchema = z.object({
+  notes: z.string().max(2000).optional(),
+  actualCost: z.number().nonnegative().optional(),
+  laborHours: z.number().nonnegative().optional(),
+  technicianUserId: z.string().min(1).optional(),
+  vendorName: z.string().min(2).max(200).optional(),
+  laborEntries: z.array(z.object({
+    technicianUserId: z.string().min(1).optional(),
+    hours: z.number().positive(),
+    hourlyRate: z.number().nonnegative().optional(),
+    notes: z.string().max(2000).optional(),
+  })).optional(),
+  partEntries: z.array(z.object({
+    partNumber: z.string().max(120).optional(),
+    description: z.string().min(2).max(200),
+    quantity: z.number().positive(),
+    unitCost: z.number().nonnegative().optional(),
+  })).optional(),
 });
 
 export const invoicePaymentSchema = z.object({
@@ -179,19 +235,73 @@ export const invoicePaymentSchema = z.object({
 
 export const paymentIntentSchema = z.object({
   invoiceId: z.string().min(1),
+  paymentMethodId: z.string().min(1).optional(),
 });
 
 export const paymentMethodSchema = z.object({
   customerNumber: z.string().min(3),
-  methodType: z.enum(["card", "ach", "wire", "check"]),
-  label: z.string().min(2),
-  last4: z.string().length(4),
+  stripePaymentMethodId: z.string().min(3).optional(),
+  methodType: z.enum(["card", "ach", "wire", "check"]).optional(),
+  label: z.string().min(2).optional(),
+  last4: z.string().length(4).optional(),
+  isDefault: z.boolean().optional(),
+}).superRefine((value, ctx) => {
+  if (!value.stripePaymentMethodId) {
+    if (!value.methodType) {
+      ctx.addIssue({
+        code: "custom",
+        message: "methodType is required when no Stripe payment method ID is provided.",
+        path: ["methodType"],
+      });
+    }
+    if (!value.label) {
+      ctx.addIssue({
+        code: "custom",
+        message: "label is required when no Stripe payment method ID is provided.",
+        path: ["label"],
+      });
+    }
+    if (!value.last4) {
+      ctx.addIssue({
+        code: "custom",
+        message: "last4 is required when no Stripe payment method ID is provided.",
+        path: ["last4"],
+      });
+    }
+  }
+});
+
+export const paymentSetupIntentSchema = z.object({
+  customerNumber: z.string().min(3),
+});
+
+export const paymentMethodDefaultSchema = z.object({
+  paymentMethodId: z.string().min(1),
+});
+
+export const paymentHistoryQuerySchema = z.object({
+  customerNumber: z.string().min(3).optional(),
+  invoiceId: z.string().min(1).optional(),
+});
+
+export const paymentRefundSchema = z.object({
+  transactionId: z.string().min(1),
+  amount: z.number().positive().optional(),
 });
 
 export const collectionUpdateSchema = z.object({
   status: z.string().min(2).optional(),
   promisedPaymentDate: z.string().nullable().optional(),
+  promisedPaymentAmount: z.number().positive().optional(),
   note: z.string().optional(),
+});
+
+export const collectionsEvaluateSchema = z.object({
+  collectionCaseId: z.string().min(1).optional(),
+});
+
+export const telematicsScheduleSchema = z.object({
+  branchId: z.string().min(1).optional(),
 });
 
 export const documentSchema = z.object({
@@ -225,9 +335,15 @@ export const signatureCancelSchema = z.object({
   reason: z.string().min(3).max(500),
 });
 
+export const signatureOtpRequestSchema = z.object({
+  signerId: z.string().min(1),
+  token: z.string().min(24),
+});
+
 export const signatureSignSchema = z.object({
   signerId: z.string().min(1),
   token: z.string().min(24),
+  otpCode: z.string().regex(/^\d{6}$/, "Verification code must be 6 digits."),
   signatureText: z.string().min(2).max(160),
   signerTitle: z.string().min(2).max(120).optional(),
   intentAccepted: z.literal(true),

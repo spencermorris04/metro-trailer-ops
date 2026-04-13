@@ -1,4 +1,6 @@
-import { and, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
+import { createHash } from "node:crypto";
+
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import {
@@ -8,6 +10,7 @@ import {
 import type {
   AssetRecord,
   AssetStatusKey,
+  BillingUnitKey,
   ContractRecord,
   ContractStatusKey,
   CustomerLocationRecord,
@@ -18,17 +21,41 @@ import type {
 import type {
   AuditEventRecord,
   FleetUtilizationRecord,
-  PaymentMethodRecord,
   RevenueSeriesPoint,
   UserRecord,
 } from "@/lib/platform-types";
 import { ApiError } from "@/lib/server/api";
+import { appendAuditEvent } from "@/lib/server/audit";
 import {
   buildRevenueExport,
-  createStripePaymentIntent,
-  createStripePortalSession,
 } from "@/lib/server/integration-clients";
 import { enqueueOutboxJob } from "@/lib/server/outbox";
+import {
+  addPaymentMethod as addPaymentMethodRecord,
+  createCustomerPortalSession,
+  createSetupIntentForCustomer,
+  createPaymentIntentForInvoice as createStripePaymentIntentForInvoice,
+  listPaymentMethods as listStripePaymentMethods,
+  listPaymentTransactions,
+  refundPaymentTransaction,
+  processStripeWebhookReceipt,
+  setDefaultPaymentMethod as setDefaultStripePaymentMethod,
+  type CreatePaymentIntentInput,
+} from "@/lib/server/payments.production";
+import {
+  applyPaymentToInvoice,
+  buildInvoiceLinesFromFinancialEvents,
+  buildReversalEvent,
+  calculateInvoiceTotals,
+  createOneTimeChargeEvents,
+  createRecurringRentEvents,
+  deriveInvoiceStatus,
+  normalizeInvoiceDate,
+  parsePricingAdjustments,
+  selectInvoiceableFinancialEvents,
+  type BillingCadence,
+  type RateCardInput,
+} from "@/lib/server/pricing-engine";
 import {
   createId,
   now,
@@ -36,6 +63,10 @@ import {
   toDate,
   toIso,
 } from "@/lib/server/production-utils";
+
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+type AllocationType = typeof schema.assetAllocations.$inferInsert.allocationType;
 
 type AddressInput = {
   line1: string;
@@ -58,7 +89,7 @@ type CustomerLocationInput = {
   contactPerson: ContactInput;
 };
 
-type CreateAssetInput = {
+export type CreateAssetInput = {
   assetNumber: string;
   type: AssetRecord["type"];
   branchId: string;
@@ -69,27 +100,29 @@ type CreateAssetInput = {
   dimensions?: string;
   ageInMonths?: number;
   features?: string[];
+  idempotencyKey?: string;
 };
 
-type UpdateAssetInput = Partial<CreateAssetInput>;
+export type UpdateAssetInput = Partial<CreateAssetInput>;
 
-type CreateCustomerInput = {
+export type CreateCustomerInput = {
   customerNumber: string;
   name: string;
   customerType: CustomerRecord["customerType"];
   contactInfo?: ContactInput;
   billingAddress: AddressInput;
   locations?: CustomerLocationInput[];
+  idempotencyKey?: string;
 };
 
-type UpdateCustomerInput = {
+export type UpdateCustomerInput = {
   name?: string;
   customerType?: CustomerRecord["customerType"];
   portalEnabled?: boolean;
   branchCoverage?: string[];
 };
 
-type ContractLineInput = {
+export type ContractLineInput = {
   assetId?: string;
   description?: string;
   unitPrice: number;
@@ -98,41 +131,66 @@ type ContractLineInput = {
   startDate: Date;
   endDate?: Date | null;
   adjustments?: string[];
+  lineId?: string;
 };
 
-type CreateContractInput = {
+export type CreateContractInput = {
   contractNumber: string;
   customerId: string;
   locationId: string;
   branchId: string;
   startDate: Date;
   endDate?: Date | null;
+  billingCadence?: BillingCadence;
+  paymentTermsDays?: number;
   status?: ContractRecord["status"];
   lines: ContractLineInput[];
+  idempotencyKey?: string;
 };
 
-type AmendContractInput = {
+export type AmendContractInput = {
   amendmentType: string;
   notes?: string;
   extendedEndDate?: string;
   assetNumbersToAdd?: string[];
   assetNumbersToRemove?: string[];
+  effectiveAt?: string | Date;
+  idempotencyKey?: string;
 };
 
-type CreateFinancialEventInput = {
+export type CreateFinancialEventInput = {
   contractId: string;
   eventType: FinancialEventRecord["eventType"];
   description: string;
   amount: number;
   eventDate: Date | string;
+  contractLineId?: string;
+  assetId?: string;
+  externalReference?: string;
+  metadata?: Record<string, unknown>;
+  reversalForEventId?: string;
   status?: FinancialEventRecord["status"];
+  idempotencyKey?: string;
 };
 
-type AddPaymentMethodInput = {
+export type AddPaymentMethodInput = {
   customerNumber: string;
-  methodType: string;
-  label: string;
-  last4: string;
+  stripePaymentMethodId?: string;
+  methodType?: "card" | "ach" | "wire" | "check";
+  label?: string;
+  last4?: string;
+  isDefault?: boolean;
+  idempotencyKey?: string;
+};
+
+export type ContractTransitionOptions = {
+  effectiveAt?: Date | null;
+  idempotencyKey?: string;
+};
+
+export type AssetTransitionOptions = {
+  effectiveAt?: Date | null;
+  idempotencyKey?: string;
 };
 
 function requireRecord<T>(value: T | undefined, message: string) {
@@ -141,6 +199,113 @@ function requireRecord<T>(value: T | undefined, message: string) {
   }
 
   return value;
+}
+
+function notImplemented(feature: string): never {
+  throw new ApiError(501, `${feature} is not implemented in the production runtime.`, {
+    feature,
+  });
+}
+
+function createRequestHash(payload: unknown) {
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+function normalizeDateValue(value?: string | Date | null) {
+  return value ? requireRecord(toDate(value), "Invalid date supplied.") : now();
+}
+
+function farFuture() {
+  return new Date("9999-12-31T23:59:59.999Z");
+}
+
+function rangesOverlap(
+  startA: Date,
+  endA: Date | null,
+  startB: Date,
+  endB: Date | null,
+) {
+  return startA <= (endB ?? farFuture()) && startB <= (endA ?? farFuture());
+}
+
+async function withIdempotency<T extends Record<string, unknown>>(options: {
+  key?: string | null;
+  requestPath: string;
+  requestMethod?: string;
+  payload: unknown;
+  execute: () => Promise<T>;
+}) {
+  const key = options.key?.trim();
+  const requestMethod = (options.requestMethod ?? "POST").toUpperCase();
+  if (!key) {
+    return options.execute();
+  }
+
+  const requestHash = createRequestHash(options.payload);
+  const findExisting = async () =>
+    db.query.idempotencyKeys.findFirst({
+      where: (table, { and: localAnd, eq: localEq }) =>
+        localAnd(
+          localEq(table.key, key),
+          localEq(table.requestMethod, requestMethod),
+          localEq(table.requestPath, options.requestPath),
+        ),
+    });
+
+  const existing = await findExisting();
+  if (existing) {
+    if (existing.requestHash !== requestHash) {
+      throw new ApiError(409, "Idempotency key was reused with different request content.", {
+        requestPath: options.requestPath,
+      });
+    }
+    if (!existing.completedAt) {
+      throw new ApiError(409, "An identical request is already in progress.", {
+        requestPath: options.requestPath,
+      });
+    }
+    if (existing.responseBody) {
+      return existing.responseBody as T;
+    }
+  } else {
+    try {
+      await db.insert(schema.idempotencyKeys).values({
+        id: createId("idem"),
+        key,
+        requestPath: options.requestPath,
+        requestMethod,
+        requestHash,
+        lockedAt: now(),
+        createdAt: now(),
+      });
+    } catch {
+      const duplicate = await findExisting();
+      if (duplicate?.requestHash === requestHash && duplicate.completedAt && duplicate.responseBody) {
+        return duplicate.responseBody as T;
+      }
+      throw new ApiError(409, "An identical request is already being processed.", {
+        requestPath: options.requestPath,
+      });
+    }
+  }
+
+  const result = await options.execute();
+  await db
+    .update(schema.idempotencyKeys)
+    .set({
+      responseStatus: 200,
+      responseBody: result,
+      completedAt: now(),
+    })
+    .where(
+      and(
+        eq(schema.idempotencyKeys.key, key),
+        eq(schema.idempotencyKeys.requestMethod, requestMethod),
+        eq(schema.idempotencyKeys.requestPath, options.requestPath),
+      ),
+    );
+
+  return result;
 }
 
 function billingCity(address: Record<string, unknown>) {
@@ -195,15 +360,7 @@ async function pushAudit(event: {
   userId?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  await db.insert(schema.auditEvents).values({
-    id: createId("audit"),
-    entityType: event.entityType,
-    entityId: event.entityId,
-    eventType: event.eventType,
-    userId: event.userId ?? null,
-    metadata: event.metadata ?? {},
-    createdAt: now(),
-  });
+  await appendAuditEvent(event);
 }
 
 async function getAssetByIdOrNumber(assetId: string) {
@@ -244,6 +401,573 @@ async function getInvoiceByIdOrNumber(invoiceId: string) {
   });
 
   return requireRecord(invoice, `Invoice ${invoiceId} not found.`);
+}
+
+async function lockContractRow(tx: DbTransaction, contractId: string) {
+  await tx.execute(
+    sql`select ${schema.contracts.id} from ${schema.contracts} where ${eq(schema.contracts.id, contractId)} for update`,
+  );
+}
+
+async function lockAssetRows(tx: DbTransaction, assetIds: string[]) {
+  if (assetIds.length === 0) {
+    return;
+  }
+
+  await tx.execute(
+    sql`select ${schema.assets.id} from ${schema.assets} where ${inArray(schema.assets.id, assetIds)} for update`,
+  );
+}
+
+async function getBranchByIdOrName(branchId: string, tx: DbTransaction | typeof db = db) {
+  const rows = await tx
+    .select()
+    .from(schema.branches)
+    .where(or(eq(schema.branches.id, branchId), eq(schema.branches.name, branchId)))
+    .limit(1);
+
+  return requireRecord(rows[0], `Branch ${branchId} not found.`);
+}
+
+async function getLocationById(tx: DbTransaction | typeof db, locationId: string) {
+  const rows = await tx
+    .select()
+    .from(schema.customerLocations)
+    .where(eq(schema.customerLocations.id, locationId))
+    .limit(1);
+
+  return requireRecord(rows[0], `Location ${locationId} not found.`);
+}
+
+async function getContractLines(
+  tx: DbTransaction | typeof db,
+  contractId: string,
+) {
+  return tx
+    .select()
+    .from(schema.contractLines)
+    .where(eq(schema.contractLines.contractId, contractId));
+}
+
+async function resolveAssetReferences(
+  tx: DbTransaction | typeof db,
+  references: string[],
+) {
+  const uniqueReferences = Array.from(new Set(references.filter(Boolean)));
+  if (uniqueReferences.length === 0) {
+    return new Map<string, typeof schema.assets.$inferSelect>();
+  }
+
+  const rows = await tx
+    .select()
+    .from(schema.assets)
+    .where(
+      or(
+        inArray(schema.assets.id, uniqueReferences),
+        inArray(schema.assets.assetNumber, uniqueReferences),
+      ),
+    );
+
+  const byReference = new Map<string, typeof schema.assets.$inferSelect>();
+  rows.forEach((row) => {
+    byReference.set(row.id, row);
+    byReference.set(row.assetNumber, row);
+  });
+  return byReference;
+}
+
+async function assertAssetsMatchBranch(
+  resolvedAssets: Array<typeof schema.assets.$inferSelect>,
+  branchId: string,
+) {
+  const mismatched = resolvedAssets.find((asset) => asset.branchId !== branchId);
+  if (mismatched) {
+    throw new ApiError(409, "Asset branch does not match the contract branch.", {
+      assetNumber: mismatched.assetNumber,
+      assetBranchId: mismatched.branchId,
+      contractBranchId: branchId,
+    });
+  }
+}
+
+async function getActiveAllocationsForAssets(
+  tx: DbTransaction | typeof db,
+  assetIds: string[],
+) {
+  if (assetIds.length === 0) {
+    return [] as typeof schema.assetAllocations.$inferSelect[];
+  }
+
+  return tx
+    .select()
+    .from(schema.assetAllocations)
+    .where(
+      and(
+        inArray(schema.assetAllocations.assetId, assetIds),
+        eq(schema.assetAllocations.active, true),
+      ),
+    );
+}
+
+async function assertNoAllocationConflicts(
+  tx: DbTransaction,
+  requests: Array<{
+    assetId: string;
+    startsAt: Date;
+    endsAt: Date | null;
+  }>,
+  ignoredContractId?: string | null,
+) {
+  if (requests.length === 0) {
+    return;
+  }
+
+  for (let index = 0; index < requests.length; index += 1) {
+    for (let compareIndex = index + 1; compareIndex < requests.length; compareIndex += 1) {
+      if (
+        requests[index]?.assetId === requests[compareIndex]?.assetId &&
+        rangesOverlap(
+          requests[index]!.startsAt,
+          requests[index]!.endsAt,
+          requests[compareIndex]!.startsAt,
+          requests[compareIndex]!.endsAt,
+        )
+      ) {
+        throw new ApiError(409, "The same asset was assigned more than once in an overlapping window.", {
+          assetId: requests[index]!.assetId,
+        });
+      }
+    }
+  }
+
+  const existing = await getActiveAllocationsForAssets(
+    tx,
+    Array.from(new Set(requests.map((request) => request.assetId))),
+  );
+  const conflict = existing.find((allocation) => {
+    if (ignoredContractId && allocation.contractId === ignoredContractId) {
+      return false;
+    }
+
+    return requests.some(
+      (request) =>
+        request.assetId === allocation.assetId &&
+        rangesOverlap(request.startsAt, request.endsAt, allocation.startsAt, allocation.endsAt),
+    );
+  });
+
+  if (!conflict) {
+    return;
+  }
+
+  const asset = await getAssetByIdOrNumber(conflict.assetId);
+  throw new ApiError(409, "Asset allocation conflict detected.", {
+    assetId: conflict.assetId,
+    assetNumber: asset.assetNumber,
+    allocationType: conflict.allocationType,
+    contractId: conflict.contractId,
+  });
+}
+
+async function upsertContractAllocations(tx: DbTransaction, options: {
+  contractId: string;
+  lines: typeof schema.contractLines.$inferSelect[];
+  allocationType: AllocationType;
+  sourceEvent: string;
+  effectiveAt?: Date | null;
+  endDateOverride?: Date | null;
+}) {
+  const allocatableLines = options.lines.filter(
+    (line): line is typeof schema.contractLines.$inferSelect & { assetId: string } =>
+      Boolean(line.assetId),
+  );
+  if (allocatableLines.length === 0) {
+    return;
+  }
+
+  await tx.insert(schema.assetAllocations).values(
+    allocatableLines.map((line) => ({
+      id: createId("alloc"),
+      assetId: line.assetId,
+      contractId: options.contractId,
+      contractLineId: line.id,
+      allocationType: options.allocationType,
+      startsAt:
+        options.effectiveAt && options.effectiveAt > line.startDate
+          ? options.effectiveAt
+          : line.startDate,
+      endsAt: options.endDateOverride === undefined ? line.endDate : options.endDateOverride,
+      sourceEvent: options.sourceEvent,
+      active: true,
+      createdAt: now(),
+      updatedAt: now(),
+    })),
+  );
+}
+
+async function deactivateContractAllocations(
+  tx: DbTransaction,
+  contractId: string,
+  endedAt: Date,
+) {
+  await tx
+    .update(schema.assetAllocations)
+    .set({
+      active: false,
+      endsAt: endedAt,
+      updatedAt: now(),
+    })
+    .where(
+      and(
+        eq(schema.assetAllocations.contractId, contractId),
+        eq(schema.assetAllocations.active, true),
+      ),
+    );
+}
+
+function deriveAssetStateFromAllocations(
+  asset: typeof schema.assets.$inferSelect,
+  allocations: typeof schema.assetAllocations.$inferSelect[],
+) {
+  if (asset.status === "retired") {
+    return {
+      status: "retired" as const,
+      availability: "unavailable" as const,
+      maintenanceStatus: asset.maintenanceStatus,
+    };
+  }
+
+  const allocationTypes = allocations.map((allocation) => allocation.allocationType);
+  if (allocationTypes.includes("maintenance_hold")) {
+    return {
+      status: "in_maintenance" as const,
+      availability: "unavailable" as const,
+      maintenanceStatus:
+        asset.maintenanceStatus === "clear" ? "scheduled" : asset.maintenanceStatus,
+    };
+  }
+  if (allocationTypes.includes("inspection_hold")) {
+    return {
+      status: "inspection_hold" as const,
+      availability: "limited" as const,
+      maintenanceStatus: "inspection_required" as const,
+    };
+  }
+  if (allocationTypes.includes("on_rent") || allocationTypes.includes("swap_in")) {
+    return {
+      status: "on_rent" as const,
+      availability: "unavailable" as const,
+      maintenanceStatus: "clear" as const,
+    };
+  }
+  if (allocationTypes.includes("reservation") || allocationTypes.includes("swap_out")) {
+    return {
+      status: "reserved" as const,
+      availability: "limited" as const,
+      maintenanceStatus: "clear" as const,
+    };
+  }
+
+  return {
+    status: "available" as const,
+    availability: "rentable" as const,
+    maintenanceStatus: "clear" as const,
+  };
+}
+
+async function refreshAssetStates(tx: DbTransaction, assetIds: string[]) {
+  const uniqueAssetIds = Array.from(new Set(assetIds.filter(Boolean)));
+  if (uniqueAssetIds.length === 0) {
+    return;
+  }
+
+  const [assets, allocations] = await Promise.all([
+    tx.select().from(schema.assets).where(inArray(schema.assets.id, uniqueAssetIds)),
+    getActiveAllocationsForAssets(tx, uniqueAssetIds),
+  ]);
+
+  const byAssetId = new Map<string, typeof schema.assetAllocations.$inferSelect[]>();
+  allocations.forEach((allocation) => {
+    const current = byAssetId.get(allocation.assetId) ?? [];
+    current.push(allocation);
+    byAssetId.set(allocation.assetId, current);
+  });
+
+  for (const asset of assets) {
+    const derived = deriveAssetStateFromAllocations(asset, byAssetId.get(asset.id) ?? []);
+    await tx
+      .update(schema.assets)
+      .set({
+        status: derived.status,
+        availability: derived.availability,
+        maintenanceStatus: derived.maintenanceStatus,
+        updatedAt: now(),
+      })
+      .where(eq(schema.assets.id, asset.id));
+  }
+}
+
+async function syncManualAssetAllocation(tx: DbTransaction, options: {
+  assetId: string;
+  toStatus: AssetStatusKey;
+  effectiveAt: Date;
+}) {
+  const activeAllocations = await getActiveAllocationsForAssets(tx, [options.assetId]);
+  const contractBoundAllocations = activeAllocations.filter((allocation) => allocation.contractId);
+  if (
+    contractBoundAllocations.length > 0 &&
+    ["available", "reserved", "on_rent", "inspection_hold", "in_maintenance"].includes(
+      options.toStatus,
+    )
+  ) {
+    throw new ApiError(409, "Asset lifecycle is currently governed by active contract allocations.", {
+      assetId: options.assetId,
+      activeAllocationCount: contractBoundAllocations.length,
+    });
+  }
+
+  await tx
+    .update(schema.assetAllocations)
+    .set({
+      active: false,
+      endsAt: options.effectiveAt,
+      updatedAt: now(),
+    })
+    .where(
+      and(
+        eq(schema.assetAllocations.assetId, options.assetId),
+        eq(schema.assetAllocations.active, true),
+        isNull(schema.assetAllocations.contractId),
+      ),
+    );
+
+  let allocationType: AllocationType | null = null;
+  if (options.toStatus === "reserved") {
+    allocationType = "reservation";
+  } else if (options.toStatus === "on_rent") {
+    allocationType = "on_rent";
+  } else if (options.toStatus === "inspection_hold") {
+    allocationType = "inspection_hold";
+  } else if (options.toStatus === "in_maintenance") {
+    allocationType = "maintenance_hold";
+  }
+
+  if (allocationType) {
+    await tx.insert(schema.assetAllocations).values({
+      id: createId("alloc"),
+      assetId: options.assetId,
+      contractId: null,
+      contractLineId: null,
+      allocationType,
+      startsAt: options.effectiveAt,
+      endsAt: null,
+      sourceEvent: "manual_asset_transition",
+      active: true,
+      createdAt: now(),
+      updatedAt: now(),
+    });
+  }
+}
+
+async function applyContractLifecycleInTransaction(
+  tx: DbTransaction,
+  contract: typeof schema.contracts.$inferSelect,
+  toStatus: ContractStatusKey,
+  effectiveAt: Date,
+) {
+  const lines = await getContractLines(tx, contract.id);
+  const assetIds = lines
+    .map((line) => line.assetId)
+    .filter((value): value is string => Boolean(value));
+
+  await lockAssetRows(tx, assetIds);
+  if (toStatus === "reserved" || toStatus === "active") {
+    await assertNoAllocationConflicts(
+      tx,
+      lines
+        .filter((line): line is typeof schema.contractLines.$inferSelect & { assetId: string } =>
+          Boolean(line.assetId),
+        )
+        .map((line) => ({
+          assetId: line.assetId,
+          startsAt: effectiveAt > line.startDate ? effectiveAt : line.startDate,
+          endsAt: line.endDate,
+        })),
+      contract.id,
+    );
+  }
+
+  await deactivateContractAllocations(tx, contract.id, effectiveAt);
+
+  if (toStatus === "reserved") {
+    await upsertContractAllocations(tx, {
+      contractId: contract.id,
+      lines,
+      allocationType: "reservation",
+      sourceEvent: "contract_reserved",
+      effectiveAt,
+    });
+  }
+
+  if (toStatus === "active") {
+    await upsertContractAllocations(tx, {
+      contractId: contract.id,
+      lines,
+      allocationType: "on_rent",
+      sourceEvent: "contract_activated",
+      effectiveAt,
+    });
+  }
+
+  if (toStatus === "completed") {
+    await upsertContractAllocations(tx, {
+      contractId: contract.id,
+      lines,
+      allocationType: "inspection_hold",
+      sourceEvent: "contract_completed",
+      effectiveAt,
+      endDateOverride: null,
+    });
+  }
+
+  await refreshAssetStates(tx, assetIds);
+}
+
+type ContractLineFinanceRow = typeof schema.contractLines.$inferSelect & {
+  assetType: AssetRecord["type"] | null;
+};
+
+async function getContractFinanceRows(contractId: string) {
+  return db
+    .select({
+      id: schema.contractLines.id,
+      contractId: schema.contractLines.contractId,
+      assetId: schema.contractLines.assetId,
+      description: schema.contractLines.description,
+      unitPrice: schema.contractLines.unitPrice,
+      unit: schema.contractLines.unit,
+      quantity: schema.contractLines.quantity,
+      startDate: schema.contractLines.startDate,
+      endDate: schema.contractLines.endDate,
+      adjustments: schema.contractLines.adjustments,
+      deliveryFee: schema.contractLines.deliveryFee,
+      pickupFee: schema.contractLines.pickupFee,
+      createdAt: schema.contractLines.createdAt,
+      updatedAt: schema.contractLines.updatedAt,
+      assetType: schema.assets.type,
+    })
+    .from(schema.contractLines)
+    .leftJoin(schema.assets, eq(schema.contractLines.assetId, schema.assets.id))
+    .where(eq(schema.contractLines.contractId, contractId)) as Promise<
+    ContractLineFinanceRow[]
+  >;
+}
+
+async function getApplicableRateCards(contract: typeof schema.contracts.$inferSelect) {
+  const cards = await db
+    .select()
+    .from(schema.rateCards)
+    .where(eq(schema.rateCards.active, true));
+
+  return cards.filter((card) => {
+    if (card.scope === "customer") {
+      return card.customerId === contract.customerId;
+    }
+
+    if (card.scope === "branch") {
+      return card.branchId === contract.branchId;
+    }
+
+    return true;
+  }) satisfies RateCardInput[];
+}
+
+function invoiceDueDate(
+  invoiceDate: Date,
+  paymentTermsDays: number | null | undefined,
+) {
+  return new Date(
+    invoiceDate.getTime() + Math.max(paymentTermsDays ?? 14, 0) * 24 * 60 * 60 * 1000,
+  );
+}
+
+async function createDerivedFinancialEventsForContract(args: {
+  contract: typeof schema.contracts.$inferSelect;
+  invoiceDate: Date;
+}) {
+  const [lineRows, rateCards, existingEvents] = await Promise.all([
+    getContractFinanceRows(args.contract.id),
+    getApplicableRateCards(args.contract),
+    db
+      .select()
+      .from(schema.financialEvents)
+      .where(eq(schema.financialEvents.contractId, args.contract.id)),
+  ]);
+
+  const drafts = lineRows.flatMap((line) => {
+    const adjustments = parsePricingAdjustments(line.adjustments);
+    const description = line.description?.trim() || `Contract line ${line.id}`;
+    const commonArgs = {
+      contractLineId: line.id,
+      assetId: line.assetId,
+      description,
+      contractDate: args.contract.startDate,
+      customerId: args.contract.customerId,
+      branchId: args.contract.branchId,
+      assetType: line.assetType,
+      rateCards,
+      existingEvents,
+      adjustments,
+    };
+
+    return [
+      ...createRecurringRentEvents({
+        ...commonArgs,
+        unit: line.unit as BillingUnitKey,
+        quantity: numericToNumber(line.quantity, 1),
+        contractLineUnitPrice: numericToNumber(line.unitPrice),
+        startDate: line.startDate,
+        endDate: line.endDate,
+        contractCadence: args.contract.billingCadence,
+        invoiceDate: args.invoiceDate,
+      }),
+      ...createOneTimeChargeEvents({
+        ...commonArgs,
+        startDate: line.startDate,
+        endDate: line.endDate,
+        contractLineDeliveryFee: numericToNumber(line.deliveryFee, 0),
+        contractLinePickupFee: numericToNumber(line.pickupFee, 0),
+      }),
+    ];
+  });
+
+  if (drafts.length === 0) {
+    return [];
+  }
+
+  const insertedIds = drafts.map(() => createId("fe"));
+  await db.insert(schema.financialEvents).values(
+    drafts.map((draft, index) => ({
+      id: insertedIds[index],
+      contractId: args.contract.id,
+      contractLineId: draft.contractLineId ?? null,
+      assetId: draft.assetId ?? null,
+      eventType: draft.eventType,
+      description: draft.description,
+      amount: draft.amount.toFixed(2),
+      eventDate: draft.eventDate,
+      status: draft.status,
+      externalReference: draft.externalReference ?? null,
+      metadata: draft.metadata,
+      createdAt: now(),
+      updatedAt: now(),
+    })),
+  );
+
+  return db
+    .select()
+    .from(schema.financialEvents)
+    .where(inArray(schema.financialEvents.id, insertedIds));
 }
 
 async function customerRecords() {
@@ -604,41 +1328,76 @@ export async function transitionAsset(
   toStatus: AssetStatusKey,
   userId?: string,
   reason = "Manual lifecycle transition",
+  options?: AssetTransitionOptions,
 ) {
-  const asset = await getAssetByIdOrNumber(assetId);
-  if (!canTransitionAsset(asset.status, toStatus)) {
-    throw new ApiError(409, "Asset transition is not allowed.", {
-      fromStatus: asset.status,
+  return withIdempotency({
+    key: options?.idempotencyKey,
+    requestPath: `/assets/${assetId}/transition`,
+    payload: {
+      assetId,
       toStatus,
-    });
-  }
-
-  const derived = assetAvailability(toStatus, asset.maintenanceStatus);
-  await db
-    .update(schema.assets)
-    .set({
-      status: toStatus,
-      availability: derived.availability,
-      maintenanceStatus: derived.maintenanceStatus,
-      updatedAt: now(),
-    })
-    .where(eq(schema.assets.id, asset.id));
-
-  await pushAudit({
-    entityType: "asset",
-    entityId: asset.id,
-    eventType: "status_changed",
-    userId,
-    metadata: {
+      userId: userId ?? null,
       reason,
-      toStatus,
+      effectiveAt: toIso(options?.effectiveAt ?? null),
+    },
+    execute: async () => {
+      const asset = await getAssetByIdOrNumber(assetId);
+      if (!canTransitionAsset(asset.status, toStatus)) {
+        throw new ApiError(409, "Asset transition is not allowed.", {
+          fromStatus: asset.status,
+          toStatus,
+        });
+      }
+
+      await db.transaction(async (tx) => {
+        await lockAssetRows(tx, [asset.id]);
+        await syncManualAssetAllocation(tx, {
+          assetId: asset.id,
+          toStatus,
+          effectiveAt: options?.effectiveAt ?? now(),
+        });
+
+        const activeAllocations = await getActiveAllocationsForAssets(tx, [asset.id]);
+        const hasContractBoundAllocations = activeAllocations.some((allocation) => allocation.contractId);
+        const shouldRefreshFromAllocations = toStatus !== "dispatched";
+        if (!hasContractBoundAllocations) {
+          const derived = assetAvailability(
+            toStatus,
+            toStatus === "in_maintenance" ? "scheduled" : asset.maintenanceStatus,
+          );
+          await tx
+            .update(schema.assets)
+            .set({
+              status: toStatus,
+              availability: derived.availability,
+              maintenanceStatus: derived.maintenanceStatus,
+              updatedAt: now(),
+            })
+            .where(eq(schema.assets.id, asset.id));
+        }
+
+        if (shouldRefreshFromAllocations) {
+          await refreshAssetStates(tx, [asset.id]);
+        }
+      });
+
+      await pushAudit({
+        entityType: "asset",
+        entityId: asset.id,
+        eventType: "status_changed",
+        userId,
+        metadata: {
+          reason,
+          toStatus,
+        },
+      });
+
+      return requireRecord(
+        (await listAssets()).find((entry) => entry.id === asset.id),
+        `Asset ${asset.id} not found after transition.`,
+      );
     },
   });
-
-  return requireRecord(
-    (await listAssets()).find((entry) => entry.id === asset.id),
-    `Asset ${asset.id} not found after transition.`,
-  );
 }
 
 export async function listCustomers(filters?: {
@@ -786,134 +1545,123 @@ export async function listContracts(filters?: {
 }
 
 export async function createContract(payload: CreateContractInput, userId?: string) {
-  const contractId = createId("contract");
-  const status = payload.status ?? "quoted";
-  await db.transaction(async (tx) => {
-    await tx.insert(schema.contracts).values({
-      id: contractId,
-      contractNumber: payload.contractNumber,
-      customerId: payload.customerId,
-      locationId: payload.locationId,
-      branchId: payload.branchId,
-      startDate: payload.startDate,
-      endDate: payload.endDate ?? null,
-      status,
-      quotedAt: status === "quoted" ? now() : null,
-      reservedAt: status === "reserved" ? now() : null,
-      activatedAt: status === "active" ? now() : null,
-      createdAt: now(),
-      updatedAt: now(),
-    });
+  return withIdempotency({
+    key: payload.idempotencyKey,
+    requestPath: "/contracts",
+    payload: {
+      ...payload,
+      startDate: payload.startDate.toISOString(),
+      endDate: payload.endDate?.toISOString() ?? null,
+      lines: payload.lines.map((line) => ({
+        ...line,
+        startDate: line.startDate.toISOString(),
+        endDate: line.endDate?.toISOString() ?? null,
+      })),
+    },
+    execute: async () => {
+      const contractId = createId("contract");
+      const status = payload.status ?? "quoted";
 
-    const lineRows = payload.lines.map((line) => ({
-      id: createId("cline"),
-      contractId,
-      assetId: line.assetId ?? null,
-      description: line.description ?? null,
-      unitPrice: line.unitPrice.toFixed(2),
-      unit: line.unit as typeof schema.contractLines.$inferInsert.unit,
-      quantity: String(line.quantity),
-      startDate: line.startDate,
-      endDate: line.endDate ?? null,
-      adjustments: { items: line.adjustments ?? [] },
-      createdAt: now(),
-      updatedAt: now(),
-    }));
+      await db.transaction(async (tx) => {
+        const customer = await getCustomerByIdOrNumber(payload.customerId);
+        const branch = await getBranchByIdOrName(payload.branchId, tx);
+        const location = await getLocationById(tx, payload.locationId);
+        if (location.customerId !== customer.id) {
+          throw new ApiError(409, "Location does not belong to the contract customer.", {
+            locationId: location.id,
+            customerId: customer.id,
+          });
+        }
 
-    await tx.insert(schema.contractLines).values(lineRows);
+        const assetRefs = payload.lines
+          .map((line) => line.assetId)
+          .filter((value): value is string => Boolean(value));
+        const resolvedAssets = await resolveAssetReferences(tx, assetRefs);
+        const lineAssets = assetRefs.map((reference) =>
+          requireRecord(resolvedAssets.get(reference), `Asset ${reference} not found.`),
+        );
+        await assertAssetsMatchBranch(lineAssets, branch.id);
+        await lockAssetRows(
+          tx,
+          Array.from(new Set(lineAssets.map((asset) => asset.id))),
+        );
 
-    if (status === "reserved" || status === "active") {
-      const allocationType: "reservation" | "on_rent" =
-        status === "reserved" ? "reservation" : "on_rent";
-      const allocatableLines = lineRows.filter((line) => line.assetId);
-      if (allocatableLines.length > 0) {
-        await tx.insert(schema.assetAllocations).values(
-          allocatableLines.map((line) => ({
-            id: createId("alloc"),
-            assetId: line.assetId as string,
+        const lineRows = payload.lines.map((line) => {
+          const resolvedAsset = line.assetId ? resolvedAssets.get(line.assetId) : undefined;
+          return {
+            id: line.lineId ?? createId("cline"),
             contractId,
-            contractLineId: line.id,
-            allocationType,
-            startsAt: line.startDate,
-            endsAt: line.endDate,
-            sourceEvent: allocationType,
-            active: true,
+            assetId: resolvedAsset?.id ?? null,
+            description: line.description ?? null,
+            unitPrice: line.unitPrice.toFixed(2),
+            unit: line.unit as BillingUnitKey,
+            quantity: String(line.quantity),
+            startDate: line.startDate,
+            endDate: line.endDate ?? payload.endDate ?? null,
+            adjustments: { items: line.adjustments ?? [] },
+            deliveryFee: null,
+            pickupFee: null,
             createdAt: now(),
             updatedAt: now(),
-          })),
+          } satisfies typeof schema.contractLines.$inferInsert;
+        });
+
+        if (status === "reserved" || status === "active") {
+          await assertNoAllocationConflicts(
+            tx,
+            lineRows
+              .filter((line): line is typeof lineRows[number] & { assetId: string } =>
+                Boolean(line.assetId),
+              )
+              .map((line) => ({
+                assetId: line.assetId,
+                startsAt: line.startDate,
+                endsAt: line.endDate ?? null,
+              })),
+          );
+        }
+
+        await tx.insert(schema.contracts).values({
+          id: contractId,
+          contractNumber: payload.contractNumber,
+          customerId: customer.id,
+          locationId: location.id,
+          branchId: branch.id,
+          startDate: payload.startDate,
+          endDate: payload.endDate ?? null,
+          billingCadence: payload.billingCadence ?? "monthly_arrears",
+          paymentTermsDays: payload.paymentTermsDays ?? 14,
+          status,
+          quotedAt: now(),
+          reservedAt: status === "reserved" ? now() : null,
+          activatedAt: status === "active" ? now() : null,
+          createdAt: now(),
+          updatedAt: now(),
+        });
+        await tx.insert(schema.contractLines).values(lineRows);
+
+        const insertedContract = requireRecord(
+          (
+            await tx.select().from(schema.contracts).where(eq(schema.contracts.id, contractId)).limit(1)
+          )[0],
+          `Contract ${contractId} not found after insert.`,
         );
-      }
-    }
+        await applyContractLifecycleInTransaction(tx, insertedContract, status, payload.startDate);
+      });
+
+      await pushAudit({
+        entityType: "contract",
+        entityId: contractId,
+        eventType: "created",
+        userId,
+      });
+
+      return requireRecord(
+        (await listContracts()).find((contract) => contract.id === contractId),
+        `Contract ${contractId} not found after creation.`,
+      );
+    },
   });
-
-  await pushAudit({
-    entityType: "contract",
-    entityId: contractId,
-    eventType: "created",
-    userId,
-  });
-
-  return requireRecord(
-    (await listContracts()).find((contract) => contract.id === contractId),
-    `Contract ${contractId} not found after creation.`,
-  );
-}
-
-async function applyContractLifecycle(contract: typeof schema.contracts.$inferSelect, toStatus: ContractStatusKey) {
-  const lines = await db
-    .select()
-    .from(schema.contractLines)
-    .where(eq(schema.contractLines.contractId, contract.id));
-  const assetIds = lines.map((line) => line.assetId).filter((value): value is string => Boolean(value));
-  if (assetIds.length === 0) {
-    return;
-  }
-
-  if (toStatus === "reserved" || toStatus === "active") {
-    const assetStatus = toStatus === "reserved" ? "reserved" : "on_rent";
-    const derived = assetAvailability(assetStatus, "clear");
-    await db
-      .update(schema.assets)
-      .set({
-        status: assetStatus,
-        availability: derived.availability,
-        maintenanceStatus: derived.maintenanceStatus,
-        updatedAt: now(),
-      })
-      .where(inArray(schema.assets.id, assetIds));
-  }
-
-  if (toStatus === "completed") {
-    await db
-      .update(schema.assets)
-      .set({
-        status: "inspection_hold",
-        availability: "limited",
-        maintenanceStatus: "inspection_required",
-        updatedAt: now(),
-      })
-      .where(inArray(schema.assets.id, assetIds));
-  }
-
-  if (toStatus === "closed" || toStatus === "cancelled") {
-    await db
-      .update(schema.assets)
-      .set({
-        status: "available",
-        availability: "rentable",
-        maintenanceStatus: "clear",
-        updatedAt: now(),
-      })
-      .where(inArray(schema.assets.id, assetIds));
-    await db
-      .update(schema.assetAllocations)
-      .set({
-        active: false,
-        endsAt: now(),
-        updatedAt: now(),
-      })
-      .where(and(eq(schema.assetAllocations.contractId, contract.id), eq(schema.assetAllocations.active, true)));
-  }
 }
 
 export async function transitionContract(
@@ -921,80 +1669,316 @@ export async function transitionContract(
   toStatus: ContractStatusKey,
   userId?: string,
   reason = "Manual contract lifecycle transition",
+  options?: ContractTransitionOptions,
 ) {
-  const contract = await getContractByIdOrNumber(contractId);
-  if (!canTransitionContract(contract.status, toStatus)) {
-    throw new ApiError(409, "Contract transition is not allowed.", {
-      fromStatus: contract.status,
+  return withIdempotency({
+    key: options?.idempotencyKey,
+    requestPath: `/contracts/${contractId}/transition`,
+    payload: {
+      contractId,
       toStatus,
-    });
-  }
+      userId: userId ?? null,
+      reason,
+      effectiveAt: toIso(options?.effectiveAt ?? null),
+    },
+    execute: async () => {
+      const contract = await getContractByIdOrNumber(contractId);
+      if (!canTransitionContract(contract.status, toStatus)) {
+        throw new ApiError(409, "Contract transition is not allowed.", {
+          fromStatus: contract.status,
+          toStatus,
+        });
+      }
 
-  await db
-    .update(schema.contracts)
-    .set({
-      status: toStatus,
-      reservedAt: toStatus === "reserved" ? now() : contract.reservedAt,
-      activatedAt: toStatus === "active" ? now() : contract.activatedAt,
-      completedAt: toStatus === "completed" ? now() : contract.completedAt,
-      closedAt: toStatus === "closed" ? now() : contract.closedAt,
-      cancelledAt: toStatus === "cancelled" ? now() : contract.cancelledAt,
-      updatedAt: now(),
-    })
-    .where(eq(schema.contracts.id, contract.id));
+      const effectiveAt = options?.effectiveAt ?? now();
+      await db.transaction(async (tx) => {
+        await lockContractRow(tx, contract.id);
+        await tx
+          .update(schema.contracts)
+          .set({
+            status: toStatus,
+            reservedAt: toStatus === "reserved" ? effectiveAt : contract.reservedAt,
+            activatedAt: toStatus === "active" ? effectiveAt : contract.activatedAt,
+            completedAt: toStatus === "completed" ? effectiveAt : contract.completedAt,
+            closedAt: toStatus === "closed" ? effectiveAt : contract.closedAt,
+            cancelledAt: toStatus === "cancelled" ? effectiveAt : contract.cancelledAt,
+            updatedAt: now(),
+          })
+          .where(eq(schema.contracts.id, contract.id));
 
-  await applyContractLifecycle(contract, toStatus);
-  await pushAudit({
-    entityType: "contract",
-    entityId: contract.id,
-    eventType: "status_changed",
-    userId,
-    metadata: { reason, toStatus },
+        await applyContractLifecycleInTransaction(tx, contract, toStatus, effectiveAt);
+      });
+
+      await pushAudit({
+        entityType: "contract",
+        entityId: contract.id,
+        eventType: "status_changed",
+        userId,
+        metadata: { reason, toStatus, effectiveAt: toIso(options?.effectiveAt ?? null) },
+      });
+
+      return requireRecord(
+        (await listContracts()).find((entry) => entry.id === contract.id),
+        `Contract ${contract.id} not found after transition.`,
+      );
+    },
   });
-
-  return requireRecord(
-    (await listContracts()).find((entry) => entry.id === contract.id),
-    `Contract ${contract.id} not found after transition.`,
-  );
 }
 
 export async function amendContract(contractId: string, payload: AmendContractInput, userId?: string) {
-  const contract = await getContractByIdOrNumber(contractId);
-  await db.insert(schema.contractAmendments).values({
-    id: createId("amd"),
-    contractId: contract.id,
-    amendmentType:
-      payload.amendmentType as typeof schema.contractAmendments.$inferInsert.amendmentType,
-    requestedByUserId: userId ?? null,
-    notes: payload.notes ?? null,
-    deltaPayload: {
-      extendedEndDate: payload.extendedEndDate ?? null,
-      assetNumbersToAdd: payload.assetNumbersToAdd ?? [],
-      assetNumbersToRemove: payload.assetNumbersToRemove ?? [],
+  return withIdempotency({
+    key: payload.idempotencyKey,
+    requestPath: `/contracts/${contractId}/amend`,
+    payload: {
+      contractId,
+      ...payload,
+      effectiveAt: toIso(normalizeDateValue(payload.effectiveAt ?? null)),
     },
-    effectiveAt: payload.extendedEndDate ? toDate(payload.extendedEndDate) : null,
-    createdAt: now(),
-  });
-  if (payload.extendedEndDate) {
-    await db
-      .update(schema.contracts)
-      .set({
-        endDate: toDate(payload.extendedEndDate),
-        updatedAt: now(),
-      })
-      .where(eq(schema.contracts.id, contract.id));
-  }
-  await pushAudit({
-    entityType: "contract",
-    entityId: contract.id,
-    eventType: "amended",
-    userId,
-  });
+    execute: async () => {
+      const contract = await getContractByIdOrNumber(contractId);
+      if (contract.status === "closed" || contract.status === "cancelled") {
+        throw new ApiError(409, "Closed or cancelled contracts cannot be amended.", {
+          contractStatus: contract.status,
+        });
+      }
 
-  return requireRecord(
-    (await listContracts()).find((entry) => entry.id === contract.id),
-    `Contract ${contract.id} not found after amendment.`,
-  );
+      if (payload.amendmentType === "rate_adjustment") {
+        notImplemented("Rate-adjustment amendments");
+      }
+
+      const amendmentId = createId("amd");
+      const effectiveAt = normalizeDateValue(payload.effectiveAt ?? payload.extendedEndDate ?? null);
+      const amendmentTypeMap = {
+        extension: "extension",
+        asset_swap: "asset_swap",
+        partial_return: "partial_return",
+        rate_adjustment: "rate_adjustment",
+      } as const;
+      const amendmentTypeKey = payload.amendmentType as keyof typeof amendmentTypeMap;
+      const amendmentType = amendmentTypeMap[amendmentTypeKey];
+      if (!amendmentType) {
+        throw new ApiError(400, `Unsupported amendment type ${payload.amendmentType}.`);
+      }
+      await db.transaction(async (tx) => {
+        await lockContractRow(tx, contract.id);
+
+        const lines = await getContractLines(tx, contract.id);
+        const currentAssetIds = lines
+          .map((line) => line.assetId)
+          .filter((value): value is string => Boolean(value));
+        await lockAssetRows(tx, currentAssetIds);
+
+        const deltaPayload: Record<string, unknown> = {
+          amendmentType: payload.amendmentType,
+          notes: payload.notes ?? null,
+          previousEndDate: toIso(contract.endDate),
+          nextEndDate: payload.extendedEndDate ?? null,
+          assetNumbersToAdd: payload.assetNumbersToAdd ?? [],
+          assetNumbersToRemove: payload.assetNumbersToRemove ?? [],
+          effectiveAt: toIso(effectiveAt),
+        };
+
+        if (payload.amendmentType === "extension") {
+          const nextEndDate = requireRecord(
+            toDate(payload.extendedEndDate ?? null),
+            "Extension amendments require an extendedEndDate.",
+          );
+          if (contract.endDate && nextEndDate <= contract.endDate) {
+            throw new ApiError(409, "Extended end date must be after the current contract end date.");
+          }
+
+          await tx
+            .update(schema.contracts)
+            .set({
+              endDate: nextEndDate,
+              updatedAt: now(),
+            })
+            .where(eq(schema.contracts.id, contract.id));
+          await tx
+            .update(schema.contractLines)
+            .set({
+              endDate: nextEndDate,
+              updatedAt: now(),
+            })
+            .where(eq(schema.contractLines.contractId, contract.id));
+          await tx
+            .update(schema.assetAllocations)
+            .set({
+              endsAt: nextEndDate,
+              updatedAt: now(),
+            })
+            .where(
+              and(
+                eq(schema.assetAllocations.contractId, contract.id),
+                eq(schema.assetAllocations.active, true),
+              ),
+            );
+        } else if (payload.amendmentType === "partial_return" || payload.amendmentType === "asset_swap") {
+          const assetsToRemove = payload.assetNumbersToRemove ?? [];
+          const assetsToAdd = payload.assetNumbersToAdd ?? [];
+          if (assetsToRemove.length === 0) {
+            throw new ApiError(409, "This amendment requires assetNumbersToRemove.");
+          }
+
+          const resolvedRemoveAssets = await resolveAssetReferences(tx, assetsToRemove);
+          const removeAssetIds = assetsToRemove.map((reference) =>
+            requireRecord(
+              resolvedRemoveAssets.get(reference)?.id,
+              `Asset ${reference} could not be resolved for amendment.`,
+            ),
+          );
+
+          await lockAssetRows(tx, removeAssetIds);
+          await tx
+            .update(schema.contractLines)
+            .set({
+              endDate: effectiveAt,
+              updatedAt: now(),
+            })
+            .where(
+              and(
+                eq(schema.contractLines.contractId, contract.id),
+                inArray(schema.contractLines.assetId, removeAssetIds),
+              ),
+            );
+          await tx
+            .update(schema.assetAllocations)
+            .set({
+              active: false,
+              endsAt: effectiveAt,
+              updatedAt: now(),
+            })
+            .where(
+              and(
+                eq(schema.assetAllocations.contractId, contract.id),
+                inArray(schema.assetAllocations.assetId, removeAssetIds),
+                eq(schema.assetAllocations.active, true),
+              ),
+            );
+
+          if (contract.status === "active") {
+            const returnedLines = await tx
+              .select()
+              .from(schema.contractLines)
+              .where(
+                and(
+                  eq(schema.contractLines.contractId, contract.id),
+                  inArray(schema.contractLines.assetId, removeAssetIds),
+                ),
+              );
+            await upsertContractAllocations(tx, {
+              contractId: contract.id,
+              lines: returnedLines,
+              allocationType: "inspection_hold",
+              sourceEvent:
+                payload.amendmentType === "asset_swap"
+                  ? "contract_swap_out"
+                  : "contract_partial_return",
+              effectiveAt,
+              endDateOverride: null,
+            });
+          }
+
+          if (payload.amendmentType === "asset_swap") {
+            if (assetsToAdd.length === 0) {
+              throw new ApiError(409, "Asset swaps require assetNumbersToAdd.");
+            }
+
+            const resolvedAddAssets = await resolveAssetReferences(tx, assetsToAdd);
+            const addAssets = assetsToAdd.map((reference) =>
+              requireRecord(
+                resolvedAddAssets.get(reference),
+                `Asset ${reference} could not be resolved for swap.`,
+              ),
+            );
+            await assertAssetsMatchBranch(addAssets, contract.branchId);
+            await lockAssetRows(
+              tx,
+              Array.from(new Set(addAssets.map((asset) => asset.id))),
+            );
+
+            const templateLine = requireRecord(
+              lines.find((line) => removeAssetIds.includes(line.assetId ?? "")),
+              "A swap amendment requires an existing contract line to clone pricing from.",
+            );
+            await assertNoAllocationConflicts(
+              tx,
+              addAssets.map((asset) => ({
+                assetId: asset.id,
+                startsAt: effectiveAt,
+                endsAt: contract.endDate,
+              })),
+              contract.id,
+            );
+
+            const insertedLines = addAssets.map((asset) => ({
+              id: createId("cline"),
+              contractId: contract.id,
+              assetId: asset.id,
+              description: templateLine.description,
+              unitPrice: templateLine.unitPrice,
+              unit: templateLine.unit,
+              quantity: templateLine.quantity,
+              startDate: effectiveAt,
+              endDate: contract.endDate,
+              adjustments: templateLine.adjustments,
+              deliveryFee: templateLine.deliveryFee,
+              pickupFee: templateLine.pickupFee,
+              createdAt: now(),
+              updatedAt: now(),
+            }) satisfies typeof schema.contractLines.$inferInsert);
+            await tx.insert(schema.contractLines).values(insertedLines);
+
+            await upsertContractAllocations(tx, {
+              contractId: contract.id,
+              lines: insertedLines as Array<typeof schema.contractLines.$inferSelect>,
+              allocationType: contract.status === "reserved" ? "reservation" : "on_rent",
+              sourceEvent: "contract_swap_in",
+              effectiveAt,
+            });
+            deltaPayload.createdLineIds = insertedLines.map((line) => line.id);
+          }
+        }
+
+        await tx.insert(schema.contractAmendments).values({
+          id: amendmentId,
+          contractId: contract.id,
+          amendmentType,
+          requestedByUserId: userId ?? null,
+          notes: payload.notes ?? null,
+          deltaPayload,
+          effectiveAt,
+          approvedByUserId: userId ?? null,
+          approvedAt: now(),
+          createdAt: now(),
+        });
+
+        const refreshedLines = await getContractLines(tx, contract.id);
+        await refreshAssetStates(
+          tx,
+          refreshedLines
+            .map((line) => line.assetId)
+            .filter((value): value is string => Boolean(value)),
+        );
+      });
+
+      await pushAudit({
+        entityType: "contract",
+        entityId: contract.id,
+        eventType: "amended",
+        userId,
+        metadata: {
+          amendmentType: payload.amendmentType,
+          effectiveAt: toIso(normalizeDateValue(payload.effectiveAt ?? payload.extendedEndDate ?? null)),
+        },
+      });
+
+      return requireRecord(
+        (await listContracts()).find((entry) => entry.id === contract.id),
+        `Contract ${contract.id} not found after amendment.`,
+      );
+    },
+  });
 }
 
 export async function listFinancialEvents(filters?: {
@@ -1044,15 +2028,54 @@ export async function listFinancialEvents(filters?: {
 
 export async function createFinancialEvent(payload: CreateFinancialEventInput, userId?: string) {
   const contract = await getContractByIdOrNumber(payload.contractId);
+  let amount = payload.amount;
+  let description = payload.description;
+  let metadata = payload.metadata ?? {};
+  let contractLineId = payload.contractLineId ?? null;
+  let assetId = payload.assetId ?? null;
+
+  if (payload.reversalForEventId) {
+    const originalEvent = requireRecord(
+      await db.query.financialEvents.findFirst({
+        where: (table, { eq: localEq }) => localEq(table.id, payload.reversalForEventId!),
+      }),
+      `Financial event ${payload.reversalForEventId} not found.`,
+    );
+    const reversal = buildReversalEvent({
+      originalEvent: {
+        id: originalEvent.id,
+        contractLineId: originalEvent.contractLineId,
+        assetId: originalEvent.assetId,
+        eventType: originalEvent.eventType,
+        description: originalEvent.description,
+        amount: originalEvent.amount,
+        eventDate: originalEvent.eventDate,
+        metadata: originalEvent.metadata,
+      },
+      reversalDate: toDate(payload.eventDate) ?? now(),
+      reason: payload.description,
+    });
+
+    amount = reversal.amount;
+    description = reversal.description;
+    metadata = reversal.metadata;
+    contractLineId = reversal.contractLineId ?? null;
+    assetId = reversal.assetId ?? null;
+  }
+
   const id = createId("fe");
   await db.insert(schema.financialEvents).values({
     id,
     contractId: contract.id,
+    contractLineId,
+    assetId,
     eventType: payload.eventType,
-    description: payload.description,
-    amount: payload.amount.toFixed(2),
+    description,
+    amount: amount.toFixed(2),
     eventDate: toDate(payload.eventDate) ?? now(),
-    status: payload.status ?? "pending",
+    status: payload.status ?? "posted",
+    externalReference: payload.externalReference ?? null,
+    metadata,
     createdAt: now(),
     updatedAt: now(),
   });
@@ -1065,6 +2088,34 @@ export async function createFinancialEvent(payload: CreateFinancialEventInput, u
   return requireRecord(
     (await listFinancialEvents()).find((entry) => entry.id === id),
     `Financial event ${id} not found after creation.`,
+  );
+}
+
+export async function reverseFinancialEvent(
+  financialEventId: string,
+  reason: string,
+  userId?: string,
+) {
+  const originalEvent = requireRecord(
+    await db.query.financialEvents.findFirst({
+      where: (table, { eq: localEq }) => localEq(table.id, financialEventId),
+    }),
+    `Financial event ${financialEventId} not found.`,
+  );
+
+  return createFinancialEvent(
+    {
+      contractId: originalEvent.contractId ?? "",
+      contractLineId: originalEvent.contractLineId ?? undefined,
+      assetId: originalEvent.assetId ?? undefined,
+      eventType: originalEvent.eventType,
+      description: reason,
+      amount: Math.abs(numericToNumber(originalEvent.amount)),
+      eventDate: now(),
+      reversalForEventId: originalEvent.id,
+      status: "posted",
+    },
+    userId,
   );
 }
 
@@ -1112,7 +2163,12 @@ export async function listInvoices(filters?: {
       invoiceNumber: row.invoiceNumber,
       customerName: row.customerName,
       contractNumber: row.contractNumber ?? "Unassigned",
-      status: row.status,
+      status: deriveInvoiceStatus({
+        totalAmount: numericToNumber(row.totalAmount),
+        balanceAmount: numericToNumber(row.balanceAmount),
+        dueDate: row.dueDate,
+        asOf: now(),
+      }),
       invoiceDate: toIso(row.invoiceDate) ?? new Date(0).toISOString(),
       dueDate: toIso(row.dueDate) ?? new Date(0).toISOString(),
       totalAmount: numericToNumber(row.totalAmount),
@@ -1128,19 +2184,28 @@ export async function generateInvoiceForContract(contractId: string, userId?: st
     }),
     `Customer for contract ${contract.contractNumber} not found.`,
   );
-  const uninvoicedEvents = await db
-    .select()
-    .from(schema.financialEvents)
-    .where(
-      and(
-        eq(schema.financialEvents.contractId, contract.id),
-        isNull(schema.financialEvents.invoiceId),
-      ),
-    );
+  const invoiceDate = normalizeInvoiceDate(now());
+  const [derivedEvents, existingEvents] = await Promise.all([
+    createDerivedFinancialEventsForContract({
+      contract,
+      invoiceDate,
+    }),
+    db
+      .select()
+      .from(schema.financialEvents)
+      .where(eq(schema.financialEvents.contractId, contract.id)),
+  ]);
+  const invoiceableEvents = selectInvoiceableFinancialEvents({
+    events: [...existingEvents, ...derivedEvents],
+    invoiceDate,
+  });
 
-  const subtotal = uninvoicedEvents.reduce((sum, event) => {
-    return sum + numericToNumber(event.amount);
-  }, 0);
+  if (invoiceableEvents.length === 0) {
+    throw new ApiError(409, `Contract ${contract.contractNumber} has no invoiceable events.`);
+  }
+
+  const invoiceLines = buildInvoiceLinesFromFinancialEvents(invoiceableEvents);
+  const totals = calculateInvoiceTotals(invoiceLines);
   const invoiceId = createId("invoice");
   const invoiceNumber = `INV-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${invoiceId.slice(-4)}`;
 
@@ -1150,40 +2215,38 @@ export async function generateInvoiceForContract(contractId: string, userId?: st
       invoiceNumber,
       customerId: customer.id,
       contractId: contract.id,
-      invoiceDate: now(),
-      dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      invoiceDate,
+      dueDate: invoiceDueDate(invoiceDate, contract.paymentTermsDays),
       status: "draft",
-      subtotalAmount: subtotal.toFixed(2),
-      taxAmount: "0.00",
-      totalAmount: subtotal.toFixed(2),
-      balanceAmount: subtotal.toFixed(2),
+      subtotalAmount: totals.subtotal.toFixed(2),
+      taxAmount: totals.taxAmount.toFixed(2),
+      totalAmount: totals.totalAmount.toFixed(2),
+      balanceAmount: totals.balanceAmount.toFixed(2),
       createdAt: now(),
       updatedAt: now(),
     });
 
-    if (uninvoicedEvents.length > 0) {
-      await tx.insert(schema.invoiceLines).values(
-        uninvoicedEvents.map((event) => ({
-          id: createId("iline"),
-          invoiceId,
-          description: event.description,
-          quantity: "1",
-          unitPrice: event.amount,
-          totalAmount: event.amount,
-          sourceFinancialEventId: event.id,
-          createdAt: now(),
-          updatedAt: now(),
-        })),
-      );
-      await tx
-        .update(schema.financialEvents)
-        .set({
-          invoiceId,
-          status: "invoiced",
-          updatedAt: now(),
-        })
-        .where(inArray(schema.financialEvents.id, uninvoicedEvents.map((event) => event.id)));
-    }
+    await tx.insert(schema.invoiceLines).values(
+      invoiceLines.map((line) => ({
+        id: createId("iline"),
+        invoiceId,
+        description: line.description,
+        quantity: line.quantity.toFixed(2),
+        unitPrice: line.unitPrice.toFixed(2),
+        totalAmount: line.totalAmount.toFixed(2),
+        sourceFinancialEventId: line.sourceFinancialEventId,
+        createdAt: now(),
+        updatedAt: now(),
+      })),
+    );
+    await tx
+      .update(schema.financialEvents)
+      .set({
+        invoiceId,
+        status: "invoiced",
+        updatedAt: now(),
+      })
+      .where(inArray(schema.financialEvents.id, invoiceableEvents.map((event) => event.id)));
   });
 
   await pushAudit({
@@ -1211,7 +2274,12 @@ export async function generateInvoiceForContract(contractId: string, userId?: st
 
 export async function sendInvoice(invoiceId: string, userId?: string) {
   const invoice = await getInvoiceByIdOrNumber(invoiceId);
-  const nextStatus = numericToNumber(invoice.balanceAmount) > 0 ? "sent" : "paid";
+  const nextStatus = deriveInvoiceStatus({
+    totalAmount: numericToNumber(invoice.totalAmount),
+    balanceAmount: numericToNumber(invoice.balanceAmount),
+    dueDate: invoice.dueDate,
+    asOf: now(),
+  });
   await db
     .update(schema.invoices)
     .set({
@@ -1242,26 +2310,27 @@ export async function sendInvoice(invoiceId: string, userId?: string) {
 
 export async function recordInvoicePayment(invoiceId: string, amount: number, userId?: string) {
   const invoice = await getInvoiceByIdOrNumber(invoiceId);
-  const nextBalance = Math.max(numericToNumber(invoice.balanceAmount) - amount, 0);
-  const nextStatus =
-    nextBalance === 0
-      ? "paid"
-      : nextBalance < numericToNumber(invoice.totalAmount)
-        ? "partially_paid"
-        : invoice.status;
+  const applied = applyPaymentToInvoice({
+    totalAmount: numericToNumber(invoice.totalAmount),
+    balanceAmount: numericToNumber(invoice.balanceAmount),
+    paymentAmount: amount,
+    dueDate: invoice.dueDate,
+    asOf: now(),
+  });
+  const paymentTransactionId = createId("pay");
 
   await db.transaction(async (tx) => {
     await tx
       .update(schema.invoices)
       .set({
-        balanceAmount: nextBalance.toFixed(2),
-        status: nextStatus,
+        balanceAmount: applied.balanceAmount.toFixed(2),
+        status: applied.status,
         updatedAt: now(),
       })
       .where(eq(schema.invoices.id, invoice.id));
 
     await tx.insert(schema.paymentTransactions).values({
-      id: createId("pay"),
+      id: paymentTransactionId,
       invoiceId: invoice.id,
       customerId: invoice.customerId,
       provider: "stripe",
@@ -1279,10 +2348,11 @@ export async function recordInvoicePayment(invoiceId: string, amount: number, us
 
   await enqueueOutboxJob({
     jobType: "payment.sync.quickbooks",
-    aggregateType: "invoice",
-    aggregateId: invoice.id,
+    aggregateType: "payment_transaction",
+    aggregateId: paymentTransactionId,
     provider: "quickbooks",
     payload: {
+      paymentTransactionId,
       invoiceNumber: invoice.invoiceNumber,
       amount,
     },
@@ -1299,73 +2369,45 @@ export async function recordInvoicePayment(invoiceId: string, amount: number, us
   );
 }
 
-export async function createPaymentIntentForInvoice(invoiceId: string) {
-  const invoice = requireRecord(
-    (await listInvoices()).find((entry) => entry.id === invoiceId),
-    `Invoice ${invoiceId} not found.`,
-  );
-
-  return createStripePaymentIntent({
-    invoice,
-    customerName: invoice.customerName,
-  });
+export async function createPaymentIntentForInvoice(
+  input: CreatePaymentIntentInput | string,
+) {
+  return createStripePaymentIntentForInvoice(input);
 }
 
 export async function addPaymentMethod(payload: AddPaymentMethodInput, userId?: string) {
-  const customer = await getCustomerByIdOrNumber(payload.customerNumber);
-  const id = createId("pm");
-  await db.insert(schema.paymentMethods).values({
-    id,
-    customerId: customer.id,
-    provider: "stripe",
-    methodType:
-      payload.methodType as typeof schema.paymentMethods.$inferInsert.methodType,
-    last4: payload.last4,
-    brand: payload.label,
-    isDefault: false,
-    createdAt: now(),
-    updatedAt: now(),
-  });
-  await pushAudit({
-    entityType: "payment_method",
-    entityId: id,
-    eventType: "created",
-    userId,
-  });
-  return requireRecord(
-    (await listPaymentMethods(customer.customerNumber)).find((entry) => entry.id === id),
-    `Payment method ${id} not found after creation.`,
-  );
+  return addPaymentMethodRecord(payload, userId);
 }
 
 export async function listPaymentMethods(customerNumber?: string) {
-  const rows = await db
-    .select({
-      id: schema.paymentMethods.id,
-      customerNumber: schema.customers.customerNumber,
-      provider: schema.paymentMethods.provider,
-      methodType: schema.paymentMethods.methodType,
-      label: schema.paymentMethods.brand,
-      last4: schema.paymentMethods.last4,
-      isDefault: schema.paymentMethods.isDefault,
-    })
-    .from(schema.paymentMethods)
-    .innerJoin(schema.customers, eq(schema.paymentMethods.customerId, schema.customers.id))
-    .orderBy(desc(schema.paymentMethods.isDefault));
+  return listStripePaymentMethods(customerNumber);
+}
 
-  return rows
-    .map((row) => ({
-      id: row.id,
-      customerNumber: row.customerNumber,
-      provider: row.provider,
-      methodType: row.methodType,
-      label: row.label ?? "Payment method",
-      last4: row.last4 ?? "0000",
-      isDefault: row.isDefault,
-    }))
-    .filter((method) =>
-      customerNumber ? method.customerNumber === customerNumber : true,
-    ) satisfies PaymentMethodRecord[];
+export async function createPaymentSetupIntent(customerNumber: string) {
+  return createSetupIntentForCustomer(customerNumber);
+}
+
+export async function setDefaultPaymentMethod(paymentMethodId: string, userId?: string) {
+  return setDefaultStripePaymentMethod(paymentMethodId, userId);
+}
+
+export async function listCustomerPaymentHistory(filters?: {
+  customerNumber?: string;
+  invoiceId?: string;
+}) {
+  return listPaymentTransactions(filters);
+}
+
+export async function processStripeWebhook(receiptId: string) {
+  return processStripeWebhookReceipt(receiptId);
+}
+
+export async function refundCustomerPayment(
+  transactionId: string,
+  amount?: number,
+  userId?: string,
+) {
+  return refundPaymentTransaction(transactionId, amount, userId);
 }
 
 export async function getPortalOverview(customerNumber: string) {
@@ -1375,22 +2417,24 @@ export async function getPortalOverview(customerNumber: string) {
     ),
     `Customer ${customerNumber} not found.`,
   );
-  const [contracts, invoices, paymentMethods] = await Promise.all([
+  const [contracts, invoices, paymentMethods, paymentHistory] = await Promise.all([
     listContracts(),
     listInvoices({ customerNumber: customer.customerNumber }),
     listPaymentMethods(customer.customerNumber),
+    listPaymentTransactions({ customerNumber: customer.customerNumber }),
   ]);
   const customerContracts = contracts.filter((contract) => contract.customerName === customer.name);
-  const portalSession = await createStripePortalSession({
-    customerName: customer.name,
-    returnUrl: process.env.APP_URL ?? "http://localhost:3000/portal",
-  });
+  const portalSession = await createCustomerPortalSession(
+    customer.customerNumber,
+    process.env.APP_URL ?? "http://localhost:3000/portal",
+  );
 
   return {
     customer,
     contracts: customerContracts,
     invoices,
     paymentMethods,
+    paymentHistory,
     inspections: [],
     portalSession: portalSession.data,
   };

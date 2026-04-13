@@ -1,6 +1,7 @@
 import { contractAmendmentSchema } from "@/lib/domain/validators";
-import { errorResponse, ok, readJson } from "@/lib/server/api";
-import { amendContract } from "@/lib/server/platform-service";
+import { errorResponse, getIdempotencyKey, ok, readJson } from "@/lib/server/api";
+import { requireApiPermission, resolveContractScope } from "@/lib/server/authorization";
+import { amendContract } from "@/lib/server/platform";
 
 type ContractAmendRouteParams = {
   params: Promise<{
@@ -14,9 +15,22 @@ export async function POST(
 ) {
   try {
     const { contractId } = await params;
-    const payload = await readJson(request);
-    const parsed = contractAmendmentSchema.parse(payload);
-    const data = amendContract(contractId, parsed);
+    const scope = await resolveContractScope(contractId);
+
+    if (!scope) {
+      return ok({ error: "Contract not found" }, { status: 404 });
+    }
+
+    const actor = await requireApiPermission(request, "contracts.manage", {
+      branchId: scope.branchId ?? undefined,
+      customerId: scope.customerId ?? undefined,
+    });
+    const payload = await readJson<Record<string, unknown>>(request);
+    const parsed = contractAmendmentSchema.parse({
+      ...payload,
+      idempotencyKey: payload?.idempotencyKey ?? getIdempotencyKey(request),
+    });
+    const data = await amendContract(contractId, parsed, actor.userId ?? undefined);
     return ok({ message: "Contract amended.", data });
   } catch (error) {
     return errorResponse(error);

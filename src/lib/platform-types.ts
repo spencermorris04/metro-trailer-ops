@@ -37,6 +37,10 @@ export interface InspectionRecord {
   completedAt: string | null;
   damageSummary: string;
   photos: string[];
+  damageScore?: number | null;
+  externalInspectionId?: string | null;
+  linkedWorkOrderId?: string | null;
+  media?: Array<Record<string, unknown>>;
 }
 
 export interface PaymentMethodRecord {
@@ -49,6 +53,22 @@ export interface PaymentMethodRecord {
   isDefault: boolean;
 }
 
+export interface PaymentTransactionRecord {
+  id: string;
+  invoiceNumber: string | null;
+  customerNumber: string | null;
+  provider: string;
+  transactionType: string;
+  status: string;
+  amount: number;
+  currency: string;
+  paymentMethodLabel: string | null;
+  externalId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  settledAt: string | null;
+}
+
 export interface CollectionCaseRecord {
   id: string;
   customerName: string;
@@ -59,6 +79,12 @@ export interface CollectionCaseRecord {
   lastContactAt: string | null;
   promisedPaymentDate: string | null;
   notes: string[];
+  overdueDays?: number;
+  reminderCount?: number;
+  nextAction?: string;
+  lastActivityType?: string | null;
+  latestActivityAt?: string | null;
+  promisedPaymentAmount?: number | null;
 }
 
 export interface TelematicsRecord {
@@ -70,6 +96,11 @@ export interface TelematicsRecord {
   speedMph: number;
   heading: number;
   capturedAt: string;
+  stale?: boolean;
+  freshnessMinutes?: number;
+  gpsDeviceId?: string | null;
+  externalAssetId?: string | null;
+  rawSource?: string | null;
 }
 
 export interface DocumentRecord {
@@ -117,6 +148,7 @@ export interface SignatureSignerRecord {
   intentAcceptedAt: string | null;
   consentAcceptedAt: string | null;
   certificationAcceptedAt: string | null;
+  otpVerifiedAt: string | null;
   ipAddress: string | null;
   userAgent: string | null;
   evidenceHash: string | null;

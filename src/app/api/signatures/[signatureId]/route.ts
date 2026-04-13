@@ -1,5 +1,6 @@
 import { errorResponse, ok } from "@/lib/server/api";
-import { getSignatureRequest } from "@/lib/server/esign-service";
+import { requireScopedResourceAccess, resolveSignatureScope } from "@/lib/server/authorization";
+import { getSignatureRequest } from "@/lib/server/esign";
 
 type SignatureRouteParams = {
   params: Promise<{
@@ -8,12 +9,23 @@ type SignatureRouteParams = {
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: SignatureRouteParams,
 ) {
   try {
     const { signatureId } = await params;
-    const data = getSignatureRequest(signatureId);
+    const scope = await resolveSignatureScope(signatureId);
+
+    if (!scope) {
+      return ok({ error: "Signature request not found" }, { status: 404 });
+    }
+
+    await requireScopedResourceAccess(request, scope, {
+      allowPortal: true,
+      portalPermission: "signatures.view",
+      staffPermissions: ["signatures.view", "contracts.view", "documents.view"],
+    });
+    const data = await getSignatureRequest(signatureId);
     return ok({ data });
   } catch (error) {
     return errorResponse(error);

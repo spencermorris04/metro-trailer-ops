@@ -216,6 +216,11 @@ export interface DispatchTaskRecord {
   assetNumber: string;
   customerSite: string;
   scheduledFor: string;
+  contractNumber?: string | null;
+  driverName?: string | null;
+  notes?: string | null;
+  scheduledEnd?: string | null;
+  completedAt?: string | null;
 }
 
 export interface WorkOrderRecord {
@@ -226,6 +231,13 @@ export interface WorkOrderRecord {
   branch: string;
   priority: string;
   source: string;
+  technicianName?: string | null;
+  vendorName?: string | null;
+  inspectionId?: string | null;
+  estimatedCost?: number | null;
+  actualCost?: number | null;
+  laborHours?: number | null;
+  partCount?: number;
 }
 
 export interface IntegrationDefinition {

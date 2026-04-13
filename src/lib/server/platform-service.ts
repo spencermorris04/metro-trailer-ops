@@ -1825,6 +1825,7 @@ export async function getPortalOverview(customerNumber: string) {
     contracts,
     invoices: customerInvoices,
     paymentMethods,
+    paymentHistory: [],
     inspections,
     portalSession: portalSession.data,
   };
@@ -1865,11 +1866,96 @@ export function getReports() {
     }),
   );
 
+  const overdueAging = [
+    {
+      label: "Current",
+      invoiceCount: 0,
+      balanceAmount: 0,
+    },
+    {
+      label: "1-30 days",
+      invoiceCount: overdueInvoices.length,
+      balanceAmount: overdueInvoices.reduce(
+        (sum, invoice) => sum + invoice.balanceAmount,
+        0,
+      ),
+    },
+    {
+      label: "31-60 days",
+      invoiceCount: 0,
+      balanceAmount: 0,
+    },
+    {
+      label: "61-90 days",
+      invoiceCount: 0,
+      balanceAmount: 0,
+    },
+    {
+      label: "90+ days",
+      invoiceCount: 0,
+      balanceAmount: 0,
+    },
+  ];
+
   return {
+    generatedAt: nowIso(),
     utilization,
     revenueSeries,
+    overdueAging,
     overdueInvoices,
+    maintenanceSummary: {
+      openWorkOrders: state.workOrders.filter((order) => order.status !== "completed")
+        .length,
+      assignedWorkOrders: 0,
+      vendorAssigned: 0,
+      estimatedCost: 0,
+      actualCost: 0,
+      byStatus: [],
+    },
+    inspectionDamageSummary: {
+      requested: state.inspections.filter((inspection) => inspection.status === "requested")
+        .length,
+      inProgress: state.inspections.filter((inspection) => inspection.status === "in_progress")
+        .length,
+      passed: state.inspections.filter((inspection) => inspection.status === "passed")
+        .length,
+      failed: state.inspections.filter((inspection) => inspection.status === "failed")
+        .length,
+      needsReview: state.inspections.filter((inspection) => inspection.status === "needs_review")
+        .length,
+      damagedAssets: state.inspections.filter((inspection) => inspection.damageSummary !== "Pending inspection results.")
+        .length,
+      averageDamageScore: 0,
+      photoCount: state.inspections.reduce((count, inspection) => count + inspection.photos.length, 0),
+    },
+    revenueRollups: [],
     auditTrail: state.auditEvents.slice(0, 12),
+    auditHealth: {
+      totalEventsLast7Days: state.auditEvents.length,
+      actorCoverageRate: 100,
+      pendingOutboxJobs: 0,
+      deadLetterJobs: 0,
+      failedWebhookReceipts: 0,
+      integrationFailures: 0,
+    },
+    featureFlags: {
+      runtimeMode: "demo",
+      branchId: null,
+      workflows: {},
+      disabledGlobally: [],
+      disabledForBranch: [],
+    },
+    observability: {
+      sentry: {
+        configured: false,
+        environment: "demo",
+      },
+      cloudWatch: {
+        configured: false,
+        region: null,
+        namespace: null,
+      },
+    },
   };
 }
 

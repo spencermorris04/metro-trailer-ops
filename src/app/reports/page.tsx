@@ -66,6 +66,81 @@ export default async function ReportsPage() {
       </SectionCard>
 
       <SectionCard
+        eyebrow="Aging"
+        title="Overdue exposure"
+        description="Accounts receivable is broken into aging buckets from live invoice balances."
+      >
+        <div className="grid gap-4 xl:grid-cols-5">
+          {reports.overdueAging.map((bucket) => (
+            <div key={bucket.label} className="soft-panel p-5">
+              <StatusPill label={bucket.label} />
+              <p className="mt-4 text-sm text-slate-600">
+                Invoices: {bucket.invoiceCount}
+              </p>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">
+                {formatCurrency(bucket.balanceAmount)}
+              </p>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        eyebrow="Maintenance"
+        title="Work order backlog"
+        description="Maintenance exposure is derived from open work orders, assigned labor, and estimated versus actual cost."
+      >
+        <div className="grid gap-4 xl:grid-cols-4">
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Open work orders</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.maintenanceSummary.openWorkOrders}
+            </p>
+          </div>
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Assigned work orders</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.maintenanceSummary.assignedWorkOrders}
+            </p>
+          </div>
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Estimated cost</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {formatCurrency(reports.maintenanceSummary.estimatedCost)}
+            </p>
+          </div>
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Actual cost</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {formatCurrency(reports.maintenanceSummary.actualCost)}
+            </p>
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        eyebrow="Inspection Damage"
+        title="Inspection outcomes and damage"
+        description="Inspection throughput and damage scoring are visible without waiting for downstream exports."
+      >
+        <div className="grid gap-4 xl:grid-cols-6">
+          {[
+            ["Requested", reports.inspectionDamageSummary.requested],
+            ["In progress", reports.inspectionDamageSummary.inProgress],
+            ["Passed", reports.inspectionDamageSummary.passed],
+            ["Failed", reports.inspectionDamageSummary.failed],
+            ["Needs review", reports.inspectionDamageSummary.needsReview],
+            ["Damaged assets", reports.inspectionDamageSummary.damagedAssets],
+          ].map(([label, value]) => (
+            <div key={label} className="soft-panel p-5">
+              <p className="text-sm text-slate-600">{label}</p>
+              <p className="mt-3 text-2xl font-semibold text-slate-900">{value}</p>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
         eyebrow="Audit Trail"
         title="Recent auditable activity"
         description="Operationally sensitive systems need a clear event history for compliance, troubleshooting, and user accountability."
@@ -83,6 +158,39 @@ export default async function ReportsPage() {
               <p className="mt-2 text-xs text-slate-500">{event.userName}</p>
             </div>
           ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        eyebrow="Audit Health"
+        title="Operational controls"
+        description="This combines audit coverage, queue backlog, failed webhooks, and current feature-flag posture."
+      >
+        <div className="grid gap-4 xl:grid-cols-4">
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Events last 7 days</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.auditHealth.totalEventsLast7Days}
+            </p>
+          </div>
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Actor coverage</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.auditHealth.actorCoverageRate}%
+            </p>
+          </div>
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Pending outbox jobs</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.auditHealth.pendingOutboxJobs}
+            </p>
+          </div>
+          <div className="soft-panel p-5">
+            <p className="text-sm text-slate-600">Failed webhooks</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.auditHealth.failedWebhookReceipts}
+            </p>
+          </div>
         </div>
       </SectionCard>
     </>

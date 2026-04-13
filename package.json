@@ -4,10 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/build.mjs",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/lib/server/pricing-engine.test.ts src/lib/legacy/tooling.test.ts src/lib/testing/perf-harness.test.ts src/lib/testing/security-audit.test.ts",
+    "legacy:import": "tsx scripts/legacy-import.ts",
+    "legacy:reconcile": "tsx scripts/legacy-reconcile.ts",
+    "perf:harness": "tsx scripts/perf-harness.ts",
+    "security:audit": "tsx scripts/security-audit.ts",
+    "e2e:smoke": "tsx scripts/e2e-smoke.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:validate": "drizzle-kit check --config drizzle.config.ts",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
@@ -39,6 +45,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5"
   }
 }

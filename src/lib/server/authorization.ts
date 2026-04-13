@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 
 import { auth } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
@@ -39,6 +39,11 @@ export type PermissionKey = (typeof permissionCatalog)[number];
 type PermissionScope = {
   branchId?: string | null;
   customerId?: string | null;
+};
+
+export type ResourceScope = {
+  branchId: string | null;
+  customerId: string | null;
 };
 
 export type ResolvedActor = {
@@ -262,6 +267,40 @@ export function ensurePermission(
   throw new ApiError(403, `Missing permission: ${permission}`);
 }
 
+export function ensureAnyPermission(
+  actor: ResolvedActor | null,
+  permissions: PermissionKey[],
+  scope: PermissionScope = {},
+) {
+  if (!actor) {
+    throw new ApiError(401, "Authentication is required.");
+  }
+
+  const matchedPermission = permissions.find(
+    (permission) =>
+      actor.permissionKeys.has("admin.manage") || actor.permissionKeys.has(permission),
+  );
+
+  if (!matchedPermission) {
+    throw new ApiError(403, `Missing permission: ${permissions.join(" or ")}`);
+  }
+
+  if (scope.customerId && actor.kind === "portal" && actor.customerId !== scope.customerId) {
+    throw new ApiError(403, "Customer scope violation.");
+  }
+
+  if (
+    scope.branchId &&
+    actor.kind === "staff" &&
+    actor.branchIds.length > 0 &&
+    !actor.branchIds.includes(scope.branchId)
+  ) {
+    throw new ApiError(403, "Branch scope violation.");
+  }
+
+  return actor;
+}
+
 export async function requireApiPermission(
   request: Request,
   permission: PermissionKey,
@@ -269,4 +308,287 @@ export async function requireApiPermission(
 ) {
   const actor = await getActorFromHeaders(new Headers(request.headers));
   return ensurePermission(actor, permission, scope);
+}
+
+export async function requireAuthenticatedApiActor(request: Request) {
+  const actor = await getActorFromHeaders(new Headers(request.headers));
+  if (!actor) {
+    throw new ApiError(401, "Authentication is required.");
+  }
+
+  return actor;
+}
+
+export async function requireStaffApiPermission(
+  request: Request,
+  permission: PermissionKey,
+  scope: PermissionScope = {},
+) {
+  const actor = await requireAuthenticatedApiActor(request);
+  if (actor.kind === "portal") {
+    throw new ApiError(403, "Staff authentication is required.");
+  }
+
+  return ensurePermission(actor, permission, scope);
+}
+
+export async function requireScopedResourceAccess(
+  request: Request,
+  scope: ResourceScope,
+  options: {
+    staffPermissions: PermissionKey[];
+    allowPortal?: boolean;
+    portalPermission?: PermissionKey;
+  },
+) {
+  const actor = await requireAuthenticatedApiActor(request);
+
+  if (actor.kind === "portal") {
+    if (!options.allowPortal) {
+      throw new ApiError(403, "Staff authentication is required.");
+    }
+
+    return ensurePermission(actor, options.portalPermission ?? "portal.view", {
+      customerId: scope.customerId ?? undefined,
+    });
+  }
+
+  return ensureAnyPermission(actor, options.staffPermissions, {
+    branchId: scope.branchId ?? undefined,
+    customerId: scope.customerId ?? undefined,
+  });
+}
+
+export async function resolveCustomerScope(identifier: string): Promise<ResourceScope | null> {
+  const customer = await db.query.customers.findFirst({
+    columns: {
+      id: true,
+    },
+    where: (table, operators) =>
+      operators.or(
+        operators.eq(table.id, identifier),
+        operators.eq(table.customerNumber, identifier),
+        operators.eq(table.name, identifier),
+      ),
+  });
+
+  return customer
+    ? {
+        branchId: null,
+        customerId: customer.id,
+      }
+    : null;
+}
+
+export async function resolveAssetScope(identifier: string): Promise<ResourceScope | null> {
+  const asset = await db.query.assets.findFirst({
+    columns: {
+      branchId: true,
+    },
+    where: (table, operators) =>
+      operators.or(
+        operators.eq(table.id, identifier),
+        operators.eq(table.assetNumber, identifier),
+      ),
+  });
+
+  return asset
+    ? {
+        branchId: asset.branchId,
+        customerId: null,
+      }
+    : null;
+}
+
+export async function resolveContractScope(identifier: string): Promise<ResourceScope | null> {
+  const contract = await db.query.contracts.findFirst({
+    columns: {
+      branchId: true,
+      customerId: true,
+    },
+    where: (table, operators) =>
+      operators.or(
+        operators.eq(table.id, identifier),
+        operators.eq(table.contractNumber, identifier),
+      ),
+  });
+
+  return contract
+    ? {
+        branchId: contract.branchId,
+        customerId: contract.customerId,
+      }
+    : null;
+}
+
+export async function resolveInvoiceScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      branchId: schema.contracts.branchId,
+      customerId: schema.invoices.customerId,
+    })
+    .from(schema.invoices)
+    .leftJoin(schema.contracts, eq(schema.invoices.contractId, schema.contracts.id))
+    .where(
+      or(
+        eq(schema.invoices.id, identifier),
+        eq(schema.invoices.invoiceNumber, identifier),
+      ),
+    )
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: row[0].branchId,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveDispatchTaskScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      branchId: schema.dispatchTasks.branchId,
+      customerId: schema.contracts.customerId,
+    })
+    .from(schema.dispatchTasks)
+    .leftJoin(schema.contracts, eq(schema.dispatchTasks.contractId, schema.contracts.id))
+    .where(eq(schema.dispatchTasks.id, identifier))
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: row[0].branchId,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveInspectionScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      branchId: schema.assets.branchId,
+      customerId: schema.contracts.customerId,
+    })
+    .from(schema.inspections)
+    .leftJoin(schema.assets, eq(schema.inspections.assetId, schema.assets.id))
+    .leftJoin(schema.contracts, eq(schema.inspections.contractId, schema.contracts.id))
+    .where(eq(schema.inspections.id, identifier))
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: row[0].branchId,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveWorkOrderScope(identifier: string): Promise<ResourceScope | null> {
+  const workOrder = await db.query.workOrders.findFirst({
+    columns: {
+      branchId: true,
+    },
+    where: (table, operators) => operators.eq(table.id, identifier),
+  });
+
+  return workOrder
+    ? {
+        branchId: workOrder.branchId,
+        customerId: null,
+      }
+    : null;
+}
+
+export async function resolvePaymentMethodScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      customerId: schema.paymentMethods.customerId,
+    })
+    .from(schema.paymentMethods)
+    .where(eq(schema.paymentMethods.id, identifier))
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: null,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveDocumentScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      branchId: schema.contracts.branchId,
+      customerId: schema.documents.customerId,
+    })
+    .from(schema.documents)
+    .leftJoin(schema.contracts, eq(schema.documents.contractId, schema.contracts.id))
+    .where(eq(schema.documents.id, identifier))
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: row[0].branchId,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveSignatureScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      branchId: schema.contracts.branchId,
+      customerId: schema.signatureRequests.customerId,
+    })
+    .from(schema.signatureRequests)
+    .leftJoin(schema.contracts, eq(schema.signatureRequests.contractId, schema.contracts.id))
+    .where(eq(schema.signatureRequests.id, identifier))
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: row[0].branchId,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveCollectionCaseScope(identifier: string): Promise<ResourceScope | null> {
+  const row = await db
+    .select({
+      branchId: schema.contracts.branchId,
+      customerId: schema.collectionCases.customerId,
+    })
+    .from(schema.collectionCases)
+    .leftJoin(schema.invoices, eq(schema.collectionCases.invoiceId, schema.invoices.id))
+    .leftJoin(schema.contracts, eq(schema.invoices.contractId, schema.contracts.id))
+    .where(eq(schema.collectionCases.id, identifier))
+    .limit(1);
+
+  return row[0]
+    ? {
+        branchId: row[0].branchId,
+        customerId: row[0].customerId,
+      }
+    : null;
+}
+
+export async function resolveTelematicsScopeByAssetNumber(
+  assetNumber: string,
+): Promise<ResourceScope | null> {
+  const asset = await db.query.assets.findFirst({
+    columns: {
+      branchId: true,
+    },
+    where: (table, operators) => operators.eq(table.assetNumber, assetNumber),
+  });
+
+  return asset
+    ? {
+        branchId: asset.branchId,
+        customerId: null,
+      }
+    : null;
 }
