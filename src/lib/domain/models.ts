@@ -96,9 +96,37 @@ export const workOrderStatuses = [
   "assigned",
   "in_progress",
   "awaiting_parts",
-  "completed",
+  "awaiting_vendor",
+  "repair_completed",
+  "verified",
+  "closed",
   "cancelled",
 ] as const;
+
+export const workOrderSourceTypes = [
+  "manual",
+  "inspection_failure",
+  "dispatch_return",
+  "telematics_alert",
+  "customer_report",
+  "scheduled_maintenance",
+] as const;
+
+export const workOrderBillableDispositions = [
+  "internal",
+  "customer_damage",
+  "warranty",
+  "vendor_recovery",
+] as const;
+
+export const workOrderBillingApprovalStatuses = [
+  "not_required",
+  "pending_review",
+  "approved",
+  "rejected",
+] as const;
+
+export const workOrderVerificationResults = ["passed", "failed"] as const;
 
 export type AssetTypeKey = (typeof assetTypes)[number];
 export type AssetStatusKey = (typeof assetStatuses)[number];
@@ -112,6 +140,13 @@ export type FinancialEventStatusKey = (typeof financialEventStatuses)[number];
 export type InvoiceStatusKey = (typeof invoiceStatuses)[number];
 export type DispatchTaskStatusKey = (typeof dispatchTaskStatuses)[number];
 export type WorkOrderStatusKey = (typeof workOrderStatuses)[number];
+export type WorkOrderSourceTypeKey = (typeof workOrderSourceTypes)[number];
+export type WorkOrderBillableDispositionKey =
+  (typeof workOrderBillableDispositions)[number];
+export type WorkOrderBillingApprovalStatusKey =
+  (typeof workOrderBillingApprovalStatuses)[number];
+export type WorkOrderVerificationResultKey =
+  (typeof workOrderVerificationResults)[number];
 
 export interface MetricDefinition {
   label: string;
@@ -231,9 +266,30 @@ export interface WorkOrderRecord {
   branch: string;
   priority: string;
   source: string;
+  sourceType?: WorkOrderSourceTypeKey;
+  symptomSummary?: string | null;
+  diagnosis?: string | null;
+  repairSummary?: string | null;
+  contractNumber?: string | null;
+  customerName?: string | null;
   technicianName?: string | null;
+  technicianUserId?: string | null;
+  vendorId?: string | null;
   vendorName?: string | null;
   inspectionId?: string | null;
+  dueAt?: string | null;
+  openedAt?: string | null;
+  assignedAt?: string | null;
+  startedAt?: string | null;
+  repairCompletedAt?: string | null;
+  verifiedAt?: string | null;
+  closedAt?: string | null;
+  cancelledAt?: string | null;
+  verificationOutcome?: WorkOrderVerificationResultKey | null;
+  billableDisposition?: WorkOrderBillableDispositionKey;
+  billingApprovalStatus?: WorkOrderBillingApprovalStatusKey;
+  billableApprovedAt?: string | null;
+  attachmentCount?: number;
   estimatedCost?: number | null;
   actualCost?: number | null;
   laborHours?: number | null;

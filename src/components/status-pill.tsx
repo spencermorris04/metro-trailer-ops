@@ -19,6 +19,7 @@ export function statusToneFromValue(value: string): StatusTone {
       "passed",
       "completed",
       "closed",
+      "verified",
       "rentable",
       "clear",
       "success",
@@ -46,6 +47,7 @@ export function statusToneFromValue(value: string): StatusTone {
       "inspection",
       "overdue",
       "awaiting",
+      "repair",
       "limited",
     ].some((token) => normalized.includes(token))
   ) {

@@ -13,7 +13,9 @@ import type {
   AuditEventRecord,
   DocumentRecord,
   PlatformState,
+  SignatureAppearanceMode,
   SignatureEventRecord,
+  SignatureFieldRecord,
   SignatureRequestRecord,
   SignatureSignerRecord,
 } from "@/lib/platform-types";
@@ -25,6 +27,10 @@ import {
   isS3StorageEnabled,
   storeBuffer,
 } from "@/lib/server/object-storage";
+import {
+  buildDefaultSigningFields,
+  getSignerFields,
+} from "@/lib/server/esign-fields";
 import {
   renderContractSignaturePacketPdf,
   renderOperationalDocumentPdf,
@@ -62,6 +68,8 @@ type SignSignatureInput = {
   token: string;
   otpCode?: string;
   signatureText: string;
+  signatureMode: SignatureAppearanceMode;
+  signatureAppearanceDataUrl: string;
   signerTitle?: string;
   intentAccepted: true;
   consentAccepted: true;
@@ -91,6 +99,7 @@ export type SigningSession = {
   request: SignatureRequestView;
   signer: SignatureSignerRecord;
   packetDocument: DocumentRecord;
+  activeFields: SignatureFieldRecord[];
   canSign: boolean;
 };
 
@@ -426,9 +435,12 @@ function buildSignerEvidenceHash(options: {
       routingOrder: options.signer.routingOrder,
       signedAt: options.signer.signedAt,
       signatureText: options.signer.signatureText,
+      signatureMode: options.signer.signatureMode,
+      signatureAppearanceHash: options.signer.signatureAppearanceHash,
       ipAddress: options.signer.ipAddress,
       userAgent: options.signer.userAgent,
       consentVersion: options.request.consentTextVersion,
+      signingFields: options.request.signingFields,
       packetHash: options.packetHash,
     }),
   );
@@ -450,8 +462,10 @@ function buildRequestEvidenceHash(
         status: signer.status,
         signedAt: signer.signedAt,
         evidenceHash: signer.evidenceHash,
+        signatureAppearanceHash: signer.signatureAppearanceHash,
       })),
       consentVersion: request.consentTextVersion,
+      signingFields: request.signingFields,
     }),
   );
 }
@@ -725,6 +739,39 @@ export async function createSignatureRequestForContract(
   const message =
     payload.message ??
     "Review the contract packet, consent to electronic business, and complete your signature to activate this agreement.";
+  const sortedSigners = payload.signers
+    .map((signer, index) => ({
+      id: createId("signer"),
+      name: signer.name.trim(),
+      email: signer.email.trim().toLowerCase(),
+      title: signer.title?.trim() || null,
+      routingOrder: signer.routingOrder ?? index + 1,
+      status: "pending",
+      requestedAt,
+      viewedAt: null,
+      signedAt: null,
+      declinedAt: null,
+      reminderCount: 0,
+      lastReminderAt: null,
+      accessNonce: randomUUID(),
+      signatureText: null,
+      signatureMode: null,
+      signatureAppearanceDataUrl: null,
+      signatureAppearanceHash: null,
+      intentAcceptedAt: null,
+      consentAcceptedAt: null,
+      certificationAcceptedAt: null,
+      otpVerifiedAt: null,
+      ipAddress: null,
+      userAgent: null,
+      evidenceHash: null,
+    }))
+    .sort((a, b) => a.routingOrder - b.routingOrder);
+  const signingFields = buildDefaultSigningFields(
+    sortedSigners.map((signer) => ({
+      signerId: signer.id,
+    })),
+  );
 
   const request: SignatureRequestRecord = {
     id: createId("sig"),
@@ -740,35 +787,12 @@ export async function createSignatureRequestForContract(
     documentId: "",
     finalDocumentId: null,
     certificateDocumentId: null,
+    signingFields,
     expiresAt: new Date(
       Date.now() + payload.expiresInDays * 24 * 60 * 60 * 1000,
     ).toISOString(),
     cancelledAt: null,
-    signers: payload.signers
-      .map((signer, index) => ({
-        id: createId("signer"),
-        name: signer.name.trim(),
-        email: signer.email.trim().toLowerCase(),
-        title: signer.title?.trim() || null,
-        routingOrder: signer.routingOrder ?? index + 1,
-        status: "pending",
-        requestedAt,
-        viewedAt: null,
-        signedAt: null,
-        declinedAt: null,
-        reminderCount: 0,
-        lastReminderAt: null,
-        accessNonce: randomUUID(),
-        signatureText: null,
-        intentAcceptedAt: null,
-        consentAcceptedAt: null,
-        certificationAcceptedAt: null,
-        otpVerifiedAt: null,
-        ipAddress: null,
-        userAgent: null,
-        evidenceHash: null,
-      }))
-      .sort((a, b) => a.routingOrder - b.routingOrder),
+    signers: sortedSigners,
     events: [],
     evidenceHash: null,
     requestedAt,
@@ -782,6 +806,7 @@ export async function createSignatureRequestForContract(
     title,
     subject,
     message,
+    signingFields,
     signers: request.signers,
   });
 
@@ -974,6 +999,7 @@ export function getSigningSession(
     request: buildSignatureView(state, request),
     signer,
     packetDocument,
+    activeFields: getSignerFields(request.signingFields, signer.id),
     canSign,
   } satisfies SigningSession;
 }
@@ -1015,6 +1041,9 @@ export async function signSignatureRequest(
 
   signer.status = "signed";
   signer.signatureText = payload.signatureText.trim();
+  signer.signatureMode = payload.signatureMode;
+  signer.signatureAppearanceDataUrl = payload.signatureAppearanceDataUrl;
+  signer.signatureAppearanceHash = hashValue(payload.signatureAppearanceDataUrl);
   signer.title = payload.signerTitle?.trim() || signer.title;
   signer.intentAcceptedAt = payload.intentAccepted ? signedAt : null;
   signer.consentAcceptedAt = payload.consentAccepted ? signedAt : null;
@@ -1105,6 +1134,9 @@ export async function adminCompleteSignatureRequest(
     signer.viewedAt = signer.viewedAt ?? completedAt;
     signer.signedAt = completedAt;
     signer.signatureText = signer.name;
+    signer.signatureMode = "handwriting_font";
+    signer.signatureAppearanceDataUrl = null;
+    signer.signatureAppearanceHash = null;
     signer.intentAcceptedAt = completedAt;
     signer.consentAcceptedAt = completedAt;
     signer.certificationAcceptedAt = completedAt;

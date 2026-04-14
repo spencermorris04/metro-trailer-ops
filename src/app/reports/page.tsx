@@ -118,6 +118,30 @@ export default async function ReportsPage() {
               {formatCurrency(reports.maintenanceSummary.actualCost)}
             </p>
           </div>
+          <div className="soft-panel p-4">
+            <p className="text-sm text-slate-600">Awaiting verification</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.maintenanceSummary.verificationQueue}
+            </p>
+          </div>
+          <div className="soft-panel p-4">
+            <p className="text-sm text-slate-600">Average backlog age</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.maintenanceSummary.averageBacklogAgeDays}d
+            </p>
+          </div>
+          <div className="soft-panel p-4">
+            <p className="text-sm text-slate-600">Avg repair duration</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {reports.maintenanceSummary.averageRepairDurationHours}h
+            </p>
+          </div>
+          <div className="soft-panel p-4">
+            <p className="text-sm text-slate-600">Billable recovery</p>
+            <p className="mt-3 text-2xl font-semibold text-slate-900">
+              {formatCurrency(reports.maintenanceSummary.billableRecoveryTotal)}
+            </p>
+          </div>
         </div>
       </SectionCard>
 

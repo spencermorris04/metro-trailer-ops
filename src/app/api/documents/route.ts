@@ -4,6 +4,7 @@ import {
   requireApiPermission,
   requireStaffApiPermission,
   resolveContractScope,
+  resolveWorkOrderScope,
 } from "@/lib/server/authorization";
 import { createDocument, listDocuments } from "@/lib/server/esign";
 
@@ -12,7 +13,8 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const contractNumber = searchParams.get("contractNumber") ?? undefined;
-  const data = await listDocuments(contractNumber);
+  const workOrderId = searchParams.get("workOrderId") ?? undefined;
+  const data = await listDocuments(contractNumber, workOrderId);
 
   return ok({
     count: data.length,
@@ -22,12 +24,16 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await readJson(request);
+    const payload = await readJson<Record<string, unknown>>(request);
     const parsed = documentSchema.parse(payload);
-    const scope = await resolveContractScope(parsed.contractNumber);
+    const scope = parsed.contractNumber
+      ? await resolveContractScope(parsed.contractNumber)
+      : parsed.workOrderId
+        ? await resolveWorkOrderScope(parsed.workOrderId)
+        : null;
 
     if (!scope) {
-      return ok({ error: "Contract not found" }, { status: 404 });
+      return ok({ error: "Related entity not found" }, { status: 404 });
     }
 
     const actor = await requireApiPermission(request, "documents.manage", {

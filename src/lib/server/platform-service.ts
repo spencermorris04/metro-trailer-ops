@@ -451,7 +451,7 @@ export function getDashboardSummary() {
       .length,
     overdueInvoices: state.invoices.filter((invoice) => invoice.status === "overdue")
       .length,
-    openWorkOrders: state.workOrders.filter((order) => order.status !== "completed")
+    openWorkOrders: state.workOrders.filter((order) => !["verified", "closed", "cancelled"].includes(order.status))
       .length,
     pendingInspections: state.inspections.filter(
       (inspection) => inspection.status !== "passed",
@@ -1519,7 +1519,7 @@ export function completeWorkOrder(
   const workOrder = getWorkOrderById(state, workOrderId);
   const asset = getAssetById(state, workOrder.assetNumber);
 
-  workOrder.status = "completed";
+  workOrder.status = "verified";
   asset.status = "available";
   asset.maintenanceStatus = "clear";
   setAssetAvailability(asset, "available");
@@ -1904,12 +1904,17 @@ export function getReports() {
     overdueAging,
     overdueInvoices,
     maintenanceSummary: {
-      openWorkOrders: state.workOrders.filter((order) => order.status !== "completed")
+      openWorkOrders: state.workOrders.filter((order) => !["verified", "closed", "cancelled"].includes(order.status))
         .length,
       assignedWorkOrders: 0,
       vendorAssigned: 0,
+      verificationQueue: 0,
       estimatedCost: 0,
       actualCost: 0,
+      averageBacklogAgeDays: 0,
+      averageRepairDurationHours: 0,
+      billableRecoveryTotal: 0,
+      repeatFailureAssets: 0,
       byStatus: [],
     },
     inspectionDamageSummary: {

@@ -18,6 +18,7 @@ export const permissionCatalog = [
   "inspections.manage",
   "maintenance.view",
   "maintenance.manage",
+  "maintenance.verify",
   "accounting.view",
   "accounting.manage",
   "collections.view",
@@ -98,6 +99,7 @@ function legacyRolePermissions(role: string) {
         "inspections.manage",
         "maintenance.view",
         "maintenance.manage",
+        "maintenance.verify",
       ]);
     case "collections":
       return new Set<string>([

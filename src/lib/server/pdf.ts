@@ -8,9 +8,14 @@ import type {
   InvoiceRecord,
 } from "@/lib/domain/models";
 import type {
+  SignatureFieldRecord,
   SignatureRequestRecord,
   SignatureSignerRecord,
 } from "@/lib/platform-types";
+import {
+  getSignerFields,
+  parseSignatureAppearanceDataUrl,
+} from "@/lib/server/esign-fields";
 
 function streamToBuffer(document: PDFKit.PDFDocument) {
   return new Promise<Buffer>((resolve, reject) => {
@@ -94,7 +99,7 @@ function renderContractSnapshot(document: PDFKit.PDFDocument, options: {
     .fontSize(10)
     .fillColor("#16232b")
     .text(
-      "This packet is prepared for Metro Trailer electronic execution. Signers must review the agreement, consent to transact electronically, and adopt their typed name as their signature.",
+      "This packet is prepared for Metro Trailer electronic execution. Signers review the agreement, consent to transact electronically, verify via email OTP, and apply a visible signature appearance using a handwriting font, a hand-drawn signature, or an uploaded signature image.",
       {
         lineGap: 4,
       },
@@ -136,6 +141,11 @@ function renderSignatureEvidence(
       signer.signedAt ? new Date(signer.signedAt).toLocaleString("en-US") : "Not signed",
     );
     writeKeyValue(document, "Signature text", signer.signatureText ?? "Pending");
+    writeKeyValue(
+      document,
+      "Signature appearance",
+      signer.signatureMode ? titleize(signer.signatureMode.replaceAll("_", " ")) : "Pending",
+    );
     writeKeyValue(document, "IP address", signer.ipAddress ?? "Not captured");
     writeKeyValue(
       document,
@@ -143,7 +153,133 @@ function renderSignatureEvidence(
       signer.userAgent ? signer.userAgent.slice(0, 96) : "Not captured",
     );
     writeKeyValue(document, "Evidence hash", signer.evidenceHash ?? "Pending");
+
+    if (signer.signatureAppearanceDataUrl) {
+      try {
+        const signatureAppearance = parseSignatureAppearanceDataUrl(
+          signer.signatureAppearanceDataUrl,
+        );
+        document
+          .rect(document.x, document.y, 220, 64)
+          .strokeColor("#d6dde3")
+          .stroke();
+        document.image(signatureAppearance.buffer, document.x + 8, document.y + 8, {
+          fit: [204, 48],
+          align: "center",
+          valign: "center",
+        });
+        document.moveDown(3.5);
+      } catch {
+        writeKeyValue(document, "Signature preview", "Unavailable");
+      }
+    }
+
     document.moveDown(0.75);
+  });
+}
+
+function renderSignatureField(
+  document: PDFKit.PDFDocument,
+  field: SignatureFieldRecord,
+  signer: SignatureSignerRecord,
+  mode: "packet" | "signed",
+) {
+  document
+    .fontSize(9)
+    .fillColor("#5d6870")
+    .text(field.label, field.x, field.y - 16, {
+      width: field.width,
+    });
+
+  document
+    .roundedRect(field.x, field.y, field.width, field.height, 6)
+    .lineWidth(1)
+    .strokeColor("#b9c5cf")
+    .stroke();
+
+  if (field.kind === "signature") {
+    if (mode === "packet") {
+      document
+        .fontSize(10)
+        .fillColor("#5d6870")
+        .text("Visible signature appearance will populate here.", field.x + 12, field.y + 18, {
+          width: field.width - 24,
+          align: "center",
+        });
+      return;
+    }
+
+    if (signer.signatureAppearanceDataUrl) {
+      try {
+        const appearance = parseSignatureAppearanceDataUrl(signer.signatureAppearanceDataUrl);
+        document.image(appearance.buffer, field.x + 10, field.y + 10, {
+          fit: [field.width - 20, field.height - 20],
+          align: "center",
+          valign: "center",
+        });
+      } catch {
+        document
+          .fontSize(10)
+          .fillColor("#5d6870")
+          .text(signer.signatureText ?? signer.name, field.x + 12, field.y + 18, {
+            width: field.width - 24,
+            align: "center",
+          });
+      }
+    }
+
+    return;
+  }
+
+  const value =
+    field.kind === "title"
+      ? signer.title ?? "Not provided"
+      : signer.signedAt
+        ? new Date(signer.signedAt).toLocaleString("en-US")
+        : "Captured when signed";
+
+  document
+    .fontSize(10)
+    .fillColor(mode === "packet" ? "#5d6870" : "#16232b")
+    .text(mode === "packet" && field.kind === "date" ? "Auto-filled when signed" : value, field.x + 10, field.y + 9, {
+      width: field.width - 20,
+    });
+}
+
+function renderSignaturePages(
+  document: PDFKit.PDFDocument,
+  request: SignatureRequestRecord,
+  mode: "packet" | "signed",
+) {
+  request.signers.forEach((signer) => {
+    const fields = getSignerFields(request.signingFields, signer.id);
+    if (fields.length === 0) {
+      return;
+    }
+
+    document.addPage();
+    document.fontSize(18).fillColor("#16232b").text("Signature page");
+    document
+      .moveDown(0.35)
+      .fontSize(10)
+      .fillColor("#5d6870")
+      .text(
+        mode === "packet"
+          ? "These are the fields Metro Trailer will guide the signer through in the browser-based execution session."
+          : "This page shows the final signature fields as executed inside the Metro Trailer e-sign workflow.",
+        { lineGap: 4 },
+      )
+      .moveDown(0.5);
+
+    writeKeyValue(document, "Signer", signer.name);
+    writeKeyValue(document, "Email", signer.email);
+    writeKeyValue(document, "Role", signer.title ?? "Not provided");
+    writeKeyValue(document, "Routing order", String(signer.routingOrder));
+    document.moveDown(0.6);
+
+    for (const field of fields) {
+      renderSignatureField(document, field, signer, mode);
+    }
   });
 }
 
@@ -250,6 +386,7 @@ export async function renderContractSignaturePacketPdf(options: {
   title: string;
   subject: string;
   message: string;
+  signingFields: SignatureFieldRecord[];
   signers: SignatureSignerRecord[];
 }) {
   const document = createLetterDocument();
@@ -287,6 +424,30 @@ export async function renderContractSignaturePacketPdf(options: {
       .fillColor("#5d6870")
       .text(`${signer.email} | ${signer.title ?? "No title provided"}`);
   });
+
+  renderSignaturePages(document, {
+    id: "preview",
+    contractNumber: options.contract.contractNumber,
+    customerName: options.customer.name,
+    provider: "Metro Trailer",
+    status: "sent",
+    title: options.title,
+    subject: options.subject,
+    message: options.message,
+    consentTextVersion: "preview",
+    certificationText: "",
+    documentId: "",
+    finalDocumentId: null,
+    certificateDocumentId: null,
+    signingFields: options.signingFields,
+    expiresAt: null,
+    cancelledAt: null,
+    signers: options.signers,
+    events: [],
+    evidenceHash: null,
+    requestedAt: new Date().toISOString(),
+    completedAt: null,
+  }, "packet");
 
   return streamToBuffer(document);
 }
@@ -358,6 +519,7 @@ export async function renderSignedContractPdf(options: {
     });
 
   renderContractSnapshot(document, options);
+  renderSignaturePages(document, options.request, "signed");
 
   document.addPage();
   document.fontSize(18).fillColor("#16232b").text("Execution Certificate");

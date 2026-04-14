@@ -6,16 +6,38 @@ async function callService<T>(value: T | Promise<T>) {
   return Promise.resolve(value);
 }
 
-export async function listDocuments(contractNumber?: string) {
+export async function listDocuments(contractNumber?: string, workOrderId?: string) {
   return isProductionRuntime()
-    ? production.listDocuments(contractNumber)
+    ? production.listDocuments(contractNumber, workOrderId)
     : callService(demo.listDocuments(contractNumber));
 }
 
-export async function createDocument(...args: Parameters<typeof demo.createDocument>) {
+export async function createDocument(
+  payload: {
+    contractNumber?: string;
+    workOrderId?: string;
+    customerName?: string;
+    documentType: string;
+    filename: string;
+    contentType?: string;
+    contentBase64?: string;
+    metadata?: Record<string, unknown>;
+  },
+  userId?: string,
+) {
   return isProductionRuntime()
-    ? production.createDocument(args[0], args[1])
-    : callService(demo.createDocument(...args));
+    ? production.createDocument(payload, userId)
+    : callService(
+        demo.createDocument(
+          {
+            contractNumber: payload.contractNumber ?? payload.workOrderId ?? "DEMO",
+            customerName: payload.customerName ?? "Demo customer",
+            documentType: payload.documentType,
+            filename: payload.filename,
+          },
+          userId,
+        ),
+      );
 }
 
 export async function markDocumentArchived(...args: Parameters<typeof demo.markDocumentArchived>) {

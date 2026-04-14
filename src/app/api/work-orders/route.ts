@@ -1,5 +1,11 @@
 import { workOrderSchema } from "@/lib/domain/validators";
-import { created, errorResponse, ok, readJson } from "@/lib/server/api";
+import {
+  created,
+  errorResponse,
+  getIdempotencyKey,
+  ok,
+  readJson,
+} from "@/lib/server/api";
 import {
   requireApiPermission,
   requireStaffApiPermission,
@@ -11,22 +17,42 @@ export async function GET(request: Request) {
   await requireStaffApiPermission(request, "maintenance.view");
 
   const { searchParams } = new URL(request.url);
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number(searchParams.get("pageSize") ?? "25")),
+  );
   const data = await listWorkOrders({
     status: searchParams.get("status") ?? undefined,
     branch: searchParams.get("branch") ?? undefined,
     assetNumber: searchParams.get("assetNumber") ?? undefined,
   });
+  const start = (page - 1) * pageSize;
+  const paged = data.slice(start, start + pageSize);
 
   return ok({
     count: data.length,
-    data,
+    page,
+    pageSize,
+    filters: {
+      status: searchParams.get("status") ?? null,
+      branch: searchParams.get("branch") ?? null,
+      assetNumber: searchParams.get("assetNumber") ?? null,
+    },
+    data: paged,
   });
 }
 
 export async function POST(request: Request) {
   try {
-    const payload = await readJson(request);
-    const parsed = workOrderSchema.parse(payload);
+    const payload = await readJson<Record<string, unknown>>(request);
+    const parsed = workOrderSchema.parse({
+      ...payload,
+      idempotencyKey:
+        typeof payload.idempotencyKey === "string"
+          ? payload.idempotencyKey
+          : getIdempotencyKey(request),
+    });
     const scope = await resolveAssetScope(parsed.assetNumber);
 
     if (!scope) {

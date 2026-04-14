@@ -1274,6 +1274,7 @@ export async function buildSignatureRequest(options: {
       documentId: `doc_${Math.random().toString(36).slice(2, 10)}`,
       finalDocumentId: null,
       certificateDocumentId: null,
+      signingFields: [],
       expiresAt: null,
       cancelledAt: null,
       signers: options.signers.map((email, index) => ({
@@ -1291,6 +1292,9 @@ export async function buildSignatureRequest(options: {
         lastReminderAt: null,
         accessNonce: `nonce_${Math.random().toString(36).slice(2, 10)}`,
         signatureText: null,
+        signatureMode: null,
+        signatureAppearanceDataUrl: null,
+        signatureAppearanceHash: null,
         intentAcceptedAt: null,
         consentAcceptedAt: null,
         certificationAcceptedAt: null,

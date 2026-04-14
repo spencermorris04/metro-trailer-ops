@@ -2,6 +2,7 @@ import * as demo from "@/lib/server/platform-service";
 import * as esign from "@/lib/server/esign";
 import * as production from "@/lib/server/platform-service.production";
 import * as operations from "@/lib/server/platform-operations.production";
+import * as workOrders from "@/lib/server/work-orders.production";
 import { ApiError } from "@/lib/server/api";
 import { ensureWorkflowEnabled } from "@/lib/server/feature-flags";
 import { buildOperationalReports } from "@/lib/server/reporting";
@@ -202,14 +203,17 @@ export async function completeInspection(...args: Parameters<typeof demo.complet
 
 export async function listWorkOrders(filters?: Parameters<typeof demo.listWorkOrders>[0]) {
   return isProductionRuntime()
-    ? (ensureWorkflowEnabled("maintenance"), operations.listWorkOrders(filters))
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.listWorkOrders(filters))
     : callDemo(demo.listWorkOrders(filters));
 }
 
-export async function createWorkOrder(...args: Parameters<typeof demo.createWorkOrder>) {
+export async function createWorkOrder(
+  payload: workOrders.CreateWorkOrderInput,
+  userId?: string,
+) {
   return isProductionRuntime()
-    ? (ensureWorkflowEnabled("maintenance"), operations.createWorkOrder(args[0], args[1]))
-    : callDemo(demo.createWorkOrder(...args));
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.createWorkOrder(payload, userId))
+    : callDemo(demo.createWorkOrder(payload as never, userId));
 }
 
 export async function completeWorkOrder(
@@ -239,7 +243,25 @@ export async function completeWorkOrder(
 ) {
   return isProductionRuntime()
     ? (ensureWorkflowEnabled("maintenance"),
-      operations.completeWorkOrder(workOrderId, userId, notesOrPayload))
+      workOrders.markWorkOrderRepairComplete(
+        workOrderId,
+        typeof notesOrPayload === "string"
+          ? {
+              repairSummary: notesOrPayload,
+            }
+          : {
+              repairSummary:
+                notesOrPayload?.notes ?? "Repair completed and ready for verification.",
+              notes: notesOrPayload?.notes,
+              actualCost: notesOrPayload?.actualCost,
+              laborHours: notesOrPayload?.laborHours,
+              technicianUserId: notesOrPayload?.technicianUserId,
+              vendorName: notesOrPayload?.vendorName,
+              laborEntries: notesOrPayload?.laborEntries,
+              partEntries: notesOrPayload?.partEntries,
+            },
+        userId,
+      ))
     : callDemo(
         demo.completeWorkOrder(
           workOrderId,
@@ -247,6 +269,120 @@ export async function completeWorkOrder(
           typeof notesOrPayload === "string" ? notesOrPayload : notesOrPayload?.notes,
         ),
       );
+}
+
+export async function getWorkOrderDetail(workOrderId: string) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.getWorkOrderDetail(workOrderId))
+    : Promise.reject(new ApiError(501, "Work-order detail is not implemented in demo mode."));
+}
+
+export async function updateWorkOrder(
+  workOrderId: string,
+  payload: workOrders.UpdateWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.updateWorkOrder(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Work-order updates are not implemented in demo mode."));
+}
+
+export async function assignWorkOrder(
+  workOrderId: string,
+  payload: workOrders.AssignWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.assignWorkOrder(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Work-order assignment is not implemented in demo mode."));
+}
+
+export async function startWorkOrder(
+  workOrderId: string,
+  payload: workOrders.StartWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.startWorkOrder(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Starting work orders is not implemented in demo mode."));
+}
+
+export async function markWorkOrderAwaitingParts(
+  workOrderId: string,
+  payload: workOrders.AwaitingWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.markWorkOrderAwaitingParts(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Awaiting-parts work-order updates are not implemented in demo mode."));
+}
+
+export async function markWorkOrderAwaitingVendor(
+  workOrderId: string,
+  payload: workOrders.AwaitingWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.markWorkOrderAwaitingVendor(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Awaiting-vendor work-order updates are not implemented in demo mode."));
+}
+
+export async function markWorkOrderRepairComplete(
+  workOrderId: string,
+  payload: workOrders.RepairCompleteWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.markWorkOrderRepairComplete(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Repair-complete work-order updates are not implemented in demo mode."));
+}
+
+export async function verifyWorkOrder(
+  workOrderId: string,
+  payload: workOrders.VerifyWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.verifyWorkOrder(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Work-order verification is not implemented in demo mode."));
+}
+
+export async function cancelWorkOrder(
+  workOrderId: string,
+  payload: workOrders.CancelWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.cancelWorkOrder(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Work-order cancellation is not implemented in demo mode."));
+}
+
+export async function closeWorkOrder(
+  workOrderId: string,
+  payload: workOrders.CloseWorkOrderInput,
+  userId?: string,
+) {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.closeWorkOrder(workOrderId, payload, userId))
+    : Promise.reject(new ApiError(501, "Work-order close is not implemented in demo mode."));
+}
+
+export async function listTechnicianWorkloads() {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.listTechnicianWorkloads())
+    : Promise.reject(new ApiError(501, "Technician workloads are not implemented in demo mode."));
+}
+
+export async function listVendorQueue() {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.listVendorQueue())
+    : Promise.reject(new ApiError(501, "Vendor queues are not implemented in demo mode."));
+}
+
+export async function listVerificationQueue() {
+  return isProductionRuntime()
+    ? (ensureWorkflowEnabled("maintenance"), workOrders.listVerificationQueue())
+    : Promise.reject(new ApiError(501, "Verification queues are not implemented in demo mode."));
 }
 
 export async function sendInvoice(...args: Parameters<typeof demo.sendInvoice>) {

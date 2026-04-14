@@ -155,7 +155,7 @@ async function handleNotificationSend(job: OutboxJobRecord) {
     entityId: notificationId,
     status: result.status === "sent" ? "success" : "skipped",
     lastError:
-      result.status === "sent" ? null : "Notification skipped due to missing SES configuration.",
+      result.status === "sent" ? null : "Notification skipped due to missing email configuration.",
     payloadPatch: {
       providerMessageId: result.providerMessageId,
     },

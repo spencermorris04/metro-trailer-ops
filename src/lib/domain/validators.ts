@@ -11,6 +11,10 @@ import {
   financialEventTypes,
   invoiceStatuses,
   maintenanceStatuses,
+  workOrderBillableDispositions,
+  workOrderBillingApprovalStatuses,
+  workOrderSourceTypes,
+  workOrderVerificationResults,
 } from "@/lib/domain/models";
 
 const addressSchema = z.object({
@@ -27,6 +31,12 @@ const contactSchema = z.object({
   email: z.string().email().optional(),
   phone: z.string().min(7).optional(),
 });
+
+const signatureAppearanceModes = [
+  "handwriting_font",
+  "drawn",
+  "uploaded_image",
+] as const;
 
 export const assetSchema = z.object({
   assetNumber: z.string().min(3),
@@ -184,49 +194,133 @@ export const inspectionCompletionSchema = z.object({
 export const workOrderSchema = z.object({
   title: z.string().min(3),
   assetNumber: z.string().min(3),
-  branch: z.string().min(2),
+  branch: z.string().min(2).optional(),
   priority: z.string().min(2),
   source: z.string().min(2),
+  sourceType: z.enum(workOrderSourceTypes).default("manual"),
+  contractNumber: z.string().min(3).optional(),
   inspectionId: z.string().min(1).optional(),
   technicianUserId: z.string().min(1).optional(),
+  vendorId: z.string().min(1).optional(),
   vendorName: z.string().min(2).max(200).optional(),
+  symptomSummary: z.string().min(3).max(2000).optional(),
+  diagnosis: z.string().max(4000).optional(),
+  repairSummary: z.string().max(4000).optional(),
+  dueAt: z.coerce.date().optional(),
+  billableDisposition: z.enum(workOrderBillableDispositions).default("internal"),
+  billingApprovalStatus: z
+    .enum(workOrderBillingApprovalStatuses)
+    .optional(),
   estimatedCost: z.number().nonnegative().optional(),
   laborHours: z.number().nonnegative().optional(),
-  status: z.enum(["open", "assigned", "in_progress", "awaiting_parts"]).optional(),
-  laborEntries: z.array(z.object({
-    technicianUserId: z.string().min(1).optional(),
-    hours: z.number().positive(),
-    hourlyRate: z.number().nonnegative().optional(),
-    notes: z.string().max(2000).optional(),
-  })).optional(),
-  partEntries: z.array(z.object({
-    partNumber: z.string().max(120).optional(),
-    description: z.string().min(2).max(200),
-    quantity: z.number().positive(),
-    unitCost: z.number().nonnegative().optional(),
-  })).optional(),
+  status: z.enum(["open", "assigned"]).optional(),
+  laborEntries: z
+    .array(
+      z.object({
+        technicianUserId: z.string().min(1).optional(),
+        hours: z.number().positive(),
+        hourlyRate: z.number().nonnegative().optional(),
+        notes: z.string().max(2000).optional(),
+      }),
+    )
+    .optional(),
+  partEntries: z
+    .array(
+      z.object({
+        partNumber: z.string().max(120).optional(),
+        description: z.string().min(2).max(200),
+        quantity: z.number().positive(),
+        unitCost: z.number().nonnegative().optional(),
+      }),
+    )
+    .optional(),
   notes: z.string().max(2000).optional(),
   idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
-export const workOrderCompletionSchema = z.object({
+const workOrderLaborEntrySchema = z.object({
+  technicianUserId: z.string().min(1).optional(),
+  hours: z.number().positive(),
+  hourlyRate: z.number().nonnegative().optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+const workOrderPartEntrySchema = z.object({
+  partNumber: z.string().max(120).optional(),
+  description: z.string().min(2).max(200),
+  quantity: z.number().positive(),
+  unitCost: z.number().nonnegative().optional(),
+});
+
+export const workOrderUpdateSchema = z.object({
+  title: z.string().min(3).optional(),
+  priority: z.string().min(2).optional(),
+  source: z.string().min(2).optional(),
+  sourceType: z.enum(workOrderSourceTypes).optional(),
+  symptomSummary: z.string().min(3).max(2000).optional(),
+  diagnosis: z.string().max(4000).optional(),
+  repairSummary: z.string().max(4000).optional(),
+  dueAt: z.coerce.date().nullable().optional(),
+  estimatedCost: z.number().nonnegative().optional(),
+  actualCost: z.number().nonnegative().optional(),
+  laborHours: z.number().nonnegative().optional(),
+  billableDisposition: z.enum(workOrderBillableDispositions).optional(),
+  billingApprovalStatus: z
+    .enum(workOrderBillingApprovalStatuses)
+    .optional(),
+  contractNumber: z.string().min(3).nullable().optional(),
+  notes: z.string().max(2000).optional(),
+  laborEntries: z.array(workOrderLaborEntrySchema).optional(),
+  partEntries: z.array(workOrderPartEntrySchema).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderAssignSchema = z.object({
+  technicianUserId: z.string().min(1).optional(),
+  vendorId: z.string().min(1).optional(),
+  vendorName: z.string().min(2).max(200).optional(),
+  notes: z.string().max(2000).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderStartSchema = z.object({
+  notes: z.string().max(2000).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderAwaitingSchema = z.object({
+  notes: z.string().min(2).max(2000),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderRepairCompleteSchema = z.object({
+  repairSummary: z.string().min(3).max(4000),
   notes: z.string().max(2000).optional(),
   actualCost: z.number().nonnegative().optional(),
   laborHours: z.number().nonnegative().optional(),
   technicianUserId: z.string().min(1).optional(),
+  vendorId: z.string().min(1).optional(),
   vendorName: z.string().min(2).max(200).optional(),
-  laborEntries: z.array(z.object({
-    technicianUserId: z.string().min(1).optional(),
-    hours: z.number().positive(),
-    hourlyRate: z.number().nonnegative().optional(),
-    notes: z.string().max(2000).optional(),
-  })).optional(),
-  partEntries: z.array(z.object({
-    partNumber: z.string().max(120).optional(),
-    description: z.string().min(2).max(200),
-    quantity: z.number().positive(),
-    unitCost: z.number().nonnegative().optional(),
-  })).optional(),
+  laborEntries: z.array(workOrderLaborEntrySchema).optional(),
+  partEntries: z.array(workOrderPartEntrySchema).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderVerifySchema = z.object({
+  result: z.enum(workOrderVerificationResults),
+  notes: z.string().max(2000).optional(),
+  inspectionId: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderCancelSchema = z.object({
+  reason: z.string().min(3).max(2000),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const workOrderCloseSchema = z.object({
+  notes: z.string().max(2000).optional(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const invoicePaymentSchema = z.object({
@@ -305,10 +399,22 @@ export const telematicsScheduleSchema = z.object({
 });
 
 export const documentSchema = z.object({
-  contractNumber: z.string().min(3),
-  customerName: z.string().min(2),
+  contractNumber: z.string().min(3).optional(),
+  workOrderId: z.string().min(1).optional(),
+  customerName: z.string().min(2).optional(),
   documentType: z.string().min(3),
   filename: z.string().min(5),
+  contentType: z.string().min(3).optional(),
+  contentBase64: z.string().min(4).optional(),
+  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.contractNumber && !value.workOrderId) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Either contractNumber or workOrderId is required.",
+      path: ["contractNumber"],
+    });
+  }
 });
 
 export const signatureSignerSchema = z.object({
@@ -345,6 +451,13 @@ export const signatureSignSchema = z.object({
   token: z.string().min(24),
   otpCode: z.string().regex(/^\d{6}$/, "Verification code must be 6 digits."),
   signatureText: z.string().min(2).max(160),
+  signatureMode: z.enum(signatureAppearanceModes),
+  signatureAppearanceDataUrl: z
+    .string()
+    .regex(
+      /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/,
+      "Signature appearance must be a PNG or JPEG data URL.",
+    ),
   signerTitle: z.string().min(2).max(120).optional(),
   intentAccepted: z.literal(true),
   consentAccepted: z.literal(true),

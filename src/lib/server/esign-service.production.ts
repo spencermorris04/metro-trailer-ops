@@ -10,6 +10,8 @@ import type {
 import type {
   DocumentRecord,
   SignatureEventRecord,
+  SignatureFieldRecord,
+  SignatureAppearanceMode,
   SignatureRequestRecord,
   SignatureSignerRecord,
 } from "@/lib/platform-types";
@@ -31,6 +33,11 @@ import {
 } from "@/lib/server/production-utils";
 import { sendTransactionalEmail } from "@/lib/server/notification-service";
 import {
+  buildDefaultSigningFields,
+  getSignerFields,
+  parseSignatureAppearanceDataUrl,
+} from "@/lib/server/esign-fields";
+import {
   listAssets,
   listContracts,
   listCustomers,
@@ -42,10 +49,14 @@ const CERTIFICATION_TEXT =
 const OTP_TTL_MINUTES = 15;
 
 type CreateDocumentInput = {
-  contractNumber: string;
-  customerName: string;
+  contractNumber?: string;
+  workOrderId?: string;
+  customerName?: string;
   documentType: string;
   filename: string;
+  contentType?: string;
+  contentBase64?: string;
+  metadata?: Record<string, unknown>;
 };
 
 type CreateSignatureRequestInput = {
@@ -67,6 +78,8 @@ type SignSignatureInput = {
   token: string;
   otpCode: string;
   signatureText: string;
+  signatureMode: SignatureAppearanceMode;
+  signatureAppearanceDataUrl: string;
   signerTitle?: string;
   intentAccepted: true;
   consentAccepted: true;
@@ -96,6 +109,7 @@ export type SigningSession = {
   request: SignatureRequestView;
   signer: SignatureSignerRecord;
   packetDocument: DocumentRecord;
+  activeFields: SignatureFieldRecord[];
   canSign: boolean;
 };
 
@@ -166,6 +180,15 @@ function createOtpCode() {
   return String(randomInt(100000, 1000000));
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function createSignedToken(payload: {
   accessTokenId: string;
   signatureRequestId: string;
@@ -225,6 +248,7 @@ async function getBaseRequestRow(signatureRequestId: string) {
       documentId: schema.signatureRequests.documentId,
       finalDocumentId: schema.signatureRequests.finalDocumentId,
       certificateDocumentId: schema.signatureRequests.certificateDocumentId,
+      signingFields: schema.signatureRequests.signingFields,
       expiresAt: schema.signatureRequests.expiresAt,
       cancelledAt: schema.signatureRequests.cancelledAt,
       evidenceHash: schema.signatureRequests.evidenceHash,
@@ -267,6 +291,7 @@ function mapDocumentRow(row: {
   supersedesDocumentId: string | null;
   retentionMode: "governance" | "compliance" | null;
   metadata: Record<string, unknown> | null;
+  workOrderId: string | null;
 }) {
   return {
     id: row.id,
@@ -293,6 +318,7 @@ function mapDocumentRow(row: {
     supersedesDocumentId: row.supersedesDocumentId,
     retentionMode: row.retentionMode ?? "compliance",
     metadata: (row.metadata ?? {}) as Record<string, string | number | boolean | null>,
+    workOrderId: row.workOrderId,
   } satisfies DocumentRecord;
 }
 
@@ -315,6 +341,9 @@ function mapSignerRow(
     lastReminderAt: toIso(row.lastReminderAt),
     accessNonce: accessTokenId ?? "",
     signatureText: row.signatureText,
+    signatureMode: row.signatureMode,
+    signatureAppearanceDataUrl: row.signatureAppearanceDataUrl,
+    signatureAppearanceHash: row.signatureAppearanceHash,
     intentAcceptedAt: toIso(row.intentAcceptedAt),
     consentAcceptedAt: toIso(row.consentAcceptedAt),
     certificationAcceptedAt: toIso(row.certificationAcceptedAt),
@@ -336,14 +365,16 @@ function mapEventRow(row: typeof schema.signatureEvents.$inferSelect) {
 }
 
 async function createStoredDocument(options: {
-  contractId: string;
+  contractId?: string | null;
   contractNumber: string;
-  customerId: string;
+  customerId?: string | null;
+  workOrderId?: string | null;
   customerName: string;
   documentType: string;
   status: string;
   filename: string;
   buffer: Buffer;
+  contentType?: string;
   relatedSignatureRequestId?: string | null;
   supersedesDocumentId?: string | null;
   metadata?: Record<string, string | number | boolean | null>;
@@ -353,7 +384,7 @@ async function createStoredDocument(options: {
   const stored = await storeBuffer({
     key,
     body: options.buffer,
-    contentType: "application/pdf",
+    contentType: options.contentType ?? "application/pdf",
     retentionMode: "compliance",
     metadata: {
       contractNumber: options.contractNumber,
@@ -376,15 +407,16 @@ async function createStoredDocument(options: {
 
   await db.insert(schema.documents).values({
     id: documentId,
-    contractId: options.contractId,
-    customerId: options.customerId,
+    contractId: options.contractId ?? null,
+    customerId: options.customerId ?? null,
+    workOrderId: options.workOrderId ?? null,
     documentType: options.documentType,
     status:
       options.status as typeof schema.documents.$inferInsert.status,
     filename: options.filename,
     source: "internal_esign",
     hash: hashValue(options.buffer),
-    contentType: "application/pdf",
+    contentType: options.contentType ?? "application/pdf",
     sizeBytes: stored.sizeBytes,
     storageProvider: stored.storageProvider,
     storageBucket: stored.storageBucket,
@@ -625,6 +657,96 @@ async function getContractSnapshot(contractNumber: string) {
   };
 }
 
+async function getWorkOrderDocumentContext(workOrderId: string) {
+  const [row] = await db
+    .select({
+      workOrderId: schema.workOrders.id,
+      contractId: schema.workOrders.contractId,
+      assetNumber: schema.assets.assetNumber,
+      contractNumber: schema.contracts.contractNumber,
+      customerId: schema.customers.id,
+      customerName: schema.customers.name,
+    })
+    .from(schema.workOrders)
+    .innerJoin(schema.assets, eq(schema.workOrders.assetId, schema.assets.id))
+    .leftJoin(schema.contracts, eq(schema.workOrders.contractId, schema.contracts.id))
+    .leftJoin(schema.customers, eq(schema.contracts.customerId, schema.customers.id))
+    .where(eq(schema.workOrders.id, workOrderId))
+    .limit(1);
+
+  return requireRecord(row, `Work order ${workOrderId} not found.`);
+}
+
+function buildSignatureInviteEmail(options: {
+  signerName: string;
+  subject: string;
+  message: string;
+  signingUrl: string;
+  packetDownloadUrl: string;
+  expiresAt: string | null;
+}) {
+  const messageHtml = escapeHtml(options.message).replaceAll("\n", "<br />");
+  const expiresLine = options.expiresAt
+    ? `This signing link expires on ${new Date(options.expiresAt).toLocaleString("en-US")}.`
+    : "This signing link remains active until Metro Trailer closes the request.";
+
+  return {
+    text: [
+      `Hello ${options.signerName},`,
+      "",
+      options.message,
+      "",
+      `Open signing session: ${options.signingUrl}`,
+      `Download packet: ${options.packetDownloadUrl}`,
+      expiresLine,
+      "",
+      `Request: ${options.subject}`,
+    ].join("\n"),
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a">
+        <p>Hello ${escapeHtml(options.signerName)},</p>
+        <p>${messageHtml}</p>
+        <p>
+          <a href="${escapeHtml(options.signingUrl)}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#0f172a;color:#ffffff;text-decoration:none;font-weight:600">
+            Open signing session
+          </a>
+        </p>
+        <p><a href="${escapeHtml(options.packetDownloadUrl)}">Download contract packet</a></p>
+        <p>${escapeHtml(expiresLine)}</p>
+        <p style="color:#475569">Request: ${escapeHtml(options.subject)}</p>
+      </div>
+    `,
+  };
+}
+
+function buildSignatureOtpEmail(options: {
+  signerName: string;
+  requestTitle: string;
+  otpCode: string;
+  expiresAt: string;
+}) {
+  return {
+    text: [
+      `Hello ${options.signerName},`,
+      "",
+      `Your Metro Trailer verification code is ${options.otpCode}.`,
+      `This code expires at ${options.expiresAt}.`,
+      "Enter the code in the signing session to complete your signature.",
+      "",
+      `Request: ${options.requestTitle}`,
+    ].join("\n"),
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a">
+        <p>Hello ${escapeHtml(options.signerName)},</p>
+        <p>Use this Metro Trailer verification code to complete your signature:</p>
+        <p style="font-size:28px;font-weight:700;letter-spacing:0.2em">${escapeHtml(options.otpCode)}</p>
+        <p>This code expires at ${escapeHtml(options.expiresAt)}.</p>
+        <p style="color:#475569">Request: ${escapeHtml(options.requestTitle)}</p>
+      </div>
+    `,
+  };
+}
+
 function buildSignerEvidenceHash(options: {
   request: SignatureRequestRecord;
   signer: SignatureSignerRecord;
@@ -641,6 +763,8 @@ function buildSignerEvidenceHash(options: {
       routingOrder: options.signer.routingOrder,
       signedAt: options.signer.signedAt,
       signatureText: options.signer.signatureText,
+      signatureMode: options.signer.signatureMode,
+      signatureAppearanceHash: options.signer.signatureAppearanceHash,
       intentAcceptedAt: options.signer.intentAcceptedAt,
       consentAcceptedAt: options.signer.consentAcceptedAt,
       certificationAcceptedAt: options.signer.certificationAcceptedAt,
@@ -648,6 +772,7 @@ function buildSignerEvidenceHash(options: {
       ipAddress: options.signer.ipAddress,
       userAgent: options.signer.userAgent,
       consentVersion: options.request.consentTextVersion,
+      signingFields: options.request.signingFields,
       packetHash: options.packetHash,
     }),
   );
@@ -669,8 +794,10 @@ function buildRequestEvidenceHash(
         status: signer.status,
         signedAt: signer.signedAt,
         evidenceHash: signer.evidenceHash,
+        signatureAppearanceHash: signer.signatureAppearanceHash,
       })),
       consentVersion: request.consentTextVersion,
+      signingFields: request.signingFields,
     }),
   );
 }
@@ -723,6 +850,7 @@ async function loadSignatureRequestRecord(signatureRequestId: string) {
         supersedesDocumentId: schema.documents.supersedesDocumentId,
         retentionMode: schema.documents.retentionMode,
         metadata: schema.documents.metadata,
+        workOrderId: schema.documents.workOrderId,
       })
       .from(schema.documents)
       .leftJoin(schema.contracts, eq(schema.documents.contractId, schema.contracts.id))
@@ -811,6 +939,7 @@ async function buildSignatureView(signatureRequestId: string) {
     documentId: base.documentId ?? "",
     finalDocumentId: base.finalDocumentId,
     certificateDocumentId: base.certificateDocumentId,
+    signingFields: (base.signingFields ?? []) as SignatureFieldRecord[],
     expiresAt: toIso(base.expiresAt),
     cancelledAt: toIso(base.cancelledAt),
     signers,
@@ -953,7 +1082,7 @@ function baseCustomerId(customer: CustomerRecord) {
   return customer.id;
 }
 
-export async function listDocuments(contractNumber?: string) {
+export async function listDocuments(contractNumber?: string, workOrderId?: string) {
   const rows = await db
     .select({
       id: schema.documents.id,
@@ -979,6 +1108,7 @@ export async function listDocuments(contractNumber?: string) {
       supersedesDocumentId: schema.documents.supersedesDocumentId,
       retentionMode: schema.documents.retentionMode,
       metadata: schema.documents.metadata,
+      workOrderId: schema.documents.workOrderId,
     })
     .from(schema.documents)
     .leftJoin(schema.contracts, eq(schema.documents.contractId, schema.contracts.id))
@@ -987,38 +1117,77 @@ export async function listDocuments(contractNumber?: string) {
 
   return rows
     .map(mapDocumentRow)
-    .filter((document) =>
-      contractNumber ? document.contractNumber === contractNumber : true,
-    );
+    .filter((document) => {
+      if (contractNumber && document.contractNumber !== contractNumber) {
+        return false;
+      }
+      if (workOrderId && document.workOrderId !== workOrderId) {
+        return false;
+      }
+      return true;
+    });
 }
 
 export async function createDocument(
   payload: CreateDocumentInput,
   userId = "system",
 ) {
-  const { contract, customer } = await getContractSnapshot(payload.contractNumber);
-  const buffer = await renderOperationalDocumentPdf(payload);
+  let contractNumber = payload.contractNumber ?? null;
+  let contractId: string | null = null;
+  let customerId: string | null = null;
+  let customerName = payload.customerName ?? "Unknown";
+  let workOrderId: string | null = payload.workOrderId ?? null;
+
+  if (payload.contractNumber) {
+    const { contract, customer } = await getContractSnapshot(payload.contractNumber);
+    contractNumber = contract.contractNumber;
+    contractId = baseContractId(contract);
+    customerId = baseCustomerId(customer);
+    customerName = customer.name;
+  } else if (payload.workOrderId) {
+    const context = await getWorkOrderDocumentContext(payload.workOrderId);
+    contractNumber = context.contractNumber ?? `work-order-${context.assetNumber}`;
+    contractId = context.contractId ?? null;
+    customerId = context.customerId ?? null;
+    customerName = context.customerName ?? customerName;
+    workOrderId = context.workOrderId;
+  } else {
+    throw new ApiError(400, "Document creation requires a contract or work order.");
+  }
+
+  const buffer = payload.contentBase64
+    ? Buffer.from(payload.contentBase64, "base64")
+    : await renderOperationalDocumentPdf({
+        contractNumber: contractNumber ?? "Unassigned",
+        customerName,
+        documentType: payload.documentType,
+        filename: payload.filename,
+      });
   const document = await createStoredDocument({
-    contractId: baseContractId(contract),
-    contractNumber: contract.contractNumber,
-    customerId: baseCustomerId(customer),
-    customerName: customer.name,
+    contractId,
+    contractNumber: contractNumber ?? "Unassigned",
+    customerId,
+    workOrderId,
+    customerName,
     documentType: payload.documentType,
     status: "draft",
     filename: payload.filename,
     buffer,
+    contentType: payload.contentType ?? "application/pdf",
     metadata: {
       manuallyCreated: true,
+      ...(payload.metadata ?? {}),
     },
   });
 
   await pushAudit({
-    entityId: contract.contractNumber,
+    entityId: contractNumber ?? workOrderId ?? document.id,
     eventType: "document_created",
     userId,
     metadata: {
       documentId: document.id,
       documentType: document.documentType,
+      workOrderId,
     },
   });
 
@@ -1112,6 +1281,7 @@ export async function getDocumentDownload(documentId: string) {
       supersedesDocumentId: schema.documents.supersedesDocumentId,
       retentionMode: schema.documents.retentionMode,
       metadata: schema.documents.metadata,
+      workOrderId: schema.documents.workOrderId,
     })
     .from(schema.documents)
     .leftJoin(schema.contracts, eq(schema.documents.contractId, schema.contracts.id))
@@ -1156,6 +1326,11 @@ export async function createSignatureRequestForContract(
       routingOrder: signer.routingOrder ?? index + 1,
     }))
     .sort((a, b) => a.routingOrder - b.routingOrder);
+  const signingFields = buildDefaultSigningFields(
+    sortedSigners.map((signer) => ({
+      signerId: signer.id,
+    })),
+  );
 
   const packetPdf = await renderContractSignaturePacketPdf({
     contract,
@@ -1164,6 +1339,7 @@ export async function createSignatureRequestForContract(
     title,
     subject,
     message,
+    signingFields,
     signers: sortedSigners.map((signer) => ({
       id: signer.id,
       name: signer.name,
@@ -1179,6 +1355,9 @@ export async function createSignatureRequestForContract(
       lastReminderAt: null,
       accessNonce: "",
       signatureText: null,
+      signatureMode: null,
+      signatureAppearanceDataUrl: null,
+      signatureAppearanceHash: null,
       intentAcceptedAt: null,
       consentAcceptedAt: null,
       certificationAcceptedAt: null,
@@ -1202,6 +1381,7 @@ export async function createSignatureRequestForContract(
     metadata: {
       title,
       signerCount: sortedSigners.length,
+      signingFieldCount: signingFields.length,
     },
   });
 
@@ -1218,6 +1398,7 @@ export async function createSignatureRequestForContract(
       consentTextVersion: CONSENT_TEXT_VERSION,
       certificationText: CERTIFICATION_TEXT,
       documentId: packetDocument.id,
+      signingFields,
       expiresAt,
       requestedAt,
       createdByUserId: userId === "system" ? null : userId,
@@ -1267,15 +1448,26 @@ export async function createSignatureRequestForContract(
   );
 
   await Promise.all(
-    firstWave.map((link) =>
-      sendTransactionalEmail({
+    firstWave.map((link) => {
+      const email = buildSignatureInviteEmail({
+        signerName: link.signerName,
+        subject,
+        message,
+        signingUrl: requireRecord(link.url ?? undefined, "Signer link missing."),
+        packetDownloadUrl: `${getAppUrl()}/api/documents/${packetDocument.id}/download`,
+        expiresAt: expiresAt.toISOString(),
+      });
+
+      return sendTransactionalEmail({
         to: link.signerEmail,
         subject,
-        text: `${message}\n\nOpen signing session: ${link.url}`,
+        text: email.text,
+        html: email.html,
+        provider: "resend",
         relatedEntityType: "signature_request",
         relatedEntityId: requestId,
-      }),
-    ),
+      });
+    }),
   );
 
   await pushAudit({
@@ -1349,10 +1541,25 @@ export async function sendSignatureReminder(
       });
     });
 
+    const packetDocument = requireRecord(
+      request.packetDocument ?? undefined,
+      "Signature packet document not found.",
+    );
+    const inviteEmail = buildSignatureInviteEmail({
+      signerName: signer.name,
+      subject: request.subject,
+      message: request.message,
+      signingUrl: `${getAppUrl()}/sign/${request.id}?signer=${signer.id}&token=${encodeURIComponent(token.rawToken)}`,
+      packetDownloadUrl: `${getAppUrl()}/api/documents/${packetDocument.id}/download`,
+      expiresAt: request.expiresAt,
+    });
+
     await sendTransactionalEmail({
       to: signer.email,
       subject: request.subject,
-      text: `${request.message}\n\nOpen signing session: ${getAppUrl()}/sign/${request.id}?signer=${signer.id}&token=${encodeURIComponent(token.rawToken)}`,
+      text: inviteEmail.text,
+      html: inviteEmail.html,
+      provider: "resend",
       relatedEntityType: "signature_request",
       relatedEntityId: request.id,
     });
@@ -1517,6 +1724,7 @@ export async function getSigningSession(
     request,
     signer: refreshedSigner,
     packetDocument,
+    activeFields: getSignerFields(request.signingFields, refreshedSigner.id),
     canSign:
       !["completed", "cancelled", "expired"].includes(request.status) &&
       !["signed", "cancelled", "expired"].includes(refreshedSigner.status) &&
@@ -1593,17 +1801,19 @@ export async function requestSignatureOtp(
     });
   });
 
+  const otpEmail = buildSignatureOtpEmail({
+    signerName: signer.name,
+    requestTitle: request.title,
+    otpCode,
+    expiresAt: expiresAt.toISOString(),
+  });
+
   await sendTransactionalEmail({
     to: signer.email,
     subject: `${request.subject} - verification code`,
-    text: [
-      `Your Metro Trailer verification code is ${otpCode}.`,
-      "",
-      `This code expires at ${expiresAt.toISOString()}.`,
-      "Enter this code in the signing session to complete your signature.",
-      "",
-      `Request: ${request.title}`,
-    ].join("\n"),
+    text: otpEmail.text,
+    html: otpEmail.html,
+    provider: "resend",
     relatedEntityType: "signature_request",
     relatedEntityId: signatureRequestId,
   });
@@ -1660,6 +1870,10 @@ export async function signSignatureRequest(
     signToken: payload.token,
     otpCode: payload.otpCode,
   });
+  const signatureAppearance = parseSignatureAppearanceDataUrl(
+    payload.signatureAppearanceDataUrl,
+  );
+  const signatureAppearanceHash = hashValue(signatureAppearance.buffer);
 
   const signedAt = now();
   const evidenceHash = buildSignerEvidenceHash({
@@ -1668,6 +1882,9 @@ export async function signSignatureRequest(
       ...signer,
       title: payload.signerTitle?.trim() || signer.title,
       signatureText: payload.signatureText.trim(),
+      signatureMode: payload.signatureMode,
+      signatureAppearanceDataUrl: payload.signatureAppearanceDataUrl,
+      signatureAppearanceHash,
       intentAcceptedAt: signedAt.toISOString(),
       consentAcceptedAt: signedAt.toISOString(),
       certificationAcceptedAt: signedAt.toISOString(),
@@ -1686,6 +1903,9 @@ export async function signSignatureRequest(
         status: "signed",
         title: payload.signerTitle?.trim() || signer.title,
         signatureText: payload.signatureText.trim(),
+        signatureMode: payload.signatureMode,
+        signatureAppearanceDataUrl: payload.signatureAppearanceDataUrl,
+        signatureAppearanceHash,
         intentAcceptedAt: signedAt,
         consentAcceptedAt: signedAt,
         certificationAcceptedAt: signedAt,
@@ -1735,6 +1955,8 @@ export async function signSignatureRequest(
         signerEmail: signer.email,
         evidenceHash,
         consentTextVersion: request.consentTextVersion,
+        signatureMode: payload.signatureMode,
+        signatureAppearanceHash,
       },
       createdAt: now(),
     });
@@ -1769,10 +1991,21 @@ export async function signSignatureRequest(
       expiresAt: new Date(refreshed.expiresAt),
     });
 
+    const inviteEmail = buildSignatureInviteEmail({
+      signerName: remainingSigner.name,
+      subject: refreshed.subject,
+      message: refreshed.message,
+      signingUrl: `${getAppUrl()}/sign/${refreshed.id}?signer=${remainingSigner.id}&token=${encodeURIComponent(token.rawToken)}`,
+      packetDownloadUrl: `${getAppUrl()}/api/documents/${requireRecord(refreshed.packetDocument ?? undefined, "Signature packet document not found.").id}/download`,
+      expiresAt: refreshed.expiresAt,
+    });
+
     await sendTransactionalEmail({
       to: remainingSigner.email,
       subject: refreshed.subject,
-      text: `${refreshed.message}\n\nOpen signing session: ${getAppUrl()}/sign/${refreshed.id}?signer=${remainingSigner.id}&token=${encodeURIComponent(token.rawToken)}`,
+      text: inviteEmail.text,
+      html: inviteEmail.html,
+      provider: "resend",
       relatedEntityType: "signature_request",
       relatedEntityId: refreshed.id,
     });

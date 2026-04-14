@@ -10,8 +10,13 @@ import {
   financialEventTypes,
   invoiceStatuses,
   maintenanceStatuses,
+  workOrderBillingApprovalStatuses,
+  workOrderBillableDispositions,
+  workOrderSourceTypes,
   workOrderStatuses,
+  workOrderVerificationResults,
 } from "../lib/domain/models";
+import type { SignatureFieldRecord } from "../lib/platform-types";
 import {
   boolean,
   index,
@@ -208,6 +213,26 @@ const paymentTransactionStatuses = [
   "refunded",
 ] as const;
 
+const workOrderEventTypes = [
+  "created",
+  "updated",
+  "assigned",
+  "status_changed",
+  "started",
+  "awaiting_parts",
+  "awaiting_vendor",
+  "repair_completed",
+  "verified_passed",
+  "verified_failed",
+  "cancelled",
+  "closed",
+  "note_added",
+  "labor_added",
+  "part_added",
+  "billing_reviewed",
+  "attachment_added",
+] as const;
+
 const webhookProcessingStatuses = [
   "received",
   "processed",
@@ -228,6 +253,11 @@ const notificationChannels = ["email", "sms", "internal"] as const;
 const notificationStatuses = ["queued", "sent", "failed", "skipped"] as const;
 
 const signatureAccessTokenPurposes = ["sign", "otp"] as const;
+const signatureAppearanceModes = [
+  "handwriting_font",
+  "drawn",
+  "uploaded_image",
+] as const;
 
 const quickbooksConnectionStatuses = [
   "pending",
@@ -286,6 +316,26 @@ export const inspectionStatusEnum = pgEnum(
 export const workOrderStatusEnum = pgEnum(
   "work_order_status",
   workOrderStatuses,
+);
+export const workOrderSourceTypeEnum = pgEnum(
+  "work_order_source_type",
+  workOrderSourceTypes,
+);
+export const workOrderBillableDispositionEnum = pgEnum(
+  "work_order_billable_disposition",
+  workOrderBillableDispositions,
+);
+export const workOrderBillingApprovalStatusEnum = pgEnum(
+  "work_order_billing_approval_status",
+  workOrderBillingApprovalStatuses,
+);
+export const workOrderVerificationResultEnum = pgEnum(
+  "work_order_verification_result",
+  workOrderVerificationResults,
+);
+export const workOrderEventTypeEnum = pgEnum(
+  "work_order_event_type",
+  workOrderEventTypes,
 );
 export const paymentMethodTypeEnum = pgEnum(
   "payment_method_type",
@@ -359,6 +409,10 @@ export const notificationStatusEnum = pgEnum(
 export const signatureAccessTokenPurposeEnum = pgEnum(
   "signature_access_token_purpose",
   signatureAccessTokenPurposes,
+);
+export const signatureAppearanceModeEnum = pgEnum(
+  "signature_appearance_mode",
+  signatureAppearanceModes,
 );
 export const quickbooksConnectionStatusEnum = pgEnum(
   "quickbooks_connection_status",
@@ -653,6 +707,7 @@ export const financialEvents = pgTable(
     contractId: text().references(() => contracts.id),
     contractLineId: text().references(() => contractLines.id),
     assetId: text().references(() => assets.id),
+    workOrderId: text().references(() => workOrders.id),
     invoiceId: text().references(() => invoices.id),
     eventType: financialEventTypeEnum().notNull(),
     description: text().notNull(),
@@ -670,6 +725,7 @@ export const financialEvents = pgTable(
       table.status,
     ),
     assetIdx: index("financial_events_asset_id_idx").on(table.assetId),
+    workOrderIdx: index("financial_events_work_order_id_idx").on(table.workOrderId),
     invoiceIdx: index("financial_events_invoice_id_idx").on(table.invoiceId),
     eventDateIdx: index("financial_events_event_date_idx").on(table.eventDate),
   }),
@@ -782,16 +838,37 @@ export const workOrders = pgTable(
     assetId: text()
       .notNull()
       .references(() => assets.id),
+    contractId: text().references(() => contracts.id),
     inspectionId: text().references(() => inspections.id),
     branchId: text()
       .notNull()
       .references(() => branches.id),
     assignedToUserId: text().references(() => users.id),
+    vendorId: text().references(() => maintenanceVendors.id),
+    sourceType: workOrderSourceTypeEnum().default("manual").notNull(),
     status: workOrderStatusEnum().default("open").notNull(),
     priority: text(),
     title: text().notNull(),
     description: text(),
+    symptomSummary: text(),
+    diagnosis: text(),
+    repairSummary: text(),
     vendorName: text(),
+    dueAt: timestamp({ withTimezone: true }),
+    startedAt: timestamp({ withTimezone: true }),
+    repairCompletedAt: timestamp({ withTimezone: true }),
+    verifiedAt: timestamp({ withTimezone: true }),
+    closedAt: timestamp({ withTimezone: true }),
+    cancelledAt: timestamp({ withTimezone: true }),
+    verifiedByUserId: text().references(() => users.id),
+    billableDisposition: workOrderBillableDispositionEnum()
+      .default("internal")
+      .notNull(),
+    billingApprovalStatus: workOrderBillingApprovalStatusEnum()
+      .default("not_required")
+      .notNull(),
+    billableApprovedByUserId: text().references(() => users.id),
+    billableApprovedAt: timestamp({ withTimezone: true }),
     estimatedCost: numeric({ precision: 12, scale: 2 }),
     actualCost: numeric({ precision: 12, scale: 2 }),
     laborHours: numeric({ precision: 8, scale: 2 }),
@@ -812,6 +889,67 @@ export const workOrders = pgTable(
       table.status,
     ),
     inspectionIdx: index("work_orders_inspection_id_idx").on(table.inspectionId),
+    contractIdx: index("work_orders_contract_id_idx").on(table.contractId),
+    vendorIdx: index("work_orders_vendor_id_idx").on(table.vendorId),
+  }),
+);
+
+export const maintenanceVendors = pgTable(
+  "maintenance_vendors",
+  {
+    id: text().primaryKey(),
+    name: text().notNull(),
+    code: text(),
+    email: text(),
+    phone: text(),
+    active: boolean().default(true).notNull(),
+    notes: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    nameUnique: uniqueIndex("maintenance_vendors_name_unique").on(table.name),
+    activeIdx: index("maintenance_vendors_active_idx").on(table.active),
+  }),
+);
+
+export const workOrderEvents = pgTable(
+  "work_order_events",
+  {
+    id: text().primaryKey(),
+    workOrderId: text()
+      .notNull()
+      .references(() => workOrders.id, { onDelete: "cascade" }),
+    eventType: workOrderEventTypeEnum().notNull(),
+    actorUserId: text().references(() => users.id),
+    fromStatus: workOrderStatusEnum(),
+    toStatus: workOrderStatusEnum(),
+    notes: text(),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workOrderIdx: index("work_order_events_work_order_id_idx").on(table.workOrderId),
+    createdAtIdx: index("work_order_events_created_at_idx").on(table.createdAt),
+  }),
+);
+
+export const workOrderVerifications = pgTable(
+  "work_order_verifications",
+  {
+    id: text().primaryKey(),
+    workOrderId: text()
+      .notNull()
+      .references(() => workOrders.id, { onDelete: "cascade" }),
+    verifierUserId: text().references(() => users.id),
+    result: workOrderVerificationResultEnum().notNull(),
+    notes: text(),
+    inspectionId: text().references(() => inspections.id),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workOrderIdx: index("work_order_verifications_work_order_id_idx").on(table.workOrderId),
+    inspectionIdx: index("work_order_verifications_inspection_id_idx").on(table.inspectionId),
   }),
 );
 
@@ -1196,6 +1334,7 @@ export const assetAllocations = pgTable(
       onDelete: "cascade",
     }),
     dispatchTaskId: text().references(() => dispatchTasks.id),
+    workOrderId: text().references(() => workOrders.id, { onDelete: "cascade" }),
     allocationType: assetAllocationTypeEnum().notNull(),
     startsAt: timestamp({ withTimezone: true }).notNull(),
     endsAt: timestamp({ withTimezone: true }),
@@ -1212,6 +1351,7 @@ export const assetAllocations = pgTable(
       table.endsAt,
     ),
     contractIdx: index("asset_allocations_contract_id_idx").on(table.contractId),
+    workOrderIdx: index("asset_allocations_work_order_id_idx").on(table.workOrderId),
   }),
 );
 
@@ -1242,6 +1382,7 @@ export const documents = pgTable(
     id: text().primaryKey(),
     contractId: text().references(() => contracts.id),
     customerId: text().references(() => customers.id),
+    workOrderId: text().references(() => workOrders.id),
     documentType: text().notNull(),
     status: documentStatusEnum().notNull(),
     filename: text().notNull(),
@@ -1268,6 +1409,7 @@ export const documents = pgTable(
   (table) => ({
     contractIdx: index("documents_contract_id_idx").on(table.contractId),
     customerIdx: index("documents_customer_id_idx").on(table.customerId),
+    workOrderIdx: index("documents_work_order_id_idx").on(table.workOrderId),
     signatureIdx: index("documents_related_signature_request_id_idx").on(
       table.relatedSignatureRequestId,
     ),
@@ -1294,6 +1436,7 @@ export const signatureRequests = pgTable(
     documentId: text().references(() => documents.id),
     finalDocumentId: text().references(() => documents.id),
     certificateDocumentId: text().references(() => documents.id),
+    signingFields: jsonb().$type<SignatureFieldRecord[]>().default([]).notNull(),
     expiresAt: timestamp({ withTimezone: true }),
     cancelledAt: timestamp({ withTimezone: true }),
     evidenceHash: text(),
@@ -1328,6 +1471,9 @@ export const signatureSigners = pgTable(
     reminderCount: integer().default(0).notNull(),
     lastReminderAt: timestamp({ withTimezone: true }),
     signatureText: text(),
+    signatureMode: signatureAppearanceModeEnum(),
+    signatureAppearanceDataUrl: text(),
+    signatureAppearanceHash: text(),
     intentAcceptedAt: timestamp({ withTimezone: true }),
     consentAcceptedAt: timestamp({ withTimezone: true }),
     certificationAcceptedAt: timestamp({ withTimezone: true }),

@@ -84,7 +84,7 @@ export default async function SignaturePage({
       <PageHeader
         eyebrow="Internal E-Sign"
         title={session.request.title}
-        description="This signing session is owned entirely by Metro Trailer. Signature intent, consent, certificate generation, and document retention are recorded inside the platform."
+        description="This signing session is owned entirely by Metro Trailer. Routed signing, OTP verification, signature appearance capture, certificate generation, and retained final artifacts are recorded inside the platform."
         actions={
           <Link
             href={`/api/documents/${session.packetDocument.id}/download`}
@@ -131,7 +131,7 @@ export default async function SignaturePage({
       <SectionCard
         eyebrow="Certificate Controls"
         title="What gets recorded"
-        description="Metro Trailer captures signer identity, typed signature adoption, timestamps, IP address when available, user agent, and document hashes for the final certificate."
+        description="Metro Trailer captures signer identity, signature appearance mode, timestamps, IP address when available, user agent, and document hashes for the final certificate."
       >
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="soft-panel p-4 text-sm leading-6 text-slate-600">
@@ -157,6 +157,7 @@ export default async function SignaturePage({
         token={token}
         signerName={session.signer.name}
         signerTitle={session.signer.title}
+        fields={session.activeFields}
         canSign={session.canSign}
       />
 

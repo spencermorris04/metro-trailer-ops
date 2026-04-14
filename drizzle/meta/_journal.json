@@ -22,6 +22,20 @@
       "when": 1776110066233,
       "tag": "0002_aromatic_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776124156946,
+      "tag": "0003_stale_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776125157649,
+      "tag": "0004_regular_paper_doll",
+      "breakpoints": true
     }
   ]
 }

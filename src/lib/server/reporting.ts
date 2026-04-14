@@ -16,8 +16,13 @@ type MaintenanceSummary = {
   openWorkOrders: number;
   assignedWorkOrders: number;
   vendorAssigned: number;
+  verificationQueue: number;
   estimatedCost: number;
   actualCost: number;
+  averageBacklogAgeDays: number;
+  averageRepairDurationHours: number;
+  billableRecoveryTotal: number;
+  repeatFailureAssets: number;
   byStatus: Array<{
     status: string;
     count: number;
@@ -159,6 +164,11 @@ export async function buildOperationalReports() {
   let assignedWorkOrders = 0;
   let vendorAssigned = 0;
   let openWorkOrders = 0;
+  let verificationQueue = 0;
+  let backlogAgeDaysTotal = 0;
+  let completedRepairHoursTotal = 0;
+  let completedRepairCount = 0;
+  const workOrdersByAsset = new Map<string, number>();
 
   for (const workOrder of workOrderRows) {
     maintenanceStatusCounts.set(
@@ -173,17 +183,52 @@ export async function buildOperationalReports() {
     if (workOrder.vendorName) {
       vendorAssigned += 1;
     }
-    if (workOrder.status !== "completed") {
+    workOrdersByAsset.set(
+      workOrder.assetId,
+      (workOrdersByAsset.get(workOrder.assetId) ?? 0) + 1,
+    );
+    if (!["verified", "closed", "cancelled"].includes(workOrder.status)) {
       openWorkOrders += 1;
+      backlogAgeDaysTotal += Math.max(0, differenceInDays(workOrder.openedAt, now));
+    }
+    if (workOrder.status === "repair_completed") {
+      verificationQueue += 1;
+    }
+    if (workOrder.verifiedAt) {
+      completedRepairHoursTotal += Math.max(
+        0,
+        (workOrder.verifiedAt.getTime() - workOrder.openedAt.getTime()) / 3_600_000,
+      );
+      completedRepairCount += 1;
     }
   }
+
+  const billableRecoveryTotal = eventRows
+    .filter(
+      (event) =>
+        event.eventType === "damage" &&
+        event.workOrderId &&
+        event.status !== "voided",
+    )
+    .reduce((sum, event) => sum + numericToNumber(event.amount), 0);
+
+  const repeatFailureAssets = [...workOrdersByAsset.values()].filter((count) => count > 1).length;
 
   const maintenanceSummary: MaintenanceSummary = {
     openWorkOrders,
     assignedWorkOrders,
     vendorAssigned,
+    verificationQueue,
     estimatedCost,
     actualCost,
+    averageBacklogAgeDays:
+      openWorkOrders === 0 ? 0 : Number((backlogAgeDaysTotal / openWorkOrders).toFixed(1)),
+    averageRepairDurationHours:
+      completedRepairCount === 0
+        ? 0
+        : Number((completedRepairHoursTotal / completedRepairCount).toFixed(1)),
+    billableRecoveryTotal: Number(billableRecoveryTotal.toFixed(2)),
+    repeatFailureAssets,
     byStatus: [...maintenanceStatusCounts.entries()].map(([status, count]) => ({
       status,
       count,

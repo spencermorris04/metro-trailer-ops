@@ -36,6 +36,10 @@ import {
   toIso,
 } from "@/lib/server/production-utils";
 import { enqueueSkybitzPullJob, getTelematicsFreshness } from "@/lib/server/skybitz-jobs";
+import {
+  createInspectionFailureWorkOrderTx,
+  syncAssetMaintenanceStateTx,
+} from "@/lib/server/work-orders.production";
 
 type CreateDispatchTaskInput = {
   type: string;
@@ -538,98 +542,7 @@ async function getContractLineForAsset(tx: DbTransaction, contractId: string, as
 }
 
 async function syncAssetStateFromAllocations(tx: DbTransaction, assetId: string) {
-  const [asset] = await tx
-    .select({
-      id: schema.assets.id,
-      status: schema.assets.status,
-      maintenanceStatus: schema.assets.maintenanceStatus,
-    })
-    .from(schema.assets)
-    .where(eq(schema.assets.id, assetId))
-    .limit(1);
-
-  const resolvedAsset = requireRecord(asset, `Asset ${assetId} not found.`);
-  const activeAllocations = await tx
-    .select({
-      allocationType: schema.assetAllocations.allocationType,
-    })
-    .from(schema.assetAllocations)
-    .where(
-      and(
-        eq(schema.assetAllocations.assetId, assetId),
-        eq(schema.assetAllocations.active, true),
-      ),
-    );
-
-  const openWorkOrders = await tx
-    .select({
-      status: schema.workOrders.status,
-    })
-    .from(schema.workOrders)
-    .where(
-      and(
-        eq(schema.workOrders.assetId, assetId),
-        inArray(schema.workOrders.status, [
-          "open",
-          "assigned",
-          "in_progress",
-          "awaiting_parts",
-        ]),
-      ),
-    );
-
-  const hasMaintenanceHold = activeAllocations.some(
-    (allocation) => allocation.allocationType === "maintenance_hold",
-  );
-  const hasInspectionHold = activeAllocations.some(
-    (allocation) => allocation.allocationType === "inspection_hold",
-  );
-  const hasOnRent = activeAllocations.some(
-    (allocation) => allocation.allocationType === "on_rent",
-  );
-  const hasReservation = activeAllocations.some(
-    (allocation) => allocation.allocationType === "reservation",
-  );
-
-  let nextStatus: AssetRecord["status"] = resolvedAsset.status;
-  let nextAvailability: AssetRecord["availability"] = "rentable";
-  let nextMaintenanceStatus: AssetRecord["maintenanceStatus"] = "clear";
-
-  if (hasMaintenanceHold || openWorkOrders.length > 0) {
-    nextStatus = "in_maintenance";
-    nextAvailability = "unavailable";
-    nextMaintenanceStatus = openWorkOrders.some(
-      (workOrder) => workOrder.status === "awaiting_parts",
-    )
-      ? "waiting_on_parts"
-      : "under_repair";
-  } else if (hasInspectionHold) {
-    nextStatus = "inspection_hold";
-    nextAvailability = "limited";
-    nextMaintenanceStatus = "inspection_required";
-  } else if (hasOnRent) {
-    nextStatus = "on_rent";
-    nextAvailability = "unavailable";
-    nextMaintenanceStatus = "clear";
-  } else if (hasReservation) {
-    nextStatus = "reserved";
-    nextAvailability = "limited";
-    nextMaintenanceStatus = "clear";
-  } else {
-    nextStatus = "available";
-    nextAvailability = "rentable";
-    nextMaintenanceStatus = "clear";
-  }
-
-  await tx
-    .update(schema.assets)
-    .set({
-      status: nextStatus,
-      availability: nextAvailability,
-      maintenanceStatus: nextMaintenanceStatus,
-      updatedAt: now(),
-    })
-    .where(eq(schema.assets.id, assetId));
+  await syncAssetMaintenanceStateTx(tx, assetId);
 }
 
 async function insertWorkOrderEntries(
@@ -1252,7 +1165,7 @@ export async function confirmDispatchTask(
   await pushAudit({
     entityType: "dispatch_task",
     entityId: task.id,
-    eventType: "completed",
+    eventType: "repair_completed",
     userId,
     metadata: {
       outcome: payload.outcome,
@@ -1434,40 +1347,14 @@ export async function completeInspection(
       );
 
     if (payload.status === "failed" || payload.status === "needs_review") {
-      workOrderId = createId("wo");
-      await tx.insert(schema.workOrders).values({
-        id: workOrderId,
+      workOrderId = await createInspectionFailureWorkOrderTx(tx, {
         assetId: asset.id,
         inspectionId: inspection.id,
-        branchId: asset.branchId,
-        status: "open",
-        priority: "High",
-        title: `Repair from ${titleize(inspection.inspectionType)} inspection`,
-        description: payload.damageSummary,
-        estimatedCost: null,
-        laborHours: null,
-        openedAt: now(),
-        createdAt: now(),
-        updatedAt: now(),
-      });
-
-      await tx.insert(schema.assetAllocations).values({
-        id: createId("alloc"),
-        assetId: asset.id,
         contractId: inspection.contractId ?? null,
-        dispatchTaskId: null,
-        allocationType: "maintenance_hold",
-        startsAt: completedAt,
-        endsAt: null,
-        sourceEvent: "inspection_failed",
-        active: true,
-        metadata: {
-          inspectionId: inspection.id,
-          workOrderId,
-          damageScore: payload.damageScore ?? null,
-        },
-        createdAt: now(),
-        updatedAt: now(),
+        damageSummary: payload.damageSummary,
+        damageScore: payload.damageScore ?? null,
+        completedAt,
+        userId,
       });
 
       await syncAssetStateFromAllocations(tx, asset.id);
@@ -1671,7 +1558,7 @@ export async function completeWorkOrder(
     await tx
       .update(schema.workOrders)
       .set({
-        status: "completed",
+        status: "repair_completed",
         assignedToUserId: completion.technicianUserId ?? workOrder.assignedToUserId,
         vendorName: completion.vendorName ?? workOrder.vendorName,
         actualCost: completion.actualCost?.toFixed(2) ?? workOrder.actualCost,

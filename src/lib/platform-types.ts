@@ -128,6 +128,108 @@ export interface DocumentRecord {
   supersedesDocumentId: string | null;
   retentionMode: "governance" | "compliance";
   metadata: Record<string, string | number | boolean | null>;
+  workOrderId?: string | null;
+}
+
+export interface WorkOrderLaborEntryRecord {
+  id: string;
+  technicianUserId: string | null;
+  technicianName: string | null;
+  hours: number;
+  hourlyRate: number | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface WorkOrderPartEntryRecord {
+  id: string;
+  partNumber: string | null;
+  description: string;
+  quantity: number;
+  unitCost: number | null;
+  createdAt: string;
+}
+
+export interface WorkOrderEventRecord {
+  id: string;
+  type: string;
+  actorUserId: string | null;
+  actorName: string | null;
+  fromStatus: string | null;
+  toStatus: string | null;
+  notes: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+  createdAt: string;
+}
+
+export interface WorkOrderVerificationRecord {
+  id: string;
+  verifierUserId: string | null;
+  verifierName: string | null;
+  result: "passed" | "failed";
+  notes: string | null;
+  inspectionId: string | null;
+  createdAt: string;
+}
+
+export interface WorkOrderDetailRecord extends WorkOrderRecord {
+  laborEntries: WorkOrderLaborEntryRecord[];
+  partEntries: WorkOrderPartEntryRecord[];
+  events: WorkOrderEventRecord[];
+  verifications: WorkOrderVerificationRecord[];
+  attachments: DocumentRecord[];
+}
+
+export interface TechnicianWorkloadRecord {
+  technicianUserId: string | null;
+  technicianName: string;
+  assignedCount: number;
+  inProgressCount: number;
+  awaitingCount: number;
+  repairCompletedCount: number;
+  estimatedHours: number;
+}
+
+export interface VendorQueueRecord {
+  vendorId: string | null;
+  vendorName: string;
+  assignedCount: number;
+  awaitingVendorCount: number;
+  repairCompletedCount: number;
+  estimatedCost: number;
+  actualCost: number;
+}
+
+export interface VerificationQueueRecord {
+  workOrderId: string;
+  assetNumber: string;
+  title: string;
+  branch: string;
+  repairCompletedAt: string | null;
+  technicianName: string | null;
+  vendorName: string | null;
+  billableDisposition: string;
+}
+
+export type SignatureAppearanceMode =
+  | "handwriting_font"
+  | "drawn"
+  | "uploaded_image";
+
+export type SignatureFieldKind = "signature" | "title" | "date";
+
+export interface SignatureFieldRecord {
+  id: string;
+  signerId: string;
+  kind: SignatureFieldKind;
+  label: string;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  required: boolean;
+  navigationOrder: number;
 }
 
 export interface SignatureSignerRecord {
@@ -145,6 +247,9 @@ export interface SignatureSignerRecord {
   lastReminderAt: string | null;
   accessNonce: string;
   signatureText: string | null;
+  signatureMode: SignatureAppearanceMode | null;
+  signatureAppearanceDataUrl: string | null;
+  signatureAppearanceHash: string | null;
   intentAcceptedAt: string | null;
   consentAcceptedAt: string | null;
   certificationAcceptedAt: string | null;
@@ -178,6 +283,7 @@ export interface SignatureRequestRecord {
   certificateDocumentId: string | null;
   expiresAt: string | null;
   cancelledAt: string | null;
+  signingFields: SignatureFieldRecord[];
   signers: SignatureSignerRecord[];
   events: SignatureEventRecord[];
   evidenceHash: string | null;
