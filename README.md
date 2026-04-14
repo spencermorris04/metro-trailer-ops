@@ -14,7 +14,7 @@ Metro Trailer is a domain-first Next.js platform for managing large trailer and 
 ## Local Development
 
 1. Copy `.env.example` to `.env`.
-2. Leave `METRO_TRAILER_RUNTIME_MODE="demo"` to run the full workflow against the in-memory demo runtime, or point `DATABASE_URL` at your PostgreSQL instance for the next persistence step.
+2. Leave `METRO_TRAILER_RUNTIME_MODE="production"` and point `DATABASE_URL` at your PostgreSQL instance. Set `METRO_TRAILER_RUNTIME_MODE="demo"` only when you are explicitly working against the legacy in-memory adapters.
 3. Install dependencies with `npm install`.
 4. Generate Drizzle migrations with `npm run db:generate`.
 5. Start the app with `npm run dev`.
@@ -23,11 +23,11 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 
 ## Runtime Notes
 
-- The current application includes a broad demo runtime that exercises the end-to-end modules without requiring live third-party credentials.
+- The main app runtime now composes the production services only. Demo adapters remain available for explicit legacy/dev-only usage, but request-path code no longer switches between demo and production implementations.
 - Stripe, QuickBooks Online, Record360, SkyBitz, and AWS S3-backed storage are represented through integration adapters and job tracking. QuickBooks now includes persisted OAuth connection state, external entity mappings, webhook receipt handling, replayable outbox jobs, and an accounting mismatch review queue. E-sign execution is now owned internally by Metro Trailer with signer tokens, consent capture, audit evidence, generated signature certificates, and S3-backed retained documents.
-- Generated PDFs now flow through the shared object-storage adapter. Contract packets, signed agreements, signature certificates, manually created documents, and invoice PDFs will store to S3 when `S3_BUCKET` and `S3_REGION` are configured, with inline demo fallback when they are not.
+- Generated PDFs now flow through the shared object-storage adapter. Contract packets, signed agreements, signature certificates, manually created documents, and invoice PDFs will store to S3 when `S3_BUCKET` and `S3_REGION` are configured.
 - Optional S3 object-lock retention can be applied per upload through `S3_OBJECT_LOCK_MODE` and `S3_OBJECT_LOCK_DAYS`. Review your bucket configuration against AWS S3 Object Lock requirements before enabling it in production.
-- The App Router pages call the same server-side platform service used by the REST endpoints, so demo interactions from the UI and API stay aligned.
+- The App Router pages and Route Handlers now resolve through thin production composition modules that group functionality by domain.
 
 ## Scripts
 
@@ -56,7 +56,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 - `src/components`: product shell, navigation, and reusable UI primitives
 - `src/lib/domain`: domain entities, validation rules, and lifecycle constraints
 - `src/lib/platform-data.ts`: seeded demo records and high-level platform content
-- `src/lib/server`: demo runtime store, platform services, integration adapters, API helpers, PDF generation, and AWS S3 object storage
+- `src/lib/server`: production domain modules, legacy demo adapters, integration adapters, API helpers, PDF generation, and AWS S3 object storage
 - `src/lib/legacy`: dry-run import normalization and parity-report helpers for legacy cutover
 - `src/lib/testing`: performance and security harnesses used during rollout validation
 - `scripts`: build, legacy import/reconciliation, performance, security audit, and smoke-test entrypoints
