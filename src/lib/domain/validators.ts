@@ -17,6 +17,15 @@ import {
   workOrderVerificationResults,
 } from "@/lib/domain/models";
 
+const integrationProviders = [
+  "stripe",
+  "quickbooks",
+  "record360",
+  "skybitz",
+  "internal_esign",
+  "internal",
+] as const;
+
 const addressSchema = z.object({
   line1: z.string().min(1),
   line2: z.string().optional(),
@@ -41,14 +50,24 @@ const signatureAppearanceModes = [
 export const assetSchema = z.object({
   assetNumber: z.string().min(3),
   type: z.enum(assetTypes),
+  subtype: z.string().max(120).optional(),
   branchId: z.string().min(1),
   status: z.enum(assetStatuses).default("available"),
   availability: z.enum(assetAvailabilities).default("rentable"),
   maintenanceStatus: z.enum(maintenanceStatuses).default("clear"),
   gpsDeviceId: z.string().optional(),
+  serialNumber: z.string().max(120).optional(),
   dimensions: z.string().optional(),
   ageInMonths: z.number().int().nonnegative().optional(),
   features: z.array(z.string()).default([]),
+  record360UnitId: z.string().max(120).optional(),
+  skybitzAssetId: z.string().max(120).optional(),
+  telematicsProvider: z.enum(integrationProviders).optional(),
+  manufacturedAt: z.coerce.date().optional(),
+  purchaseDate: z.coerce.date().optional(),
+  yardZone: z.string().max(80).optional(),
+  yardRow: z.string().max(80).optional(),
+  yardSlot: z.string().max(80).optional(),
 });
 
 export const assetUpdateSchema = assetSchema.partial();
@@ -56,6 +75,15 @@ export const assetUpdateSchema = assetSchema.partial();
 export const assetTransitionSchema = z.object({
   toStatus: z.enum(assetStatuses),
   reason: z.string().min(3).default("Manual asset lifecycle transition"),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+});
+
+export const assetTransferSchema = z.object({
+  branchId: z.string().min(1),
+  yardZone: z.string().max(80).optional(),
+  yardRow: z.string().max(80).optional(),
+  yardSlot: z.string().max(80).optional(),
+  reason: z.string().min(3).default("Branch transfer"),
   idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
@@ -95,6 +123,10 @@ export const contractLineSchema = z
   .refine(
     (line) => !line.endDate || line.endDate >= line.startDate,
     "Line end date must be after the line start date.",
+  )
+  .refine(
+    (line) => !line.assetId || line.quantity === 1,
+    "Serialized asset contract lines must use quantity 1.",
   );
 
 export const contractSchema = z
@@ -133,6 +165,18 @@ export const contractAmendmentSchema = z.object({
   extendedEndDate: z.string().optional(),
   assetNumbersToAdd: z.array(z.string()).optional(),
   assetNumbersToRemove: z.array(z.string()).optional(),
+  lineUpdates: z
+    .array(
+      z.object({
+        lineId: z.string().min(1),
+        unitPrice: z.number().nonnegative().optional(),
+        quantity: z.number().positive().optional(),
+        adjustments: z.array(z.string()).optional(),
+        deliveryFee: z.number().nonnegative().nullable().optional(),
+        pickupFee: z.number().nonnegative().nullable().optional(),
+      }),
+    )
+    .optional(),
   effectiveAt: z.coerce.date().optional(),
   idempotencyKey: z.string().min(8).max(200).optional(),
 });

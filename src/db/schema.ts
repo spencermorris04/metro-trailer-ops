@@ -132,6 +132,7 @@ const roleScopeTypes = ["global", "branch", "customer"] as const;
 
 const assetAllocationTypes = [
   "reservation",
+  "dispatch_hold",
   "on_rent",
   "maintenance_hold",
   "inspection_hold",
@@ -531,6 +532,9 @@ export const assets = pgTable(
     serialNumber: text(),
     manufacturedAt: timestamp({ withTimezone: true }),
     purchaseDate: timestamp({ withTimezone: true }),
+    yardZone: text(),
+    yardRow: text(),
+    yardSlot: text(),
     record360UnitId: text(),
     skybitzAssetId: text(),
     telematicsProvider: integrationProviderEnum(),

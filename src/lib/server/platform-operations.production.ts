@@ -3,7 +3,6 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { titleize } from "@/lib/format";
 import { db, schema } from "@/lib/db";
 import type {
-  AssetRecord,
   DispatchTaskRecord,
   WorkOrderRecord,
 } from "@/lib/domain/models";
@@ -143,32 +142,6 @@ function requireRecord<T>(value: T | undefined, message: string) {
   }
 
   return value;
-}
-
-function assetAvailability(
-  status: AssetRecord["status"],
-  maintenanceStatus: AssetRecord["maintenanceStatus"],
-) {
-  if (status === "available") {
-    return {
-      availability: "rentable" as const,
-      maintenanceStatus:
-        maintenanceStatus === "under_repair" ? "clear" : maintenanceStatus,
-    };
-  }
-
-  if (status === "reserved" || status === "inspection_hold") {
-    return {
-      availability: "limited" as const,
-      maintenanceStatus:
-        status === "inspection_hold" ? "inspection_required" : maintenanceStatus,
-    };
-  }
-
-  return {
-    availability: "unavailable" as const,
-    maintenanceStatus,
-  };
 }
 
 function normalizeDispatchTaskType(
@@ -812,21 +785,43 @@ async function insertInspectionRequest(options: {
       updatedAt: now(),
     });
 
-    await tx.insert(schema.assetAllocations).values({
-      id: createId("alloc"),
-      assetId: options.assetId,
-      contractId: options.contractId ?? null,
-      allocationType: "inspection_hold",
-      startsAt: now(),
-      endsAt: null,
-      sourceEvent: options.sourceEvent,
-      active: true,
-      metadata: {
-        inspectionId,
-      },
-      createdAt: now(),
-      updatedAt: now(),
-    });
+    const shouldBlockInventory = ["return", "damage_assessment", "maintenance_release"].includes(
+      options.inspectionType,
+    );
+
+    if (shouldBlockInventory) {
+      const [existingHold] = await tx
+        .select({
+          id: schema.assetAllocations.id,
+        })
+        .from(schema.assetAllocations)
+        .where(
+          and(
+            eq(schema.assetAllocations.assetId, options.assetId),
+            eq(schema.assetAllocations.allocationType, "inspection_hold"),
+            eq(schema.assetAllocations.active, true),
+          ),
+        )
+        .limit(1);
+
+      if (!existingHold) {
+        await tx.insert(schema.assetAllocations).values({
+          id: createId("alloc"),
+          assetId: options.assetId,
+          contractId: options.contractId ?? null,
+          allocationType: "inspection_hold",
+          startsAt: now(),
+          endsAt: null,
+          sourceEvent: options.sourceEvent,
+          active: true,
+          metadata: {
+            inspectionId,
+          },
+          createdAt: now(),
+          updatedAt: now(),
+        });
+      }
+    }
   };
 
   if (options.tx) {
@@ -860,10 +855,7 @@ async function insertInspectionRequest(options: {
     },
   });
 
-  return requireRecord(
-    (await listInspections()).find((inspection) => inspection.id === inspectionId),
-    `Inspection ${inspectionId} not found after creation.`,
-  );
+  return inspectionId;
 }
 
 export async function listDispatchTasks(filters?: {
@@ -962,14 +954,37 @@ export async function createDispatchTask(
 
     if (status === "assigned" || status === "in_progress") {
       await tx
-        .update(schema.assets)
+        .update(schema.assetAllocations)
         .set({
-          status: "dispatched",
-          availability: "unavailable",
-          maintenanceStatus: asset.maintenanceStatus,
+          active: false,
+          endsAt: now(),
           updatedAt: now(),
         })
-        .where(eq(schema.assets.id, asset.id));
+        .where(
+          and(
+            eq(schema.assetAllocations.assetId, asset.id),
+            eq(schema.assetAllocations.allocationType, "dispatch_hold"),
+            eq(schema.assetAllocations.active, true),
+          ),
+        );
+
+      await tx.insert(schema.assetAllocations).values({
+        id: createId("alloc"),
+        assetId: asset.id,
+        contractId: contract?.id ?? null,
+        dispatchTaskId: id,
+        allocationType: "dispatch_hold",
+        startsAt: now(),
+        endsAt: null,
+        sourceEvent: "dispatch_task_created",
+        active: true,
+        metadata: {
+          dispatchStatus: status,
+        },
+        createdAt: now(),
+        updatedAt: now(),
+      });
+      await syncAssetStateFromAllocations(tx, asset.id);
     }
   });
 
@@ -1043,7 +1058,12 @@ export async function confirmDispatchTask(
         .where(
           and(
             eq(schema.assetAllocations.assetId, asset.id),
-            inArray(schema.assetAllocations.allocationType, ["reservation", "swap_in", "swap_out"]),
+            inArray(schema.assetAllocations.allocationType, [
+              "reservation",
+              "dispatch_hold",
+              "swap_in",
+              "swap_out",
+            ]),
             eq(schema.assetAllocations.active, true),
           ),
         );
@@ -1065,17 +1085,7 @@ export async function confirmDispatchTask(
         createdAt: now(),
         updatedAt: now(),
       });
-
-      const derived = assetAvailability("on_rent", asset.maintenanceStatus);
-      await tx
-        .update(schema.assets)
-        .set({
-          status: "on_rent",
-          availability: derived.availability,
-          maintenanceStatus: derived.maintenanceStatus,
-          updatedAt: now(),
-        })
-        .where(eq(schema.assets.id, asset.id));
+      await syncAssetStateFromAllocations(tx, asset.id);
     }
 
     if (payload.outcome === "pickup_confirmed") {
@@ -1089,20 +1099,28 @@ export async function confirmDispatchTask(
         .where(
           and(
             eq(schema.assetAllocations.assetId, asset.id),
-            eq(schema.assetAllocations.allocationType, "on_rent"),
+            inArray(schema.assetAllocations.allocationType, ["on_rent", "dispatch_hold"]),
             eq(schema.assetAllocations.active, true),
           ),
         );
 
-      await tx
-        .update(schema.assets)
-        .set({
-          status: "inspection_hold",
-          availability: "limited",
-          maintenanceStatus: "inspection_required",
-          updatedAt: now(),
-        })
-        .where(eq(schema.assets.id, asset.id));
+      await tx.insert(schema.assetAllocations).values({
+        id: createId("alloc"),
+        assetId: asset.id,
+        contractId: contract?.id ?? null,
+        dispatchTaskId: task.id,
+        allocationType: "inspection_hold",
+        startsAt: completedAt,
+        endsAt: null,
+        sourceEvent: payload.outcome,
+        active: true,
+        metadata: {
+          dispatchTaskId: task.id,
+        },
+        createdAt: now(),
+        updatedAt: now(),
+      });
+      await syncAssetStateFromAllocations(tx, asset.id);
     }
 
     if (contract) {
@@ -1147,7 +1165,7 @@ export async function confirmDispatchTask(
     }
 
     if (payload.outcome === "delivery_confirmed" || payload.outcome === "pickup_confirmed") {
-      const createdInspection = await insertInspectionRequest({
+      const createdInspectionId = await insertInspectionRequest({
         assetId: asset.id,
         contractId: contract?.id ?? null,
         customerLocationId: task.customerLocationId ?? null,
@@ -1156,7 +1174,7 @@ export async function confirmDispatchTask(
         sourceEvent: payload.outcome,
         tx,
       });
-      inspectionId = createdInspection.id;
+      inspectionId = createdInspectionId;
     }
   });
 
@@ -1165,7 +1183,7 @@ export async function confirmDispatchTask(
   await pushAudit({
     entityType: "dispatch_task",
     entityId: task.id,
-    eventType: "repair_completed",
+    eventType: "confirmed",
     userId,
     metadata: {
       outcome: payload.outcome,
@@ -1288,7 +1306,7 @@ export async function createInspection(
     contract.customerId,
   ).catch(() => null);
 
-  return insertInspectionRequest({
+  const inspectionId = await insertInspectionRequest({
     assetId: asset.id,
     contractId: contract.id,
     customerLocationId: customerLocation?.id ?? null,
@@ -1296,6 +1314,11 @@ export async function createInspection(
     userId,
     sourceEvent: "manual_request",
   });
+
+  return requireRecord(
+    (await listInspections()).find((inspection) => inspection.id === inspectionId),
+    `Inspection ${inspectionId} not found after creation.`,
+  );
 }
 
 export async function completeInspection(
@@ -1504,6 +1527,7 @@ export async function createWorkOrder(
       id: createId("alloc"),
       assetId: asset.id,
       contractId: inspection?.contractId ?? null,
+      workOrderId: id,
       allocationType: "maintenance_hold",
       startsAt: now(),
       endsAt: null,

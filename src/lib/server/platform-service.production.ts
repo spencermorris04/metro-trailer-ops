@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import {
@@ -17,6 +17,7 @@ import type {
   CustomerRecord,
   FinancialEventRecord,
   InvoiceRecord,
+  WorkOrderRecord,
 } from "@/lib/domain/models";
 import type {
   AuditEventRecord,
@@ -63,6 +64,20 @@ import {
   toDate,
   toIso,
 } from "@/lib/server/production-utils";
+import {
+  deriveContractCommercialState,
+  isActionableSignatureStatus,
+} from "@/lib/server/finance-state";
+import {
+  deriveInventoryAssetState,
+  inferManualAllocationTypeForAssetStatus,
+  type InventoryAllocationType,
+} from "@/lib/server/inventory-state";
+import {
+  listInspections,
+  listWorkOrders,
+} from "@/lib/server/platform-operations.production";
+import { getTelematicsFreshness } from "@/lib/server/skybitz-jobs";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -92,14 +107,24 @@ type CustomerLocationInput = {
 export type CreateAssetInput = {
   assetNumber: string;
   type: AssetRecord["type"];
+  subtype?: string;
   branchId: string;
   status?: AssetRecord["status"];
   availability?: AssetRecord["availability"];
   maintenanceStatus?: AssetRecord["maintenanceStatus"];
   gpsDeviceId?: string;
+  serialNumber?: string;
   dimensions?: string;
   ageInMonths?: number;
   features?: string[];
+  record360UnitId?: string;
+  skybitzAssetId?: string;
+  telematicsProvider?: typeof schema.assets.$inferInsert.telematicsProvider;
+  manufacturedAt?: Date;
+  purchaseDate?: Date;
+  yardZone?: string;
+  yardRow?: string;
+  yardSlot?: string;
   idempotencyKey?: string;
 };
 
@@ -154,6 +179,14 @@ export type AmendContractInput = {
   extendedEndDate?: string;
   assetNumbersToAdd?: string[];
   assetNumbersToRemove?: string[];
+  lineUpdates?: Array<{
+    lineId: string;
+    unitPrice?: number;
+    quantity?: number;
+    adjustments?: string[];
+    deliveryFee?: number | null;
+    pickupFee?: number | null;
+  }>;
   effectiveAt?: string | Date;
   idempotencyKey?: string;
 };
@@ -193,18 +226,21 @@ export type AssetTransitionOptions = {
   idempotencyKey?: string;
 };
 
+export type AssetTransferInput = {
+  branchId: string;
+  yardZone?: string;
+  yardRow?: string;
+  yardSlot?: string;
+  reason?: string;
+  idempotencyKey?: string;
+};
+
 function requireRecord<T>(value: T | undefined, message: string) {
   if (!value) {
     throw new ApiError(404, message);
   }
 
   return value;
-}
-
-function notImplemented(feature: string): never {
-  throw new ApiError(501, `${feature} is not implemented in the production runtime.`, {
-    feature,
-  });
 }
 
 function createRequestHash(payload: unknown) {
@@ -325,6 +361,23 @@ function contactName(contactInfo: Record<string, unknown> | null) {
   }
 
   return typeof contactInfo.name === "string" ? contactInfo.name : "Unassigned";
+}
+
+function yardLocationLabel(asset: {
+  branchName?: string | null;
+  yardZone?: string | null;
+  yardRow?: string | null;
+  yardSlot?: string | null;
+}) {
+  const slot = [asset.yardZone, asset.yardRow, asset.yardSlot]
+    .filter((value): value is string => Boolean(value))
+    .join("-");
+
+  if (slot && asset.branchName) {
+    return `${asset.branchName} yard ${slot}`;
+  }
+
+  return asset.branchName ?? null;
 }
 
 function assetAvailability(
@@ -629,50 +682,13 @@ function deriveAssetStateFromAllocations(
   asset: typeof schema.assets.$inferSelect,
   allocations: typeof schema.assetAllocations.$inferSelect[],
 ) {
-  if (asset.status === "retired") {
-    return {
-      status: "retired" as const,
-      availability: "unavailable" as const,
-      maintenanceStatus: asset.maintenanceStatus,
-    };
-  }
-
-  const allocationTypes = allocations.map((allocation) => allocation.allocationType);
-  if (allocationTypes.includes("maintenance_hold")) {
-    return {
-      status: "in_maintenance" as const,
-      availability: "unavailable" as const,
-      maintenanceStatus:
-        asset.maintenanceStatus === "clear" ? "scheduled" : asset.maintenanceStatus,
-    };
-  }
-  if (allocationTypes.includes("inspection_hold")) {
-    return {
-      status: "inspection_hold" as const,
-      availability: "limited" as const,
-      maintenanceStatus: "inspection_required" as const,
-    };
-  }
-  if (allocationTypes.includes("on_rent") || allocationTypes.includes("swap_in")) {
-    return {
-      status: "on_rent" as const,
-      availability: "unavailable" as const,
-      maintenanceStatus: "clear" as const,
-    };
-  }
-  if (allocationTypes.includes("reservation") || allocationTypes.includes("swap_out")) {
-    return {
-      status: "reserved" as const,
-      availability: "limited" as const,
-      maintenanceStatus: "clear" as const,
-    };
-  }
-
-  return {
-    status: "available" as const,
-    availability: "rentable" as const,
-    maintenanceStatus: "clear" as const,
-  };
+  return deriveInventoryAssetState({
+    isRetired: asset.status === "retired",
+    maintenanceStatus: asset.maintenanceStatus,
+    allocationTypes: allocations.map(
+      (allocation) => allocation.allocationType as InventoryAllocationType,
+    ),
+  });
 }
 
 async function refreshAssetStates(tx: DbTransaction, assetIds: string[]) {
@@ -716,7 +732,7 @@ async function syncManualAssetAllocation(tx: DbTransaction, options: {
   const contractBoundAllocations = activeAllocations.filter((allocation) => allocation.contractId);
   if (
     contractBoundAllocations.length > 0 &&
-    ["available", "reserved", "on_rent", "inspection_hold", "in_maintenance"].includes(
+    ["available", "reserved", "dispatched", "on_rent", "inspection_hold", "in_maintenance"].includes(
       options.toStatus,
     )
   ) {
@@ -741,16 +757,8 @@ async function syncManualAssetAllocation(tx: DbTransaction, options: {
       ),
     );
 
-  let allocationType: AllocationType | null = null;
-  if (options.toStatus === "reserved") {
-    allocationType = "reservation";
-  } else if (options.toStatus === "on_rent") {
-    allocationType = "on_rent";
-  } else if (options.toStatus === "inspection_hold") {
-    allocationType = "inspection_hold";
-  } else if (options.toStatus === "in_maintenance") {
-    allocationType = "maintenance_hold";
-  }
+  const allocationType =
+    inferManualAllocationTypeForAssetStatus(options.toStatus) as AllocationType | null;
 
   if (allocationType) {
     await tx.insert(schema.assetAllocations).values({
@@ -1024,7 +1032,7 @@ async function contractRecords() {
     .orderBy(desc(schema.contracts.startDate));
 
   const contractIds = contracts.map((contract) => contract.id);
-  const [lines, amendments] = await Promise.all([
+  const [lines, amendments, commercialSummaryMap] = await Promise.all([
     contractIds.length === 0
       ? Promise.resolve([] as Array<{
           contractId: string;
@@ -1051,6 +1059,7 @@ async function contractRecords() {
           })
           .from(schema.contractAmendments)
           .where(inArray(schema.contractAmendments.contractId, contractIds)),
+    getContractCommercialSummaryMap(contractIds),
   ]);
 
   const linesByContract = new Map<string, typeof lines>();
@@ -1068,6 +1077,10 @@ async function contractRecords() {
 
   return contracts.map((contract) => {
     const contractLines = linesByContract.get(contract.id) ?? [];
+    const commercialSummary =
+      commercialSummaryMap.get(contract.id) ??
+      buildEmptyContractCommercialSummary(contract.status);
+
     return {
       id: contract.id,
       contractNumber: contract.contractNumber,
@@ -1084,16 +1097,331 @@ async function contractRecords() {
         return sum + numericToNumber(line.unitPrice) * numericToNumber(line.quantity, 1);
       }, 0),
       amendmentFlags: amendmentsByContract.get(contract.id) ?? [],
+      signatureStatus: commercialSummary.signatureStatus,
+      latestSignatureRequestId: commercialSummary.latestSignatureRequestId,
+      signedDocumentId: commercialSummary.signedDocumentId,
+      invoiceCount: commercialSummary.invoiceCount,
+      openInvoiceCount: commercialSummary.openInvoiceCount,
+      overdueInvoiceCount: commercialSummary.overdueInvoiceCount,
+      outstandingBalance: commercialSummary.outstandingBalance,
+      uninvoicedEventCount: commercialSummary.uninvoicedEventCount,
+      uninvoicedEventAmount: commercialSummary.uninvoicedEventAmount,
+      commercialStage: commercialSummary.commercialStage,
+      billingState: commercialSummary.billingState,
+      nextAction: commercialSummary.nextAction,
     } satisfies ContractRecord;
   });
 }
 
+type ContractCommercialSummary = {
+  signatureStatus: string;
+  latestSignatureRequestId: string | null;
+  signedDocumentId: string | null;
+  invoiceCount: number;
+  openInvoiceCount: number;
+  overdueInvoiceCount: number;
+  outstandingBalance: number;
+  uninvoicedEventCount: number;
+  uninvoicedEventAmount: number;
+  commercialStage: string;
+  billingState: string;
+  nextAction: string | null;
+  activeContractAllocationCount: number;
+};
+
+function buildEmptyContractCommercialSummary(
+  contractStatus: ContractStatusKey,
+): ContractCommercialSummary {
+  const derived = deriveContractCommercialState({
+    contractStatus,
+    signatureStatus: null,
+    invoiceCount: 0,
+    openInvoiceCount: 0,
+    overdueInvoiceCount: 0,
+    outstandingBalance: 0,
+    uninvoicedEventCount: 0,
+  });
+
+  return {
+    signatureStatus: "not_requested",
+    latestSignatureRequestId: null,
+    signedDocumentId: null,
+    invoiceCount: 0,
+    openInvoiceCount: 0,
+    overdueInvoiceCount: 0,
+    outstandingBalance: 0,
+    uninvoicedEventCount: 0,
+    uninvoicedEventAmount: 0,
+    commercialStage: derived.commercialStage,
+    billingState: derived.billingState,
+    nextAction: derived.nextAction,
+    activeContractAllocationCount: 0,
+  };
+}
+
+async function getContractCommercialSummaryMap(contractIds: string[]) {
+  const uniqueContractIds = Array.from(new Set(contractIds.filter(Boolean)));
+  if (uniqueContractIds.length === 0) {
+    return new Map<string, ContractCommercialSummary>();
+  }
+
+  const [contractRows, signatureRows, invoiceRows, financialEventRows, allocationRows] =
+    await Promise.all([
+      db
+        .select({
+          id: schema.contracts.id,
+          status: schema.contracts.status,
+        })
+        .from(schema.contracts)
+        .where(inArray(schema.contracts.id, uniqueContractIds)),
+      db
+        .select({
+          id: schema.signatureRequests.id,
+          contractId: schema.signatureRequests.contractId,
+          status: schema.signatureRequests.status,
+          requestedAt: schema.signatureRequests.requestedAt,
+          finalDocumentId: schema.signatureRequests.finalDocumentId,
+        })
+        .from(schema.signatureRequests)
+        .where(inArray(schema.signatureRequests.contractId, uniqueContractIds)),
+      db
+        .select({
+          id: schema.invoices.id,
+          contractId: schema.invoices.contractId,
+          status: schema.invoices.status,
+          dueDate: schema.invoices.dueDate,
+          totalAmount: schema.invoices.totalAmount,
+          balanceAmount: schema.invoices.balanceAmount,
+        })
+        .from(schema.invoices)
+        .where(inArray(schema.invoices.contractId, uniqueContractIds)),
+      db
+        .select({
+          contractId: schema.financialEvents.contractId,
+          status: schema.financialEvents.status,
+          amount: schema.financialEvents.amount,
+          invoiceId: schema.financialEvents.invoiceId,
+        })
+        .from(schema.financialEvents)
+        .where(inArray(schema.financialEvents.contractId, uniqueContractIds)),
+      db
+        .select({
+          contractId: schema.assetAllocations.contractId,
+          active: schema.assetAllocations.active,
+        })
+        .from(schema.assetAllocations)
+        .where(
+          and(
+            inArray(schema.assetAllocations.contractId, uniqueContractIds),
+            eq(schema.assetAllocations.active, true),
+          ),
+        ),
+    ]);
+
+  const signaturesByContract = new Map<
+    string,
+    Array<{
+      id: string;
+      status: string;
+      requestedAt: Date;
+      finalDocumentId: string | null;
+    }>
+  >();
+  for (const row of signatureRows) {
+    if (!row.contractId) {
+      continue;
+    }
+    const current = signaturesByContract.get(row.contractId) ?? [];
+    current.push({
+      id: row.id,
+      status: row.status,
+      requestedAt: row.requestedAt,
+      finalDocumentId: row.finalDocumentId,
+    });
+    signaturesByContract.set(row.contractId, current);
+  }
+
+  const invoicesByContract = new Map<
+    string,
+    Array<{
+      status: string;
+      dueDate: Date;
+      totalAmount: string;
+      balanceAmount: string;
+    }>
+  >();
+  for (const row of invoiceRows) {
+    if (!row.contractId) {
+      continue;
+    }
+    const current = invoicesByContract.get(row.contractId) ?? [];
+    current.push({
+      status: row.status,
+      dueDate: row.dueDate,
+      totalAmount: row.totalAmount,
+      balanceAmount: row.balanceAmount,
+    });
+    invoicesByContract.set(row.contractId, current);
+  }
+
+  const eventsByContract = new Map<
+    string,
+    Array<{
+      status: string;
+      amount: string;
+      invoiceId: string | null;
+    }>
+  >();
+  for (const row of financialEventRows) {
+    if (!row.contractId) {
+      continue;
+    }
+    const current = eventsByContract.get(row.contractId) ?? [];
+    current.push({
+      status: row.status,
+      amount: row.amount,
+      invoiceId: row.invoiceId,
+    });
+    eventsByContract.set(row.contractId, current);
+  }
+
+  const activeAllocationCounts = new Map<string, number>();
+  for (const row of allocationRows) {
+    if (!row.contractId) {
+      continue;
+    }
+    activeAllocationCounts.set(
+      row.contractId,
+      (activeAllocationCounts.get(row.contractId) ?? 0) + 1,
+    );
+  }
+
+  const summaryMap = new Map<string, ContractCommercialSummary>();
+  for (const contract of contractRows) {
+    const signatures = [...(signaturesByContract.get(contract.id) ?? [])].sort(
+      (left, right) => right.requestedAt.getTime() - left.requestedAt.getTime(),
+    );
+    const actionableSignature = signatures.find((row) =>
+      isActionableSignatureStatus(row.status),
+    );
+    const completedSignature = signatures.find((row) => row.status === "completed");
+    const representativeSignature =
+      actionableSignature ?? completedSignature ?? signatures[0] ?? null;
+
+    const invoices = invoicesByContract.get(contract.id) ?? [];
+    const derivedInvoiceStatuses = invoices.map((invoice) =>
+      deriveInvoiceStatus({
+        totalAmount: numericToNumber(invoice.totalAmount),
+        balanceAmount: numericToNumber(invoice.balanceAmount),
+        dueDate: invoice.dueDate,
+        asOf: now(),
+      }),
+    );
+    const openInvoiceCount = derivedInvoiceStatuses.filter(
+      (status) => status !== "paid" && status !== "voided",
+    ).length;
+    const overdueInvoiceCount = derivedInvoiceStatuses.filter(
+      (status) => status === "overdue",
+    ).length;
+    const outstandingBalance = Number(
+      invoices
+        .reduce((sum, invoice) => sum + numericToNumber(invoice.balanceAmount), 0)
+        .toFixed(2),
+    );
+
+    const uninvoicedEvents = (eventsByContract.get(contract.id) ?? []).filter(
+      (event) => !event.invoiceId && event.status === "posted",
+    );
+    const uninvoicedEventAmount = Number(
+      uninvoicedEvents
+        .reduce((sum, event) => sum + numericToNumber(event.amount), 0)
+        .toFixed(2),
+    );
+
+    const derived = deriveContractCommercialState({
+      contractStatus: contract.status,
+      signatureStatus: representativeSignature?.status ?? null,
+      invoiceCount: invoices.length,
+      openInvoiceCount,
+      overdueInvoiceCount,
+      outstandingBalance,
+      uninvoicedEventCount: uninvoicedEvents.length,
+    });
+
+    summaryMap.set(contract.id, {
+      signatureStatus: representativeSignature?.status ?? "not_requested",
+      latestSignatureRequestId: representativeSignature?.id ?? null,
+      signedDocumentId:
+        completedSignature?.finalDocumentId ?? representativeSignature?.finalDocumentId ?? null,
+      invoiceCount: invoices.length,
+      openInvoiceCount,
+      overdueInvoiceCount,
+      outstandingBalance,
+      uninvoicedEventCount: uninvoicedEvents.length,
+      uninvoicedEventAmount,
+      commercialStage: derived.commercialStage,
+      billingState: derived.billingState,
+      nextAction: derived.nextAction,
+      activeContractAllocationCount: activeAllocationCounts.get(contract.id) ?? 0,
+    });
+  }
+
+  return summaryMap;
+}
+
+async function getContractCommercialSummary(contractId: string) {
+  const contract = await getContractByIdOrNumber(contractId);
+  return (
+    (await getContractCommercialSummaryMap([contract.id])).get(contract.id) ??
+    buildEmptyContractCommercialSummary(contract.status)
+  );
+}
+
+async function assertContractExecutionReady(contractId: string, action: string) {
+  const summary = await getContractCommercialSummary(contractId);
+  if (!isActionableSignatureStatus(summary.signatureStatus)) {
+    return;
+  }
+
+  throw new ApiError(409, `Contract has an incomplete signature workflow and cannot ${action}.`, {
+    contractId,
+    signatureStatus: summary.signatureStatus,
+    signatureRequestId: summary.latestSignatureRequestId,
+  });
+}
+
+async function maybeAutoCloseContract(contractId: string, userId?: string) {
+  const contract = await getContractByIdOrNumber(contractId);
+  if (contract.status !== "completed") {
+    return null;
+  }
+
+  const summary = await getContractCommercialSummary(contract.id);
+  if (
+    summary.outstandingBalance > 0 ||
+    summary.openInvoiceCount > 0 ||
+    summary.uninvoicedEventCount > 0 ||
+    summary.activeContractAllocationCount > 0
+  ) {
+    return null;
+  }
+
+  return transitionContract(
+    contract.id,
+    "closed",
+    userId,
+    "Commercial reconciliation complete.",
+  );
+}
+
 export async function getDashboardSummary() {
-  const [assets, customers, contracts, invoices] = await Promise.all([
+  const [assets, customers, contracts, invoices, workOrders, inspections] = await Promise.all([
     listAssets(),
     listCustomers(),
     listContracts(),
     listInvoices(),
+    listWorkOrders(),
+    listInspections(),
   ]);
 
   return {
@@ -1103,8 +1431,12 @@ export async function getDashboardSummary() {
     contracts: contracts.length,
     activeContracts: contracts.filter((contract) => contract.status === "active").length,
     overdueInvoices: invoices.filter((invoice) => invoice.status === "overdue").length,
-    openWorkOrders: 0,
-    pendingInspections: 0,
+    openWorkOrders: workOrders.filter(
+      (order) => !["verified", "closed", "cancelled"].includes(order.status),
+    ).length,
+    pendingInspections: inspections.filter((inspection) =>
+      ["requested", "in_progress", "needs_review"].includes(inspection.status),
+    ).length,
   };
 }
 
@@ -1150,6 +1482,8 @@ export async function listAssets(filters?: {
   branch?: string;
   status?: string;
   availability?: string;
+  maintenanceStatus?: string;
+  type?: string;
 }) {
   const clauses = [];
   if (filters?.q) {
@@ -1158,7 +1492,12 @@ export async function listAssets(filters?: {
       or(
         ilike(schema.assets.assetNumber, pattern),
         ilike(schema.assets.type, pattern),
+        ilike(sql`coalesce(${schema.assets.subtype}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.serialNumber}, '')`, pattern),
         ilike(schema.branches.name, pattern),
+        ilike(sql`coalesce(${schema.assets.yardZone}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.yardRow}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.yardSlot}, '')`, pattern),
       ),
     );
   }
@@ -1176,12 +1515,24 @@ export async function listAssets(filters?: {
       ),
     );
   }
+  if (filters?.maintenanceStatus) {
+    clauses.push(
+      eq(
+        schema.assets.maintenanceStatus,
+        filters.maintenanceStatus as AssetRecord["maintenanceStatus"],
+      ),
+    );
+  }
+  if (filters?.type) {
+    clauses.push(eq(schema.assets.type, filters.type as AssetRecord["type"]));
+  }
 
   const rows = await db
     .select({
       id: schema.assets.id,
       assetNumber: schema.assets.assetNumber,
       type: schema.assets.type,
+      subtype: schema.assets.subtype,
       dimensions: schema.assets.dimensions,
       status: schema.assets.status,
       availability: schema.assets.availability,
@@ -1189,6 +1540,12 @@ export async function listAssets(filters?: {
       gpsDeviceId: schema.assets.gpsDeviceId,
       ageInMonths: schema.assets.ageInMonths,
       features: schema.assets.features,
+      serialNumber: schema.assets.serialNumber,
+      yardZone: schema.assets.yardZone,
+      yardRow: schema.assets.yardRow,
+      yardSlot: schema.assets.yardSlot,
+      record360UnitId: schema.assets.record360UnitId,
+      skybitzAssetId: schema.assets.skybitzAssetId,
       branchName: schema.branches.name,
     })
     .from(schema.assets)
@@ -1196,25 +1553,313 @@ export async function listAssets(filters?: {
     .where(clauses.length > 0 ? and(...clauses) : undefined)
     .orderBy(schema.assets.assetNumber);
 
-  return rows.map((asset) => ({
-    id: asset.id,
-    assetNumber: asset.assetNumber,
-    type: asset.type,
-    dimensions:
-      typeof asset.dimensions?.summary === "string"
-        ? asset.dimensions.summary
-        : JSON.stringify(asset.dimensions ?? "Unspecified dimensions"),
-    branch: asset.branchName,
-    status: asset.status,
-    availability: asset.availability,
-    maintenanceStatus: asset.maintenanceStatus,
-    gpsDeviceId: asset.gpsDeviceId ?? undefined,
-    age:
-      asset.ageInMonths !== null && asset.ageInMonths !== undefined
-        ? `${asset.ageInMonths} months`
-        : "Unknown",
-    features: asset.features ?? [],
-  })) satisfies AssetRecord[];
+  const assetIds = rows.map((asset) => asset.id);
+  const [activeAllocations, upcomingReservations, blockingWorkOrders, latestTelematics] =
+    await Promise.all([
+      assetIds.length === 0
+        ? Promise.resolve(
+            [] as Array<{
+              assetId: string;
+              allocationType: InventoryAllocationType;
+              startsAt: Date;
+              contractNumber: string | null;
+              customerName: string | null;
+              locationName: string | null;
+              dispatchTaskId: string | null;
+              dispatchTaskStatus: string | null;
+              workOrderId: string | null;
+            }>,
+          )
+        : db
+            .select({
+              assetId: schema.assetAllocations.assetId,
+              allocationType: schema.assetAllocations.allocationType,
+              startsAt: schema.assetAllocations.startsAt,
+              contractNumber: schema.contracts.contractNumber,
+              customerName: schema.customers.name,
+              locationName: schema.customerLocations.name,
+              dispatchTaskId: schema.dispatchTasks.id,
+              dispatchTaskStatus: schema.dispatchTasks.status,
+              workOrderId: schema.workOrders.id,
+            })
+            .from(schema.assetAllocations)
+            .leftJoin(
+              schema.contracts,
+              eq(schema.assetAllocations.contractId, schema.contracts.id),
+            )
+            .leftJoin(
+              schema.customers,
+              eq(schema.contracts.customerId, schema.customers.id),
+            )
+            .leftJoin(
+              schema.customerLocations,
+              eq(schema.contracts.locationId, schema.customerLocations.id),
+            )
+            .leftJoin(
+              schema.dispatchTasks,
+              eq(schema.assetAllocations.dispatchTaskId, schema.dispatchTasks.id),
+            )
+            .leftJoin(
+              schema.workOrders,
+              eq(schema.assetAllocations.workOrderId, schema.workOrders.id),
+            )
+            .where(
+              and(
+                inArray(schema.assetAllocations.assetId, assetIds),
+                eq(schema.assetAllocations.active, true),
+              ),
+            )
+            .orderBy(desc(schema.assetAllocations.startsAt)),
+      assetIds.length === 0
+        ? Promise.resolve(
+            [] as Array<{
+              assetId: string;
+              startsAt: Date;
+              contractNumber: string | null;
+            }>,
+          )
+        : db
+            .select({
+              assetId: schema.assetAllocations.assetId,
+              startsAt: schema.assetAllocations.startsAt,
+              contractNumber: schema.contracts.contractNumber,
+            })
+            .from(schema.assetAllocations)
+            .leftJoin(
+              schema.contracts,
+              eq(schema.assetAllocations.contractId, schema.contracts.id),
+            )
+            .where(
+              and(
+                inArray(schema.assetAllocations.assetId, assetIds),
+                eq(schema.assetAllocations.active, true),
+                eq(schema.assetAllocations.allocationType, "reservation"),
+                gt(schema.assetAllocations.startsAt, now()),
+              ),
+            )
+            .orderBy(asc(schema.assetAllocations.startsAt)),
+      assetIds.length === 0
+        ? Promise.resolve(
+            [] as Array<{
+              assetId: string;
+              workOrderId: string;
+              status: WorkOrderRecord["status"];
+            }>,
+          )
+        : db
+            .select({
+              assetId: schema.workOrders.assetId,
+              workOrderId: schema.workOrders.id,
+              status: schema.workOrders.status,
+            })
+            .from(schema.workOrders)
+            .where(
+              and(
+                inArray(schema.workOrders.assetId, assetIds),
+                inArray(schema.workOrders.status, [
+                  "open",
+                  "assigned",
+                  "in_progress",
+                  "awaiting_parts",
+                  "awaiting_vendor",
+                  "repair_completed",
+                ]),
+              ),
+            )
+            .orderBy(desc(schema.workOrders.updatedAt)),
+      assetIds.length === 0
+        ? Promise.resolve(
+            [] as Array<{
+              assetId: string;
+              capturedAt: Date;
+            }>,
+          )
+        : db
+            .select({
+              assetId: schema.telematicsPings.assetId,
+              capturedAt: schema.telematicsPings.capturedAt,
+            })
+            .from(schema.telematicsPings)
+            .where(inArray(schema.telematicsPings.assetId, assetIds))
+            .orderBy(desc(schema.telematicsPings.capturedAt)),
+    ]);
+
+  const activeAllocationsByAsset = new Map<
+    string,
+    typeof activeAllocations
+  >();
+  for (const allocation of activeAllocations) {
+    const current = activeAllocationsByAsset.get(allocation.assetId) ?? [];
+    current.push(allocation);
+    activeAllocationsByAsset.set(allocation.assetId, current);
+  }
+
+  const nextReservationByAsset = new Map<
+    string,
+    (typeof upcomingReservations)[number]
+  >();
+  for (const reservation of upcomingReservations) {
+    if (!nextReservationByAsset.has(reservation.assetId)) {
+      nextReservationByAsset.set(reservation.assetId, reservation);
+    }
+  }
+
+  const blockingWorkOrderByAsset = new Map<
+    string,
+    {
+      workOrderId: string;
+      statuses: WorkOrderRecord["status"][];
+    }
+  >();
+  for (const workOrder of blockingWorkOrders) {
+    const current = blockingWorkOrderByAsset.get(workOrder.assetId);
+    if (!current) {
+      blockingWorkOrderByAsset.set(workOrder.assetId, {
+        workOrderId: workOrder.workOrderId,
+        statuses: [workOrder.status],
+      });
+      continue;
+    }
+
+    current.statuses.push(workOrder.status);
+  }
+
+  const latestTelematicsByAsset = new Map<
+    string,
+    (typeof latestTelematics)[number]
+  >();
+  for (const ping of latestTelematics) {
+    if (!latestTelematicsByAsset.has(ping.assetId)) {
+      latestTelematicsByAsset.set(ping.assetId, ping);
+    }
+  }
+
+  return rows.map((asset) => {
+    const activeForAsset = activeAllocationsByAsset.get(asset.id) ?? [];
+    const blockingWorkOrder = blockingWorkOrderByAsset.get(asset.id) ?? null;
+    const derived = deriveInventoryAssetState({
+      isRetired: asset.status === "retired",
+      maintenanceStatus: asset.maintenanceStatus,
+      allocationTypes: activeForAsset.map(
+        (allocation) => allocation.allocationType as InventoryAllocationType,
+      ),
+      blockingWorkOrderStatuses: blockingWorkOrder?.statuses ?? [],
+    });
+    const activeContract = activeForAsset.find((allocation) => allocation.contractNumber);
+    const dispatchHold = activeForAsset.find(
+      (allocation) => allocation.allocationType === "dispatch_hold",
+    );
+    const nextReservation = nextReservationByAsset.get(asset.id) ?? null;
+    const latestPing = latestTelematicsByAsset.get(asset.id) ?? null;
+    const telematicsFreshness = latestPing
+      ? getTelematicsFreshness(latestPing.capturedAt)
+      : null;
+
+    let blockingReason: string | null = null;
+    let custodyLocation: string | null = yardLocationLabel({
+      branchName: asset.branchName,
+      yardZone: asset.yardZone,
+      yardRow: asset.yardRow,
+      yardSlot: asset.yardSlot,
+    });
+    let locationSource: string | null = custodyLocation ? "yard" : null;
+
+    if (derived.status === "dispatched") {
+      blockingReason = dispatchHold?.dispatchTaskId
+        ? `Assigned to dispatch task ${dispatchHold.dispatchTaskId}.`
+        : "Assigned to dispatch execution.";
+      custodyLocation = `${asset.branchName} dispatch lane`;
+      locationSource = "dispatch";
+    } else if (derived.status === "on_rent") {
+      blockingReason = activeContract?.contractNumber
+        ? `Active contract ${activeContract.contractNumber}.`
+        : "Currently on rent.";
+      custodyLocation =
+        activeContract?.locationName ?? activeContract?.customerName ?? "Customer site";
+      locationSource = "customer_site";
+    } else if (derived.status === "reserved") {
+      blockingReason = activeContract?.contractNumber
+        ? `Reserved on contract ${activeContract.contractNumber}.`
+        : "Reserved and excluded from rentable inventory.";
+    } else if (derived.status === "inspection_hold") {
+      blockingReason = activeContract?.contractNumber
+        ? `Awaiting inspection review after contract ${activeContract.contractNumber}.`
+        : "Awaiting inspection review.";
+      custodyLocation = `${asset.branchName} inspection queue`;
+      locationSource = "inspection";
+    } else if (derived.status === "in_maintenance") {
+      blockingReason = blockingWorkOrder?.workOrderId
+        ? `Blocked by work order ${blockingWorkOrder.workOrderId}.`
+        : "Blocked by maintenance workflow.";
+      custodyLocation = `${asset.branchName} service bay`;
+      locationSource = "maintenance";
+    } else if (derived.status === "retired") {
+      blockingReason = "Retired from active inventory.";
+      locationSource = "retired";
+    }
+
+    return {
+      id: asset.id,
+      assetNumber: asset.assetNumber,
+      type: asset.type,
+      subtype: asset.subtype,
+      dimensions:
+        typeof asset.dimensions?.summary === "string"
+          ? asset.dimensions.summary
+          : JSON.stringify(asset.dimensions ?? "Unspecified dimensions"),
+      branch: asset.branchName,
+      status: derived.status,
+      availability: derived.availability,
+      maintenanceStatus: derived.maintenanceStatus,
+      gpsDeviceId: asset.gpsDeviceId ?? undefined,
+      serialNumber: asset.serialNumber,
+      yardZone: asset.yardZone,
+      yardRow: asset.yardRow,
+      yardSlot: asset.yardSlot,
+      age:
+        asset.ageInMonths !== null && asset.ageInMonths !== undefined
+          ? `${asset.ageInMonths} months`
+          : "Unknown",
+      features: asset.features ?? [],
+      custodyLocation,
+      locationSource,
+      blockingReason,
+      allocationTypes: Array.from(
+        new Set(activeForAsset.map((allocation) => allocation.allocationType)),
+      ),
+      activeContractNumber: activeContract?.contractNumber ?? null,
+      activeCustomerName: activeContract?.customerName ?? null,
+      nextContractNumber: nextReservation?.contractNumber ?? null,
+      nextReservationStart: toIso(nextReservation?.startsAt),
+      activeDispatchTaskId: dispatchHold?.dispatchTaskId ?? null,
+      activeDispatchTaskStatus: dispatchHold?.dispatchTaskStatus ?? null,
+      activeWorkOrderId: blockingWorkOrder?.workOrderId ?? null,
+      activeWorkOrderStatus: blockingWorkOrder?.statuses[0] ?? null,
+      record360UnitId: asset.record360UnitId,
+      skybitzAssetId: asset.skybitzAssetId,
+      telematicsFreshnessMinutes: telematicsFreshness?.freshnessMinutes ?? null,
+      telematicsStale: telematicsFreshness?.stale ?? undefined,
+    } satisfies AssetRecord;
+  });
+}
+
+export async function listAssetsPage(
+  filters?: Parameters<typeof listAssets>[0] & {
+    page?: number;
+    pageSize?: number;
+  },
+) {
+  const page = Math.max(1, filters?.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, filters?.pageSize ?? 25));
+  const data = await listAssets(filters);
+  const start = (page - 1) * pageSize;
+
+  return {
+    data: data.slice(start, start + pageSize),
+    total: data.length,
+    page,
+    pageSize,
+  };
 }
 
 export async function createAsset(payload: CreateAssetInput, userId?: string) {
@@ -1233,16 +1878,26 @@ export async function createAsset(payload: CreateAssetInput, userId?: string) {
     id,
     assetNumber: payload.assetNumber,
     type: payload.type,
+    subtype: payload.subtype ?? null,
     branchId: branch.id,
     status,
     availability: payload.availability ?? derived.availability,
     maintenanceStatus: derived.maintenanceStatus,
     gpsDeviceId: payload.gpsDeviceId ?? null,
+    serialNumber: payload.serialNumber ?? null,
     dimensions: {
       summary: payload.dimensions ?? "Unspecified dimensions",
     },
     ageInMonths: payload.ageInMonths ?? null,
     features: payload.features ?? [],
+    record360UnitId: payload.record360UnitId ?? null,
+    skybitzAssetId: payload.skybitzAssetId ?? null,
+    telematicsProvider: payload.telematicsProvider ?? null,
+    manufacturedAt: payload.manufacturedAt ?? null,
+    purchaseDate: payload.purchaseDate ?? null,
+    yardZone: payload.yardZone ?? null,
+    yardRow: payload.yardRow ?? null,
+    yardSlot: payload.yardSlot ?? null,
     createdAt: now(),
     updatedAt: now(),
   });
@@ -1288,12 +1943,25 @@ export async function updateAsset(assetId: string, payload: UpdateAssetInput, us
     .update(schema.assets)
     .set({
       branchId,
+      assetNumber: payload.assetNumber ?? asset.assetNumber,
+      type: payload.type ?? asset.type,
+      subtype: payload.subtype ?? asset.subtype,
       status,
       availability: payload.availability ?? derived.availability,
       maintenanceStatus: derived.maintenanceStatus,
       gpsDeviceId: payload.gpsDeviceId ?? asset.gpsDeviceId,
+      serialNumber: payload.serialNumber ?? asset.serialNumber,
       dimensions: payload.dimensions ? { summary: payload.dimensions } : asset.dimensions,
+      ageInMonths: payload.ageInMonths ?? asset.ageInMonths,
       features: payload.features ?? asset.features,
+      record360UnitId: payload.record360UnitId ?? asset.record360UnitId,
+      skybitzAssetId: payload.skybitzAssetId ?? asset.skybitzAssetId,
+      telematicsProvider: payload.telematicsProvider ?? asset.telematicsProvider,
+      manufacturedAt: payload.manufacturedAt ?? asset.manufacturedAt,
+      purchaseDate: payload.purchaseDate ?? asset.purchaseDate,
+      yardZone: payload.yardZone ?? asset.yardZone,
+      yardRow: payload.yardRow ?? asset.yardRow,
+      yardSlot: payload.yardSlot ?? asset.yardSlot,
       updatedAt: now(),
     })
     .where(eq(schema.assets.id, asset.id));
@@ -1359,24 +2027,23 @@ export async function transitionAsset(
 
         const activeAllocations = await getActiveAllocationsForAssets(tx, [asset.id]);
         const hasContractBoundAllocations = activeAllocations.some((allocation) => allocation.contractId);
-        const shouldRefreshFromAllocations = toStatus !== "dispatched";
-        if (!hasContractBoundAllocations) {
-          const derived = assetAvailability(
-            toStatus,
-            toStatus === "in_maintenance" ? "scheduled" : asset.maintenanceStatus,
-          );
+        if (toStatus === "retired" && hasContractBoundAllocations) {
+          throw new ApiError(409, "Assets with active contract allocations cannot be retired.", {
+            assetId: asset.id,
+          });
+        }
+
+        if (toStatus === "retired") {
           await tx
             .update(schema.assets)
             .set({
-              status: toStatus,
-              availability: derived.availability,
-              maintenanceStatus: derived.maintenanceStatus,
+              status: "retired",
+              availability: "unavailable",
+              maintenanceStatus: asset.maintenanceStatus,
               updatedAt: now(),
             })
             .where(eq(schema.assets.id, asset.id));
-        }
-
-        if (shouldRefreshFromAllocations) {
+        } else {
           await refreshAssetStates(tx, [asset.id]);
         }
       });
@@ -1395,6 +2062,66 @@ export async function transitionAsset(
       return requireRecord(
         (await listAssets()).find((entry) => entry.id === asset.id),
         `Asset ${asset.id} not found after transition.`,
+      );
+    },
+  });
+}
+
+export async function transferAsset(
+  assetId: string,
+  payload: AssetTransferInput,
+  userId?: string,
+) {
+  return withIdempotency({
+    key: payload.idempotencyKey,
+    requestPath: `/assets/${assetId}/transfer`,
+    payload,
+    execute: async () => {
+      const asset = await getAssetByIdOrNumber(assetId);
+      const branch = await getBranchByIdOrName(payload.branchId);
+
+      if (asset.branchId === branch.id) {
+        throw new ApiError(409, "Asset is already assigned to this branch.", {
+          assetId: asset.id,
+          branchId: branch.id,
+        });
+      }
+
+      const activeAllocations = await getActiveAllocationsForAssets(db, [asset.id]);
+      if (activeAllocations.length > 0 || asset.status !== "available") {
+        throw new ApiError(409, "Only available, unallocated assets can be transferred.", {
+          assetId: asset.id,
+          status: asset.status,
+          activeAllocationCount: activeAllocations.length,
+        });
+      }
+
+      await db
+        .update(schema.assets)
+        .set({
+          branchId: branch.id,
+          yardZone: payload.yardZone ?? null,
+          yardRow: payload.yardRow ?? null,
+          yardSlot: payload.yardSlot ?? null,
+          updatedAt: now(),
+        })
+        .where(eq(schema.assets.id, asset.id));
+
+      await pushAudit({
+        entityType: "asset",
+        entityId: asset.id,
+        eventType: "transferred",
+        userId,
+        metadata: {
+          fromBranchId: asset.branchId,
+          toBranchId: branch.id,
+          reason: payload.reason ?? "Branch transfer",
+        },
+      });
+
+      return requireRecord(
+        (await listAssets()).find((entry) => entry.id === asset.id),
+        `Asset ${asset.id} not found after transfer.`,
       );
     },
   });
@@ -1689,6 +2416,9 @@ export async function transitionContract(
           toStatus,
         });
       }
+      if (toStatus === "active") {
+        await assertContractExecutionReady(contract.id, "activate");
+      }
 
       const effectiveAt = options?.effectiveAt ?? now();
       await db.transaction(async (tx) => {
@@ -1742,10 +2472,6 @@ export async function amendContract(contractId: string, payload: AmendContractIn
         });
       }
 
-      if (payload.amendmentType === "rate_adjustment") {
-        notImplemented("Rate-adjustment amendments");
-      }
-
       const amendmentId = createId("amd");
       const effectiveAt = normalizeDateValue(payload.effectiveAt ?? payload.extendedEndDate ?? null);
       const amendmentTypeMap = {
@@ -1775,6 +2501,7 @@ export async function amendContract(contractId: string, payload: AmendContractIn
           nextEndDate: payload.extendedEndDate ?? null,
           assetNumbersToAdd: payload.assetNumbersToAdd ?? [],
           assetNumbersToRemove: payload.assetNumbersToRemove ?? [],
+          lineUpdates: payload.lineUpdates ?? [],
           effectiveAt: toIso(effectiveAt),
         };
 
@@ -1813,7 +2540,10 @@ export async function amendContract(contractId: string, payload: AmendContractIn
                 eq(schema.assetAllocations.active, true),
               ),
             );
-        } else if (payload.amendmentType === "partial_return" || payload.amendmentType === "asset_swap") {
+        } else if (
+          payload.amendmentType === "partial_return" ||
+          payload.amendmentType === "asset_swap"
+        ) {
           const assetsToRemove = payload.assetNumbersToRemove ?? [];
           const assetsToAdd = payload.assetNumbersToAdd ?? [];
           if (assetsToRemove.length === 0) {
@@ -1938,6 +2668,90 @@ export async function amendContract(contractId: string, payload: AmendContractIn
             });
             deltaPayload.createdLineIds = insertedLines.map((line) => line.id);
           }
+        } else if (payload.amendmentType === "rate_adjustment") {
+          const lineUpdates = payload.lineUpdates ?? [];
+          if (lineUpdates.length === 0) {
+            throw new ApiError(409, "Rate-adjustment amendments require lineUpdates.");
+          }
+
+          const lineIds = lineUpdates.map((line) => line.lineId);
+          const matchingLines = lines.filter((line) => lineIds.includes(line.id));
+          if (matchingLines.length !== lineUpdates.length) {
+            throw new ApiError(404, "One or more contract lines could not be resolved for rate adjustment.", {
+              requestedLineIds: lineIds,
+            });
+          }
+
+          const nextValues = lineUpdates.map((update) => {
+            const currentLine = requireRecord(
+              matchingLines.find((line) => line.id === update.lineId),
+              `Contract line ${update.lineId} not found for rate adjustment.`,
+            );
+
+            if (currentLine.assetId && update.quantity !== undefined && update.quantity !== 1) {
+              throw new ApiError(409, "Serialized asset contract lines must keep quantity 1.", {
+                lineId: currentLine.id,
+              });
+            }
+
+            return {
+              lineId: currentLine.id,
+              previousUnitPrice: numericToNumber(currentLine.unitPrice),
+              nextUnitPrice:
+                update.unitPrice ?? numericToNumber(currentLine.unitPrice),
+              previousQuantity: numericToNumber(currentLine.quantity, 1),
+              nextQuantity: update.quantity ?? numericToNumber(currentLine.quantity, 1),
+              previousAdjustments:
+                Array.isArray(currentLine.adjustments?.items)
+                  ? currentLine.adjustments.items
+                  : [],
+              nextAdjustments:
+                update.adjustments ??
+                (Array.isArray(currentLine.adjustments?.items)
+                  ? currentLine.adjustments.items
+                  : []),
+              previousDeliveryFee: numericToNumber(currentLine.deliveryFee, 0),
+              nextDeliveryFee:
+                update.deliveryFee ?? numericToNumber(currentLine.deliveryFee, 0),
+              previousPickupFee: numericToNumber(currentLine.pickupFee, 0),
+              nextPickupFee:
+                update.pickupFee ?? numericToNumber(currentLine.pickupFee, 0),
+            };
+          });
+
+          for (const lineUpdate of lineUpdates) {
+            const currentLine = requireRecord(
+              matchingLines.find((line) => line.id === lineUpdate.lineId),
+              `Contract line ${lineUpdate.lineId} not found for rate adjustment.`,
+            );
+
+            await tx
+              .update(schema.contractLines)
+              .set({
+                unitPrice:
+                  lineUpdate.unitPrice?.toFixed(2) ?? currentLine.unitPrice,
+                quantity:
+                  lineUpdate.quantity !== undefined
+                    ? String(lineUpdate.quantity)
+                    : currentLine.quantity,
+                adjustments:
+                  lineUpdate.adjustments !== undefined
+                    ? { items: lineUpdate.adjustments }
+                    : currentLine.adjustments,
+                deliveryFee:
+                  lineUpdate.deliveryFee !== undefined
+                    ? lineUpdate.deliveryFee?.toFixed(2) ?? null
+                    : currentLine.deliveryFee,
+                pickupFee:
+                  lineUpdate.pickupFee !== undefined
+                    ? lineUpdate.pickupFee?.toFixed(2) ?? null
+                    : currentLine.pickupFee,
+                updatedAt: now(),
+              })
+              .where(eq(schema.contractLines.id, currentLine.id));
+          }
+
+          deltaPayload.lineUpdates = nextValues;
         }
 
         await tx.insert(schema.contractAmendments).values({
@@ -2178,6 +2992,7 @@ export async function listInvoices(filters?: {
 
 export async function generateInvoiceForContract(contractId: string, userId?: string) {
   const contract = await getContractByIdOrNumber(contractId);
+  await assertContractExecutionReady(contract.id, "generate invoices");
   const customer = requireRecord(
     await db.query.customers.findFirst({
       where: (table, { eq: localEq }) => localEq(table.id, contract.customerId),
@@ -2363,10 +3178,65 @@ export async function recordInvoicePayment(invoiceId: string, amount: number, us
     eventType: "payment_recorded",
     userId,
   });
+  if (invoice.contractId) {
+    await maybeAutoCloseContract(invoice.contractId, userId);
+  }
   return requireRecord(
     (await listInvoices()).find((entry) => entry.id === invoice.id),
     `Invoice ${invoice.id} not found after payment.`,
   );
+}
+
+export async function getFinancialOverview() {
+  const [contracts, invoices, events] = await Promise.all([
+    listContracts(),
+    listInvoices(),
+    listFinancialEvents(),
+  ]);
+
+  const awaitingSignature = contracts.filter((contract) =>
+    ["sent", "in_progress", "partially_signed"].includes(contract.signatureStatus ?? ""),
+  );
+  const readyToInvoice = contracts.filter(
+    (contract) =>
+      ["active", "completed"].includes(contract.status) &&
+      (contract.uninvoicedEventCount ?? 0) > 0,
+  );
+  const openReceivables = contracts.filter(
+    (contract) => (contract.outstandingBalance ?? 0) > 0,
+  );
+  const readyToClose = contracts.filter(
+    (contract) => contract.commercialStage === "ready_to_close",
+  );
+
+  return {
+    metrics: {
+      contractCount: contracts.length,
+      awaitingSignature: awaitingSignature.length,
+      readyToInvoice: readyToInvoice.length,
+      openReceivables: openReceivables.length,
+      readyToClose: readyToClose.length,
+      outstandingBalance: Number(
+        openReceivables
+          .reduce((sum, contract) => sum + (contract.outstandingBalance ?? 0), 0)
+          .toFixed(2),
+      ),
+      uninvoicedEventAmount: Number(
+        readyToInvoice
+          .reduce((sum, contract) => sum + (contract.uninvoicedEventAmount ?? 0), 0)
+          .toFixed(2),
+      ),
+    },
+    queues: {
+      awaitingSignature: awaitingSignature.slice(0, 8),
+      readyToInvoice: readyToInvoice.slice(0, 8),
+      openReceivables: openReceivables.slice(0, 8),
+      readyToClose: readyToClose.slice(0, 8),
+    },
+    contracts,
+    invoices: invoices.slice(0, 12),
+    recentEvents: events.slice(0, 12),
+  };
 }
 
 export async function createPaymentIntentForInvoice(

@@ -19,15 +19,26 @@ export async function GET(request: Request) {
   await requireStaffApiPermission(request, "inspections.view");
 
   const { searchParams } = new URL(request.url);
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
+  const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "25")));
   const data = await listInspections({
     status: searchParams.get("status") ?? undefined,
     assetNumber: searchParams.get("assetNumber") ?? undefined,
     contractNumber: searchParams.get("contractNumber") ?? undefined,
   });
+  const start = (page - 1) * pageSize;
+  const paged = data.slice(start, start + pageSize);
 
   return ok({
     count: data.length,
-    data,
+    page,
+    pageSize,
+    filters: {
+      status: searchParams.get("status"),
+      assetNumber: searchParams.get("assetNumber"),
+      contractNumber: searchParams.get("contractNumber"),
+    },
+    data: paged,
   });
 }
 

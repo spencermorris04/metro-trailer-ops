@@ -36,6 +36,13 @@
       "when": 1776125157649,
       "tag": "0004_regular_paper_doll",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776128763819,
+      "tag": "0005_unknown_gunslinger",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,6 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import type {
-  AssetRecord,
   WorkOrderBillableDispositionKey,
   WorkOrderBillingApprovalStatusKey,
   WorkOrderRecord,
@@ -32,6 +31,10 @@ import {
   stableStringify,
   toIso,
 } from "@/lib/server/production-utils";
+import {
+  deriveInventoryAssetState,
+  type InventoryAllocationType,
+} from "@/lib/server/inventory-state";
 import {
   canGenerateCustomerDamageEvents,
   getVerificationFailureStatus,
@@ -660,45 +663,30 @@ export async function syncAssetMaintenanceStateTx(tx: DbTransaction, assetId: st
   const hasReservation = activeAllocations.some(
     (allocation) => allocation.allocationType === "reservation",
   );
-
-  let nextStatus: AssetRecord["status"] = resolvedAsset.status as AssetRecord["status"];
-  let nextAvailability: AssetRecord["availability"] = "rentable";
-  let nextMaintenanceStatus: AssetRecord["maintenanceStatus"] = "clear";
-
-  if (hasMaintenanceHold || blockingWorkOrders.length > 0) {
-    nextStatus = "in_maintenance";
-    nextAvailability = "unavailable";
-    if (blockingWorkOrders.some((workOrder) => workOrder.status === "awaiting_parts")) {
-      nextMaintenanceStatus = "waiting_on_parts";
-    } else if (blockingWorkOrders.some((workOrder) => workOrder.status === "repair_completed")) {
-      nextMaintenanceStatus = "inspection_required";
-    } else {
-      nextMaintenanceStatus = "under_repair";
-    }
-  } else if (hasInspectionHold) {
-    nextStatus = "inspection_hold";
-    nextAvailability = "limited";
-    nextMaintenanceStatus = "inspection_required";
-  } else if (hasOnRent) {
-    nextStatus = "on_rent";
-    nextAvailability = "unavailable";
-    nextMaintenanceStatus = "clear";
-  } else if (hasReservation) {
-    nextStatus = "reserved";
-    nextAvailability = "limited";
-    nextMaintenanceStatus = "clear";
-  } else {
-    nextStatus = "available";
-    nextAvailability = "rentable";
-    nextMaintenanceStatus = "clear";
-  }
+  const hasDispatchHold = activeAllocations.some(
+    (allocation) => allocation.allocationType === "dispatch_hold",
+  );
+  const derived = deriveInventoryAssetState({
+    isRetired: resolvedAsset.status === "retired",
+    maintenanceStatus: resolvedAsset.maintenanceStatus,
+    allocationTypes: [
+      ...(hasMaintenanceHold ? (["maintenance_hold"] as InventoryAllocationType[]) : []),
+      ...(hasInspectionHold ? (["inspection_hold"] as InventoryAllocationType[]) : []),
+      ...(hasDispatchHold ? (["dispatch_hold"] as InventoryAllocationType[]) : []),
+      ...(hasOnRent ? (["on_rent"] as InventoryAllocationType[]) : []),
+      ...(hasReservation ? (["reservation"] as InventoryAllocationType[]) : []),
+    ],
+    blockingWorkOrderStatuses: blockingWorkOrders.map(
+      (workOrder) => workOrder.status,
+    ),
+  });
 
   await tx
     .update(schema.assets)
     .set({
-      status: nextStatus,
-      availability: nextAvailability,
-      maintenanceStatus: nextMaintenanceStatus,
+      status: derived.status,
+      availability: derived.availability,
+      maintenanceStatus: derived.maintenanceStatus,
       updatedAt: now(),
     })
     .where(eq(schema.assets.id, assetId));

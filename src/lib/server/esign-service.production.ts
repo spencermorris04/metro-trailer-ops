@@ -41,6 +41,7 @@ import {
   listAssets,
   listContracts,
   listCustomers,
+  transitionContract,
 } from "@/lib/server/platform-service.production";
 
 const CONSENT_TEXT_VERSION = "metro-esign-consent-v1";
@@ -1071,6 +1072,27 @@ async function finalizeSignatureRequest(signatureRequestId: string) {
     },
   });
 
+  if (contract.status === "quoted") {
+    try {
+      await transitionContract(
+        contract.id,
+        "reserved",
+        undefined,
+        "Signature workflow completed.",
+      );
+    } catch (error) {
+      await pushAudit({
+        entityId: request.contractNumber,
+        eventType: "signature_completed_reservation_blocked",
+        metadata: {
+          signatureRequestId: request.id,
+          contractId: contract.id,
+          reason: error instanceof Error ? error.message : "Unknown reservation failure",
+        },
+      });
+    }
+  }
+
   return buildSignatureView(request.id);
 }
 
@@ -1307,6 +1329,28 @@ export async function createSignatureRequestForContract(
   userId = "system",
 ) {
   const { contract, customer, assets } = await getContractSnapshot(payload.contractNumber);
+  if (["closed", "cancelled"].includes(contract.status)) {
+    throw new ApiError(409, "Cancelled or closed contracts cannot enter signature routing.");
+  }
+  const activeRequest = await db.query.signatureRequests.findFirst({
+    where: (table, { and: localAnd, eq: localEq, or: localOr }) =>
+      localAnd(
+        localEq(table.contractId, contract.id),
+        localOr(
+          localEq(table.status, "sent"),
+          localEq(table.status, "in_progress"),
+          localEq(table.status, "partially_signed"),
+        ),
+      ),
+    orderBy: (table, { desc: localDesc }) => [localDesc(table.requestedAt)],
+  });
+  if (activeRequest) {
+    throw new ApiError(409, "Contract already has an active signature request.", {
+      contractId: contract.id,
+      signatureRequestId: activeRequest.id,
+      signatureStatus: activeRequest.status,
+    });
+  }
   const requestId = createId("sig");
   const requestedAt = now();
   const expiresAt = new Date(Date.now() + payload.expiresInDays * 24 * 60 * 60 * 1000);

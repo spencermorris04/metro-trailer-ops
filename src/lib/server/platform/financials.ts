@@ -2,6 +2,7 @@ import * as production from "@/lib/server/platform-service.production";
 
 export {
   createFinancialEvent,
+  getFinancialOverview,
   generateInvoiceForContract,
   recordInvoicePayment,
   sendInvoice,

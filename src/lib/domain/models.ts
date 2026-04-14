@@ -187,6 +187,27 @@ export interface AssetRecord {
   gpsDeviceId?: string;
   age: string;
   features: string[];
+  subtype?: string | null;
+  serialNumber?: string | null;
+  yardZone?: string | null;
+  yardRow?: string | null;
+  yardSlot?: string | null;
+  custodyLocation?: string | null;
+  locationSource?: string | null;
+  blockingReason?: string | null;
+  allocationTypes?: string[];
+  activeContractNumber?: string | null;
+  activeCustomerName?: string | null;
+  nextContractNumber?: string | null;
+  nextReservationStart?: string | null;
+  activeDispatchTaskId?: string | null;
+  activeDispatchTaskStatus?: string | null;
+  activeWorkOrderId?: string | null;
+  activeWorkOrderStatus?: string | null;
+  record360UnitId?: string | null;
+  skybitzAssetId?: string | null;
+  telematicsFreshnessMinutes?: number | null;
+  telematicsStale?: boolean;
 }
 
 export interface CustomerLocationRecord {
@@ -219,6 +240,18 @@ export interface ContractRecord {
   assets: string[];
   value: number;
   amendmentFlags: string[];
+  signatureStatus?: string;
+  latestSignatureRequestId?: string | null;
+  signedDocumentId?: string | null;
+  invoiceCount?: number;
+  openInvoiceCount?: number;
+  overdueInvoiceCount?: number;
+  outstandingBalance?: number;
+  uninvoicedEventCount?: number;
+  uninvoicedEventAmount?: number;
+  commercialStage?: string;
+  billingState?: string;
+  nextAction?: string | null;
 }
 
 export interface FinancialEventRecord {
