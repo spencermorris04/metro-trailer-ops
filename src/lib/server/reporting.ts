@@ -5,6 +5,10 @@ import type { AuditEventRecord, FleetUtilizationRecord, RevenueSeriesPoint } fro
 import { getObservabilityConfig } from "@/lib/server/observability";
 import { numericToNumber, toIso } from "@/lib/server/production-utils";
 import { getWorkflowFlags } from "@/lib/server/feature-flags";
+import {
+  buildDependencyReadiness,
+  buildIntegrationHealthSnapshot,
+} from "@/lib/server/production-readiness";
 
 type AgingBucket = {
   label: string;
@@ -95,6 +99,8 @@ export async function buildOperationalReports() {
     outboxRows,
     webhookRows,
     syncRows,
+    dependencyReadiness,
+    integrationHealth,
   ] = await Promise.all([
     db.select().from(schema.branches),
     db.select().from(schema.assets),
@@ -106,6 +112,8 @@ export async function buildOperationalReports() {
     db.select().from(schema.outboxJobs),
     db.select().from(schema.webhookReceipts),
     db.select().from(schema.integrationSyncJobs),
+    buildDependencyReadiness(),
+    buildIntegrationHealthSnapshot(),
   ]);
 
   const utilization: FleetUtilizationRecord[] = branchRows.map((branch) => {
@@ -324,13 +332,33 @@ export async function buildOperationalReports() {
     revenueRollups,
     auditTrail,
     auditHealth,
+    dataFreshness: {
+      quickbooks:
+        syncRows
+          .filter((row) => row.provider === "quickbooks" && row.finishedAt)
+          .sort((left, right) => right.finishedAt!.getTime() - left.finishedAt!.getTime())[0]
+          ?.finishedAt?.toISOString() ?? null,
+      record360:
+        syncRows
+          .filter((row) => row.provider === "record360" && row.finishedAt)
+          .sort((left, right) => right.finishedAt!.getTime() - left.finishedAt!.getTime())[0]
+          ?.finishedAt?.toISOString() ?? null,
+      telematics:
+        syncRows
+          .filter((row) => row.provider === "skybitz" && row.finishedAt)
+          .sort((left, right) => right.finishedAt!.getTime() - left.finishedAt!.getTime())[0]
+          ?.finishedAt?.toISOString() ?? null,
+    },
+    providerHealth: integrationHealth,
+    dependencyReadiness,
     featureFlags: getWorkflowFlags(),
     observability: getObservabilityConfig(),
   };
 }
 
 export async function buildReadinessSnapshot() {
-  const [branchRow, pendingJobs, failedWebhooks] = await Promise.all([
+  const [branchRow, pendingJobs, failedWebhooks, dependencyReadiness, integrationHealth] =
+    await Promise.all([
     db.select({ id: schema.branches.id }).from(schema.branches).limit(1),
     db
       .select({ id: schema.outboxJobs.id })
@@ -340,15 +368,25 @@ export async function buildReadinessSnapshot() {
       .select({ id: schema.webhookReceipts.id })
       .from(schema.webhookReceipts)
       .where(eq(schema.webhookReceipts.status, "failed")),
-  ]);
+      buildDependencyReadiness(),
+      buildIntegrationHealthSnapshot(),
+    ]);
+
+  const dependencyFailures = Object.values(dependencyReadiness).filter(
+    (check) => check.required && check.status !== "ready" && check.status !== "disabled",
+  );
+  const status =
+    branchRow.length > 0 && dependencyFailures.length === 0 ? "ready" : "degraded";
 
   return {
-    status: branchRow.length > 0 ? "ready" : "degraded",
+    status,
     checks: {
       database: branchRow.length > 0 ? "ok" : "missing_seed_or_schema",
       pendingOutboxJobs: pendingJobs.length,
       failedWebhookReceipts: failedWebhooks.length,
     },
+    dependencyReadiness,
+    integrationHealth,
     featureFlags: getWorkflowFlags(),
     observability: getObservabilityConfig(),
     checkedAt: new Date().toISOString(),

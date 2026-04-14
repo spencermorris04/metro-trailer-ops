@@ -252,6 +252,9 @@ export interface ContractRecord {
   commercialStage?: string;
   billingState?: string;
   nextAction?: string | null;
+  financialExceptions?: string[];
+  lastInvoiceSentAt?: string | null;
+  reconciliationState?: string;
 }
 
 export interface FinancialEventRecord {
@@ -274,6 +277,13 @@ export interface InvoiceRecord {
   dueDate: string;
   totalAmount: number;
   balanceAmount: number;
+  deliveryStatus?: string;
+  sentAt?: string | null;
+  deliveryChannel?: string | null;
+  quickBooksSyncStatus?: string;
+  quickBooksLastSyncedAt?: string | null;
+  quickBooksLastError?: string | null;
+  reconciliationState?: string;
 }
 
 export interface DispatchTaskRecord {

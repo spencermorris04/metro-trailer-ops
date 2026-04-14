@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 import * as schema from "@/db/schema";
+import { isProductionRuntime } from "@/lib/server/runtime";
 
 declare global {
   var __metroTrailerAuditPool: Pool | undefined;
@@ -13,6 +14,37 @@ function getAuditConnectionString() {
     process.env.DATABASE_URL?.trim() ||
     null
   );
+}
+
+function normalizeConnectionString(connectionString: string | null) {
+  if (!connectionString) {
+    return null;
+  }
+
+  try {
+    const url = new URL(connectionString);
+    url.hash = "";
+    url.searchParams.sort();
+    return url.toString();
+  } catch {
+    return connectionString.trim();
+  }
+}
+
+export function getAuditStoreReadiness() {
+  const auditUrl = process.env.AUDIT_DATABASE_URL?.trim() || null;
+  const primaryUrl = process.env.DATABASE_URL?.trim() || null;
+  const auditConfigured = Boolean(auditUrl);
+  const sameDatabase =
+    normalizeConnectionString(auditUrl) !== null &&
+    normalizeConnectionString(auditUrl) === normalizeConnectionString(primaryUrl);
+
+  return {
+    auditConfigured,
+    sameDatabase,
+    productionSafe: auditConfigured && !sameDatabase,
+    requiredInProduction: isProductionRuntime(),
+  };
 }
 
 function createAuditPool() {

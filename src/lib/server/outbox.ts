@@ -60,6 +60,12 @@ export async function enqueueOutboxJob(options: EnqueueOutboxOptions) {
   });
 
   if (options.provider) {
+    const providerEventId =
+      typeof options.payload.externalEventId === "string"
+        ? options.payload.externalEventId
+        : typeof options.payload.providerEventId === "string"
+          ? options.payload.providerEventId
+          : null;
     await db.insert(schema.integrationSyncJobs).values({
       id: createId("sync"),
       provider: options.provider,
@@ -71,6 +77,9 @@ export async function enqueueOutboxJob(options: EnqueueOutboxOptions) {
           ? "pull"
           : "push",
       status: "pending",
+      providerEventId,
+      providerAttemptCount: 0,
+      lastProcessedAt: null,
       payload: {
         outboxJobId: outboxId,
         jobType: options.jobType,
@@ -139,6 +148,7 @@ export async function markWebhookReceiptProcessed(receiptId: string) {
     .set({
       status: "processed",
       processedAt: now(),
+      lastAttemptAt: now(),
       processingError: null,
     })
     .where(eq(schema.webhookReceipts.id, receiptId));
@@ -329,6 +339,38 @@ export async function replayOutboxJob(jobId: string) {
     .where(eq(schema.outboxJobs.id, jobId));
 
   return getOutboxJob(jobId);
+}
+
+export async function replayWebhookReceipt(receiptId: string) {
+  const receipt = await getWebhookReceipt(receiptId);
+  if (!receipt) {
+    return null;
+  }
+
+  await db
+    .update(schema.webhookReceipts)
+    .set({
+      status: "received",
+      processingError: null,
+      processedAt: null,
+      lastAttemptAt: null,
+    })
+    .where(eq(schema.webhookReceipts.id, receiptId));
+
+  await enqueueOutboxJob({
+    jobType: `webhook.process.${receipt.provider}`,
+    aggregateType: "webhook_receipt",
+    aggregateId: receiptId,
+    provider: receipt.provider,
+    payload: {
+      receiptId,
+      externalEventId: receipt.externalEventId,
+      providerEventId: receipt.externalEventId,
+      verified: receipt.verified,
+    },
+  });
+
+  return getWebhookReceipt(receiptId);
 }
 
 export async function listPendingOutboxJobs(jobTypes?: string[]) {

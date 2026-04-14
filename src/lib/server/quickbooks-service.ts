@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { ApiError } from "@/lib/server/api";
 import { decryptSecret, encryptSecret } from "@/lib/server/credential-crypto";
+import { recordInvoiceHistoryEvent } from "@/lib/server/invoice-ops";
 import {
   createOrUpdateQuickBooksInvoice,
   createQuickBooksAuthorizationUrl,
@@ -83,6 +84,7 @@ async function updateSyncJobForOutbox(options: {
   status: typeof schema.integrationSyncJobs.$inferInsert.status;
   lastError?: string | null;
   payloadPatch?: JsonRecord;
+  providerEventId?: string | null;
 }) {
   const syncJob = await getSyncJobForOutboxJob(options.outboxJobId);
   if (!syncJob) {
@@ -94,6 +96,9 @@ async function updateSyncJobForOutbox(options: {
     .update(schema.integrationSyncJobs)
     .set({
       status: options.status,
+      providerEventId: options.providerEventId ?? syncJob.providerEventId,
+      providerAttemptCount: (syncJob.providerAttemptCount ?? 0) + 1,
+      lastProcessedAt: now(),
       lastError: options.lastError ?? null,
       payload:
         options.payloadPatch && Object.keys(options.payloadPatch).length > 0
@@ -789,6 +794,9 @@ async function syncInvoiceToQuickBooks(invoiceId: string, outboxJobId?: string) 
       .update(schema.invoices)
       .set({
         quickBooksInvoiceId: externalId,
+        quickBooksSyncStatus: "success",
+        quickBooksLastSyncedAt: now(),
+        quickBooksLastError: null,
         updatedAt: now(),
       })
       .where(eq(schema.invoices.id, invoice.id));
@@ -807,6 +815,15 @@ async function syncInvoiceToQuickBooks(invoiceId: string, outboxJobId?: string) 
       });
     }
 
+    await recordInvoiceHistoryEvent({
+      invoiceId: invoice.id,
+      eventType: "payment_reconciled",
+      metadata: {
+        provider: "quickbooks",
+        externalInvoiceId: externalId,
+      },
+    });
+
     return {
       connectionId: connection.id,
       syncJobId: syncJob?.id ?? null,
@@ -815,6 +832,14 @@ async function syncInvoiceToQuickBooks(invoiceId: string, outboxJobId?: string) 
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "QuickBooks invoice sync failed.";
+    await db
+      .update(schema.invoices)
+      .set({
+        quickBooksSyncStatus: "failed",
+        quickBooksLastError: message,
+        updatedAt: now(),
+      })
+      .where(eq(schema.invoices.id, invoiceId));
     if (outboxJobId) {
       await updateSyncJobForOutbox({
         outboxJobId,
@@ -891,6 +916,17 @@ async function syncPaymentToQuickBooks(paymentTransactionId: string, outboxJobId
       entityType: "payment_transaction",
       internalEntityId: paymentPayload.payment.id,
     });
+    if (paymentPayload.payment.invoiceId) {
+      await recordInvoiceHistoryEvent({
+        invoiceId: paymentPayload.payment.invoiceId,
+        eventType: "payment_reconciled",
+        metadata: {
+          provider: "quickbooks",
+          externalPaymentId: externalId,
+          paymentTransactionId: paymentPayload.payment.id,
+        },
+      });
+    }
 
     if (outboxJobId) {
       await updateSyncJobForOutbox({
@@ -991,6 +1027,9 @@ async function reconcileInvoiceEntity(connection: ConnectionRow, externalInvoice
       balanceAmount: balance.toFixed(2),
       status: nextStatus,
       quickBooksInvoiceId: externalInvoiceId,
+      quickBooksSyncStatus: "success",
+      quickBooksLastSyncedAt: now(),
+      quickBooksLastError: null,
       updatedAt: now(),
     })
     .where(eq(schema.invoices.id, invoice.id));
@@ -1021,6 +1060,16 @@ async function reconcileInvoiceEntity(connection: ConnectionRow, externalInvoice
       reasonCodes: ["invoice_total_mismatch", "unmapped_invoice"],
     });
   }
+  await recordInvoiceHistoryEvent({
+    invoiceId: invoice.id,
+    eventType: "payment_reconciled",
+    metadata: {
+      provider: "quickbooks",
+      externalInvoiceId,
+      balance,
+      total,
+    },
+  });
 }
 
 async function reconcilePaymentEntity(connection: ConnectionRow, externalPaymentId: string) {

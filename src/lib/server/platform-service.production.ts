@@ -30,6 +30,13 @@ import { appendAuditEvent } from "@/lib/server/audit";
 import {
   buildRevenueExport,
 } from "@/lib/server/integration-clients";
+import {
+  deriveInvoiceReconciliationState,
+  listInvoiceHistory,
+  listOpenAccountingIssueReasonCodesForInvoice,
+  recordInvoiceHistoryEvent,
+} from "@/lib/server/invoice-ops";
+import { sendTransactionalEmail } from "@/lib/server/notification-service";
 import { enqueueOutboxJob } from "@/lib/server/outbox";
 import {
   addPaymentMethod as addPaymentMethodRecord,
@@ -1106,6 +1113,9 @@ async function contractRecords() {
       outstandingBalance: commercialSummary.outstandingBalance,
       uninvoicedEventCount: commercialSummary.uninvoicedEventCount,
       uninvoicedEventAmount: commercialSummary.uninvoicedEventAmount,
+      financialExceptions: commercialSummary.financialExceptions,
+      lastInvoiceSentAt: commercialSummary.lastInvoiceSentAt,
+      reconciliationState: commercialSummary.reconciliationState,
       commercialStage: commercialSummary.commercialStage,
       billingState: commercialSummary.billingState,
       nextAction: commercialSummary.nextAction,
@@ -1123,6 +1133,9 @@ type ContractCommercialSummary = {
   outstandingBalance: number;
   uninvoicedEventCount: number;
   uninvoicedEventAmount: number;
+  financialExceptions: string[];
+  lastInvoiceSentAt: string | null;
+  reconciliationState: string;
   commercialStage: string;
   billingState: string;
   nextAction: string | null;
@@ -1152,6 +1165,9 @@ function buildEmptyContractCommercialSummary(
     outstandingBalance: 0,
     uninvoicedEventCount: 0,
     uninvoicedEventAmount: 0,
+    financialExceptions: [],
+    lastInvoiceSentAt: null,
+    reconciliationState: "pending",
     commercialStage: derived.commercialStage,
     billingState: derived.billingState,
     nextAction: derived.nextAction,
@@ -1192,6 +1208,9 @@ async function getContractCommercialSummaryMap(contractIds: string[]) {
           dueDate: schema.invoices.dueDate,
           totalAmount: schema.invoices.totalAmount,
           balanceAmount: schema.invoices.balanceAmount,
+          sentAt: schema.invoices.sentAt,
+          quickBooksSyncStatus: schema.invoices.quickBooksSyncStatus,
+          quickBooksLastError: schema.invoices.quickBooksLastError,
         })
         .from(schema.invoices)
         .where(inArray(schema.invoices.contractId, uniqueContractIds)),
@@ -1244,10 +1263,14 @@ async function getContractCommercialSummaryMap(contractIds: string[]) {
   const invoicesByContract = new Map<
     string,
     Array<{
+      id: string;
       status: string;
       dueDate: Date;
       totalAmount: string;
       balanceAmount: string;
+      sentAt: Date | null;
+      quickBooksSyncStatus: string;
+      quickBooksLastError: string | null;
     }>
   >();
   for (const row of invoiceRows) {
@@ -1256,10 +1279,14 @@ async function getContractCommercialSummaryMap(contractIds: string[]) {
     }
     const current = invoicesByContract.get(row.contractId) ?? [];
     current.push({
+      id: row.id,
       status: row.status,
       dueDate: row.dueDate,
       totalAmount: row.totalAmount,
       balanceAmount: row.balanceAmount,
+      sentAt: row.sentAt,
+      quickBooksSyncStatus: row.quickBooksSyncStatus,
+      quickBooksLastError: row.quickBooksLastError,
     });
     invoicesByContract.set(row.contractId, current);
   }
@@ -1328,6 +1355,27 @@ async function getContractCommercialSummaryMap(contractIds: string[]) {
         .reduce((sum, invoice) => sum + numericToNumber(invoice.balanceAmount), 0)
         .toFixed(2),
     );
+    const financialExceptions = (
+      await Promise.all(
+        invoices.map((invoice) => listOpenAccountingIssueReasonCodesForInvoice(invoice.id)),
+      )
+    ).flat();
+    const lastInvoiceSentAt = invoices
+      .map((invoice) => invoice.sentAt)
+      .filter((value): value is Date => value instanceof Date)
+      .sort((left, right) => right.getTime() - left.getTime())[0];
+    const reconciliationState = deriveInvoiceReconciliationState({
+      quickBooksSyncStatus: invoices.every(
+        (invoice) => invoice.quickBooksSyncStatus === "success",
+      )
+        ? "success"
+        : invoices.some((invoice) => invoice.quickBooksSyncStatus === "failed")
+          ? "failed"
+          : "pending",
+      quickBooksLastError: invoices.find((invoice) => invoice.quickBooksLastError)
+        ?.quickBooksLastError,
+      openIssueCount: financialExceptions.length,
+    });
 
     const uninvoicedEvents = (eventsByContract.get(contract.id) ?? []).filter(
       (event) => !event.invoiceId && event.status === "posted",
@@ -1359,6 +1407,9 @@ async function getContractCommercialSummaryMap(contractIds: string[]) {
       outstandingBalance,
       uninvoicedEventCount: uninvoicedEvents.length,
       uninvoicedEventAmount,
+      financialExceptions,
+      lastInvoiceSentAt: toIso(lastInvoiceSentAt),
+      reconciliationState,
       commercialStage: derived.commercialStage,
       billingState: derived.billingState,
       nextAction: derived.nextAction,
@@ -1401,6 +1452,7 @@ async function maybeAutoCloseContract(contractId: string, userId?: string) {
     summary.outstandingBalance > 0 ||
     summary.openInvoiceCount > 0 ||
     summary.uninvoicedEventCount > 0 ||
+    summary.financialExceptions.length > 0 ||
     summary.activeContractAllocationCount > 0
   ) {
     return null;
@@ -2946,6 +2998,12 @@ export async function listInvoices(filters?: {
       customerName: schema.customers.name,
       contractNumber: schema.contracts.contractNumber,
       status: schema.invoices.status,
+      deliveryStatus: schema.invoices.deliveryStatus,
+      sentAt: schema.invoices.sentAt,
+      deliveryChannel: schema.invoices.deliveryChannel,
+      quickBooksSyncStatus: schema.invoices.quickBooksSyncStatus,
+      quickBooksLastSyncedAt: schema.invoices.quickBooksLastSyncedAt,
+      quickBooksLastError: schema.invoices.quickBooksLastError,
       invoiceDate: schema.invoices.invoiceDate,
       dueDate: schema.invoices.dueDate,
       totalAmount: schema.invoices.totalAmount,
@@ -2956,9 +3014,39 @@ export async function listInvoices(filters?: {
     .leftJoin(schema.contracts, eq(schema.invoices.contractId, schema.contracts.id))
     .orderBy(desc(schema.invoices.invoiceDate));
 
+  const issueRows = await db
+    .select({
+      internalEntityId: schema.accountingSyncIssues.internalEntityId,
+      reasonCode: schema.accountingSyncIssues.reasonCode,
+    })
+    .from(schema.accountingSyncIssues)
+    .where(
+      and(
+        eq(schema.accountingSyncIssues.provider, "quickbooks"),
+        eq(schema.accountingSyncIssues.entityType, "invoice"),
+        eq(schema.accountingSyncIssues.status, "open"),
+      ),
+    );
+  const issueMap = new Map<string, string[]>();
+  for (const row of issueRows) {
+    if (!row.internalEntityId) {
+      continue;
+    }
+    const current = issueMap.get(row.internalEntityId) ?? [];
+    current.push(row.reasonCode);
+    issueMap.set(row.internalEntityId, current);
+  }
+
   return rows
     .filter((row) => {
-      if (filters?.status && row.status !== filters.status) {
+      const derivedStatus = deriveInvoiceStatus({
+        totalAmount: numericToNumber(row.totalAmount),
+        balanceAmount: numericToNumber(row.balanceAmount),
+        dueDate: row.dueDate,
+        asOf: now(),
+      });
+
+      if (filters?.status && derivedStatus !== filters.status) {
         return false;
       }
       if (
@@ -2972,22 +3060,43 @@ export async function listInvoices(filters?: {
       }
       return true;
     })
-    .map((row) => ({
-      id: row.id,
-      invoiceNumber: row.invoiceNumber,
-      customerName: row.customerName,
-      contractNumber: row.contractNumber ?? "Unassigned",
-      status: deriveInvoiceStatus({
+    .map((row) => {
+      const derivedStatus = deriveInvoiceStatus({
         totalAmount: numericToNumber(row.totalAmount),
         balanceAmount: numericToNumber(row.balanceAmount),
         dueDate: row.dueDate,
         asOf: now(),
-      }),
-      invoiceDate: toIso(row.invoiceDate) ?? new Date(0).toISOString(),
-      dueDate: toIso(row.dueDate) ?? new Date(0).toISOString(),
-      totalAmount: numericToNumber(row.totalAmount),
-      balanceAmount: numericToNumber(row.balanceAmount),
-    })) satisfies InvoiceRecord[];
+      });
+      const openIssues = issueMap.get(row.id) ?? [];
+
+      return {
+        id: row.id,
+        invoiceNumber: row.invoiceNumber,
+        customerName: row.customerName,
+        contractNumber: row.contractNumber ?? "Unassigned",
+        status: derivedStatus,
+        invoiceDate: toIso(row.invoiceDate) ?? new Date(0).toISOString(),
+        dueDate: toIso(row.dueDate) ?? new Date(0).toISOString(),
+        totalAmount: numericToNumber(row.totalAmount),
+        balanceAmount: numericToNumber(row.balanceAmount),
+        deliveryStatus: row.deliveryStatus,
+        sentAt: toIso(row.sentAt),
+        deliveryChannel: row.deliveryChannel,
+        quickBooksSyncStatus: row.quickBooksSyncStatus,
+        quickBooksLastSyncedAt: toIso(row.quickBooksLastSyncedAt),
+        quickBooksLastError: row.quickBooksLastError,
+        reconciliationState: deriveInvoiceReconciliationState({
+          quickBooksSyncStatus: row.quickBooksSyncStatus,
+          quickBooksLastError: row.quickBooksLastError,
+          openIssueCount: openIssues.length,
+        }),
+      };
+    }) satisfies InvoiceRecord[];
+}
+
+export async function getInvoiceHistory(invoiceId: string) {
+  const invoice = await getInvoiceByIdOrNumber(invoiceId);
+  return listInvoiceHistory(invoice.id);
 }
 
 export async function generateInvoiceForContract(contractId: string, userId?: string) {
@@ -3033,6 +3142,9 @@ export async function generateInvoiceForContract(contractId: string, userId?: st
       invoiceDate,
       dueDate: invoiceDueDate(invoiceDate, contract.paymentTermsDays),
       status: "draft",
+      deliveryStatus: "ready_to_send",
+      deliveryChannel: "email",
+      quickBooksSyncStatus: "pending",
       subtotalAmount: totals.subtotal.toFixed(2),
       taxAmount: totals.taxAmount.toFixed(2),
       totalAmount: totals.totalAmount.toFixed(2),
@@ -3070,6 +3182,16 @@ export async function generateInvoiceForContract(contractId: string, userId?: st
     eventType: "created",
     userId,
   });
+  await recordInvoiceHistoryEvent({
+    invoiceId,
+    eventType: "generated",
+    actorUserId: userId ?? null,
+    metadata: {
+      invoiceNumber,
+      contractNumber: contract.contractNumber,
+      totalAmount: totals.totalAmount,
+    },
+  });
   await enqueueOutboxJob({
     jobType: "invoice.sync.quickbooks",
     aggregateType: "invoice",
@@ -3089,16 +3211,63 @@ export async function generateInvoiceForContract(contractId: string, userId?: st
 
 export async function sendInvoice(invoiceId: string, userId?: string) {
   const invoice = await getInvoiceByIdOrNumber(invoiceId);
+  const customer = requireRecord(
+    await db.query.customers.findFirst({
+      where: (table, { eq: localEq }) => localEq(table.id, invoice.customerId),
+    }),
+    `Customer ${invoice.customerId} not found.`,
+  );
   const nextStatus = deriveInvoiceStatus({
     totalAmount: numericToNumber(invoice.totalAmount),
     balanceAmount: numericToNumber(invoice.balanceAmount),
     dueDate: invoice.dueDate,
     asOf: now(),
   });
+  const recipientEmail =
+    typeof customer.contactInfo?.email === "string" ? customer.contactInfo.email : null;
+  const appUrl = process.env.APP_URL?.trim() || "http://localhost:3000";
+  const deliveryAttemptedAt = now();
+  let deliveryStatus = "delivery_failed";
+  let sentAt: Date | null = null;
+  let deliveryError: string | null = null;
+
+  if (recipientEmail) {
+    const delivery = await sendTransactionalEmail({
+      to: recipientEmail,
+      subject: `Metro Trailer invoice ${invoice.invoiceNumber}`,
+      text: [
+        `Invoice ${invoice.invoiceNumber} is ready.`,
+        `Amount due: $${numericToNumber(invoice.balanceAmount).toFixed(2)}`,
+        `Due date: ${invoice.dueDate.toISOString().slice(0, 10)}`,
+        `PDF: ${appUrl}/api/invoices/${invoice.id}/pdf`,
+        `Portal: ${appUrl}/portal`,
+      ].join("\n"),
+      relatedEntityType: "invoice",
+      relatedEntityId: invoice.id,
+    });
+
+    deliveryStatus =
+      delivery.status === "sent"
+        ? "sent"
+        : delivery.status === "queued"
+          ? "ready_to_send"
+          : "delivery_failed";
+    sentAt = delivery.status === "skipped" ? null : deliveryAttemptedAt;
+    deliveryError =
+      delivery.status === "skipped" ? "Email configuration is incomplete." : null;
+  } else {
+    deliveryError = "Customer is missing a billing email address.";
+  }
+
   await db
     .update(schema.invoices)
     .set({
       status: nextStatus,
+      deliveryStatus,
+      sentAt,
+      deliveryChannel: "email",
+      quickBooksSyncStatus: "pending",
+      quickBooksLastError: deliveryError,
       updatedAt: now(),
     })
     .where(eq(schema.invoices.id, invoice.id));
@@ -3116,6 +3285,17 @@ export async function sendInvoice(invoiceId: string, userId?: string) {
     entityId: invoice.id,
     eventType: "sent",
     userId,
+  });
+  await recordInvoiceHistoryEvent({
+    invoiceId: invoice.id,
+    eventType: invoice.sentAt ? "resent" : deliveryStatus === "delivery_failed" ? "delivery_failed" : "sent",
+    actorUserId: userId ?? null,
+    metadata: {
+      deliveryChannel: "email",
+      deliveryStatus,
+      recipientEmail,
+      error: deliveryError,
+    },
   });
   return requireRecord(
     (await listInvoices()).find((entry) => entry.id === invoice.id),
@@ -3177,6 +3357,15 @@ export async function recordInvoicePayment(invoiceId: string, amount: number, us
     entityId: invoice.id,
     eventType: "payment_recorded",
     userId,
+  });
+  await recordInvoiceHistoryEvent({
+    invoiceId: invoice.id,
+    eventType: "payment_applied",
+    actorUserId: userId ?? null,
+    metadata: {
+      amount,
+      paymentTransactionId,
+    },
   });
   if (invoice.contractId) {
     await maybeAutoCloseContract(invoice.contractId, userId);

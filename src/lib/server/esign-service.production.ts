@@ -294,6 +294,18 @@ function mapDocumentRow(row: {
   metadata: Record<string, unknown> | null;
   workOrderId: string | null;
 }) {
+  const metadata = (row.metadata ?? {}) as Record<string, string | number | boolean | null>;
+  const downloadAuditCount =
+    typeof metadata.downloadAuditCount === "number" ? metadata.downloadAuditCount : 0;
+  const retentionState =
+    row.objectLocked && row.storageProvider === "s3"
+      ? "retained"
+      : row.status === "archived"
+        ? "archived"
+        : row.storageProvider === "s3"
+          ? "pending_lock"
+          : "inline_only";
+
   return {
     id: row.id,
     contractNumber: row.contractNumber ?? "Unassigned",
@@ -318,8 +330,11 @@ function mapDocumentRow(row: {
     relatedSignatureRequestId: row.relatedSignatureRequestId,
     supersedesDocumentId: row.supersedesDocumentId,
     retentionMode: row.retentionMode ?? "compliance",
-    metadata: (row.metadata ?? {}) as Record<string, string | number | boolean | null>,
+    metadata,
     workOrderId: row.workOrderId,
+    retentionState,
+    objectLockVerified: row.objectLocked && row.storageProvider === "s3",
+    downloadAuditCount,
   } satisfies DocumentRecord;
 }
 
@@ -893,6 +908,24 @@ async function buildSignatureView(signatureRequestId: string) {
     ? documents.find((document) => document.id === base.certificateDocumentId) ?? null
     : null;
   const currentRoutingOrder = getCurrentRoutingOrder(signers);
+  const finalizationFailures = events.filter((event) => event.type === "finalization_failed");
+  const retentionVerified = Boolean(
+    finalDocument?.objectLockVerified && certificateDocument?.objectLockVerified,
+  );
+  const completionState =
+    base.status === "completed"
+      ? retentionVerified
+        ? "completed"
+        : "pending_recovery"
+      : finalizationFailures.length > 0
+        ? "completion_failed"
+        : "in_progress";
+  const evidenceState =
+    base.evidenceHash && finalDocument && certificateDocument
+      ? retentionVerified
+        ? "verified"
+        : "pending_retention"
+      : "incomplete";
 
   const signerLinks = await Promise.all(
     signers.map(async (signer) => {
@@ -953,6 +986,17 @@ async function buildSignatureView(signatureRequestId: string) {
     certificateDocument,
     signerLinks,
     currentRoutingOrder,
+    completionState,
+    evidenceState,
+    finalizationAttempts: Math.max(
+      1,
+      events.filter((event) => ["completed", "finalization_failed"].includes(event.type)).length,
+    ),
+    lastFinalizationError:
+      finalizationFailures.at(-1)?.metadata?.error && typeof finalizationFailures.at(-1)?.metadata?.error === "string"
+        ? (finalizationFailures.at(-1)?.metadata?.error as string)
+        : null,
+    retentionVerified,
   } satisfies SignatureRequestView;
 }
 
@@ -973,127 +1017,150 @@ async function finalizeSignatureRequest(signatureRequestId: string) {
     evidenceHash: null,
   };
   requestRecord.evidenceHash = buildRequestEvidenceHash(requestRecord, packetDocument);
+  try {
+    const [signedPdf, certificatePdf] = await Promise.all([
+      renderSignedContractPdf({
+        contract,
+        customer,
+        assets,
+        request: requestRecord,
+      }),
+      renderSignatureCertificatePdf({
+        request: requestRecord,
+      }),
+    ]);
 
-  const [signedPdf, certificatePdf] = await Promise.all([
-    renderSignedContractPdf({
-      contract,
-      customer,
-      assets,
-      request: requestRecord,
-    }),
-    renderSignatureCertificatePdf({
-      request: requestRecord,
-    }),
-  ]);
-
-  const signedDocument = await createStoredDocument({
-    contractId: baseContractId(contract),
-    contractNumber: request.contractNumber,
-    customerId: baseCustomerId(customer),
-    customerName: request.customerName,
-    documentType: "signed_contract",
-    status: "signed",
-    filename: `${request.contractNumber}-signed-rental-agreement.pdf`,
-    buffer: signedPdf,
-    relatedSignatureRequestId: request.id,
-    supersedesDocumentId: packetDocument.id,
-    metadata: {
-      evidenceHash: requestRecord.evidenceHash,
-      packetDocumentId: packetDocument.id,
-      packetDocumentHash: packetDocument.hash,
-      signerCount: request.signers.length,
-    },
-  });
-  const certificateDocument = await createStoredDocument({
-    contractId: baseContractId(contract),
-    contractNumber: request.contractNumber,
-    customerId: baseCustomerId(customer),
-    customerName: request.customerName,
-    documentType: "signature_certificate",
-    status: "signed",
-    filename: `${request.contractNumber}-signature-certificate.pdf`,
-    buffer: certificatePdf,
-    relatedSignatureRequestId: request.id,
-    metadata: {
-      evidenceHash: requestRecord.evidenceHash,
-      packetDocumentId: packetDocument.id,
-      packetDocumentHash: packetDocument.hash,
-      signerCount: request.signers.length,
-    },
-  });
-
-  await db.transaction(async (tx) => {
-    await tx
-      .update(schema.documents)
-      .set({
-        status: "evidence_locked",
-        metadata: {
-          evidenceHash: requestRecord.evidenceHash,
-          supersededBy: signedDocument.id,
-        },
-        updatedAt: now(),
-      })
-      .where(eq(schema.documents.id, packetDocument.id));
-
-    await tx
-      .update(schema.signatureRequests)
-      .set({
-        status: "completed",
-        finalDocumentId: signedDocument.id,
-        certificateDocumentId: certificateDocument.id,
+    const signedDocument = await createStoredDocument({
+      contractId: baseContractId(contract),
+      contractNumber: request.contractNumber,
+      customerId: baseCustomerId(customer),
+      customerName: request.customerName,
+      documentType: "signed_contract",
+      status: "signed",
+      filename: `${request.contractNumber}-signed-rental-agreement.pdf`,
+      buffer: signedPdf,
+      relatedSignatureRequestId: request.id,
+      supersedesDocumentId: packetDocument.id,
+      metadata: {
         evidenceHash: requestRecord.evidenceHash,
-        completedAt,
-        updatedAt: now(),
-      })
-      .where(eq(schema.signatureRequests.id, request.id));
+        packetDocumentId: packetDocument.id,
+        packetDocumentHash: packetDocument.hash,
+        signerCount: request.signers.length,
+      },
+    });
+    const certificateDocument = await createStoredDocument({
+      contractId: baseContractId(contract),
+      contractNumber: request.contractNumber,
+      customerId: baseCustomerId(customer),
+      customerName: request.customerName,
+      documentType: "signature_certificate",
+      status: "signed",
+      filename: `${request.contractNumber}-signature-certificate.pdf`,
+      buffer: certificatePdf,
+      relatedSignatureRequestId: request.id,
+      metadata: {
+        evidenceHash: requestRecord.evidenceHash,
+        packetDocumentId: packetDocument.id,
+        packetDocumentHash: packetDocument.hash,
+        signerCount: request.signers.length,
+      },
+    });
 
-    await tx.insert(schema.signatureEvents).values({
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.documents)
+        .set({
+          status: "evidence_locked",
+          metadata: {
+            evidenceHash: requestRecord.evidenceHash,
+            supersededBy: signedDocument.id,
+          },
+          updatedAt: now(),
+        })
+        .where(eq(schema.documents.id, packetDocument.id));
+
+      await tx
+        .update(schema.signatureRequests)
+        .set({
+          status: "completed",
+          finalDocumentId: signedDocument.id,
+          certificateDocumentId: certificateDocument.id,
+          evidenceHash: requestRecord.evidenceHash,
+          completedAt,
+          updatedAt: now(),
+        })
+        .where(eq(schema.signatureRequests.id, request.id));
+
+      await tx.insert(schema.signatureEvents).values({
+        id: createId("sig_event"),
+        signatureRequestId: request.id,
+        type: "completed",
+        actor: "Metro Trailer",
+        metadata: {
+          finalDocumentId: signedDocument.id,
+          certificateDocumentId: certificateDocument.id,
+          finalDocumentHash: signedDocument.hash,
+          certificateDocumentHash: certificateDocument.hash,
+          evidenceHash: requestRecord.evidenceHash,
+        },
+        createdAt: now(),
+      });
+    });
+
+    await pushAudit({
+      entityId: request.contractNumber,
+      eventType: "signature_completed",
+      metadata: {
+        signatureRequestId: request.id,
+        finalDocumentId: signedDocument.id,
+      },
+    });
+
+    if (contract.status === "quoted") {
+      try {
+        await transitionContract(
+          contract.id,
+          "reserved",
+          undefined,
+          "Signature workflow completed.",
+        );
+      } catch (error) {
+        await pushAudit({
+          entityId: request.contractNumber,
+          eventType: "signature_completed_reservation_blocked",
+          metadata: {
+            signatureRequestId: request.id,
+            contractId: contract.id,
+            reason: error instanceof Error ? error.message : "Unknown reservation failure",
+          },
+        });
+      }
+    }
+
+    return buildSignatureView(request.id);
+  } catch (error) {
+    await db.insert(schema.signatureEvents).values({
       id: createId("sig_event"),
       signatureRequestId: request.id,
-      type: "completed",
+      type: "finalization_failed",
       actor: "Metro Trailer",
       metadata: {
-        finalDocumentId: signedDocument.id,
-        certificateDocumentId: certificateDocument.id,
-        finalDocumentHash: signedDocument.hash,
-        certificateDocumentHash: certificateDocument.hash,
-        evidenceHash: requestRecord.evidenceHash,
+        error: error instanceof Error ? error.message : String(error),
       },
       createdAt: now(),
     });
-  });
 
-  await pushAudit({
-    entityId: request.contractNumber,
-    eventType: "signature_completed",
-    metadata: {
-      signatureRequestId: request.id,
-      finalDocumentId: signedDocument.id,
-    },
-  });
+    await pushAudit({
+      entityId: request.contractNumber,
+      eventType: "signature_finalization_failed",
+      metadata: {
+        signatureRequestId: request.id,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
 
-  if (contract.status === "quoted") {
-    try {
-      await transitionContract(
-        contract.id,
-        "reserved",
-        undefined,
-        "Signature workflow completed.",
-      );
-    } catch (error) {
-      await pushAudit({
-        entityId: request.contractNumber,
-        eventType: "signature_completed_reservation_blocked",
-        metadata: {
-          signatureRequestId: request.id,
-          contractId: contract.id,
-          reason: error instanceof Error ? error.message : "Unknown reservation failure",
-        },
-      });
-    }
+    throw error;
   }
-
-  return buildSignatureView(request.id);
 }
 
 function baseContractId(contract: ContractRecord) {
@@ -1312,6 +1379,16 @@ export async function getDocumentDownload(documentId: string) {
     .limit(1);
 
   const document = mapDocumentRow(requireRecord(row, `Document ${documentId} not found.`));
+  await db
+    .update(schema.documents)
+    .set({
+      metadata: {
+        ...(document.metadata ?? {}),
+        downloadAuditCount: (document.downloadAuditCount ?? 0) + 1,
+      },
+      updatedAt: now(),
+    })
+    .where(eq(schema.documents.id, document.id));
   const body = await fetchStoredBuffer({
     storageBucket: document.storageBucket,
     storageKey: document.storageKey,

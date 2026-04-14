@@ -43,6 +43,13 @@
       "when": 1776128763819,
       "tag": "0005_unknown_gunslinger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776197345052,
+      "tag": "0006_clumsy_sentry",
+      "breakpoints": true
     }
   ]
 }

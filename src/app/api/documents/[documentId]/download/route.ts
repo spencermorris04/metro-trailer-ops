@@ -1,6 +1,10 @@
 import { errorResponse } from "@/lib/server/api";
 import { requireScopedResourceAccess, resolveDocumentScope } from "@/lib/server/authorization";
 import { getDocumentDownload } from "@/lib/server/esign";
+import {
+  getPortalContextFromHeaders,
+  logPortalDocumentDownload,
+} from "@/lib/server/portal-service";
 
 type DownloadDocumentRouteParams = {
   params: Promise<{
@@ -25,6 +29,10 @@ export async function GET(
       portalPermission: "documents.view",
       staffPermissions: ["documents.view", "contracts.view", "accounting.view"],
     });
+    const portalContext = await getPortalContextFromHeaders(request.headers);
+    if (portalContext && portalContext.customerId === scope.customerId) {
+      await logPortalDocumentDownload(portalContext.customerId, documentId);
+    }
     const { document, body } = await getDocumentDownload(documentId);
 
     return new Response(new Uint8Array(body), {

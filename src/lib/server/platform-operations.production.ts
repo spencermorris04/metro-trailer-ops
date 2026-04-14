@@ -26,7 +26,14 @@ import {
   extractRecord360InspectionResult,
 } from "@/lib/server/integration-clients";
 import { sendTransactionalEmail } from "@/lib/server/notification-service";
-import { enqueueOutboxJob, getWebhookReceipt } from "@/lib/server/outbox";
+import {
+  enqueueOutboxJob,
+  getOutboxJob,
+  getWebhookReceipt,
+  replayOutboxJob,
+  replayWebhookReceipt,
+} from "@/lib/server/outbox";
+import { buildRecord360ReceiptReviewQueue } from "@/lib/server/production-readiness";
 import {
   createId,
   now,
@@ -604,6 +611,11 @@ function mapInspectionRow(row: {
   inspectionType: typeof schema.inspections.$inferSelect.inspectionType;
   status: typeof schema.inspections.$inferSelect.status;
   externalInspectionId?: string | null;
+  externalUnitId?: string | null;
+  record360SyncState?: string | null;
+  lastSyncAttemptAt?: Date | null;
+  lastSyncError?: string | null;
+  webhookMatchedBy?: string | null;
   createdAt: Date;
   completedAt: Date | null;
   resultSummary: string | null;
@@ -625,10 +637,15 @@ function mapInspectionRow(row: {
     photos: row.photos ?? [],
     damageScore: row.damageScore,
     externalInspectionId: row.externalInspectionId,
+    externalUnitId: row.externalUnitId,
     linkedWorkOrderId: row.workOrderId,
     media: Array.isArray(row.record360Payload?.media)
       ? (row.record360Payload.media as Array<Record<string, unknown>>)
       : [],
+    record360SyncState: row.record360SyncState ?? "pending_sync",
+    lastSyncAttemptAt: toIso(row.lastSyncAttemptAt),
+    lastSyncError: row.lastSyncError ?? null,
+    webhookMatchedBy: row.webhookMatchedBy ?? null,
   } satisfies InspectionRecord;
 }
 
@@ -683,6 +700,10 @@ function mapCollectionCaseRow(row: {
   latestActivityAt?: Date | null;
   promisedPaymentAmount?: number | null;
   nextAction?: string;
+  slaBucket?: string | null;
+  disputeState?: string | null;
+  latestPortalActivityAt?: Date | null;
+  latestTelematicsAt?: Date | null;
 }) {
   const overdueDays = row.dueDate ? differenceInDays(now(), row.dueDate) : 0;
 
@@ -702,6 +723,12 @@ function mapCollectionCaseRow(row: {
     lastActivityType: row.latestActivityType ?? null,
     latestActivityAt: toIso(row.latestActivityAt),
     promisedPaymentAmount: row.promisedPaymentAmount ?? null,
+    slaBucket: row.slaBucket ?? null,
+    disputeState: row.disputeState ?? null,
+    promisedPaymentRisk:
+      row.promisedPaymentDate && row.promisedPaymentDate < now() ? "missed" : "stable",
+    latestPortalActivityAt: toIso(row.latestPortalActivityAt),
+    latestTelematicsAt: toIso(row.latestTelematicsAt),
   } satisfies CollectionCaseRecord;
 }
 
@@ -714,6 +741,9 @@ function mapTelematicsRow(row: {
   speedMph: string | number | null;
   heading: number | null;
   capturedAt: Date;
+  source?: string | null;
+  trustLevel?: string | null;
+  lastProviderSyncAt?: Date | null;
   gpsDeviceId?: string | null;
   externalAssetId?: string | null;
   rawPayload?: Record<string, unknown> | null;
@@ -730,6 +760,9 @@ function mapTelematicsRow(row: {
     capturedAt: toIso(row.capturedAt) ?? new Date(0).toISOString(),
     stale: freshness.stale,
     freshnessMinutes: freshness.freshnessMinutes,
+    source: row.source ?? summarizeTelematicsSource(row.rawPayload),
+    trustLevel: row.trustLevel ?? "authoritative",
+    lastProviderSyncAt: toIso(row.lastProviderSyncAt),
     gpsDeviceId: row.gpsDeviceId ?? null,
     externalAssetId: row.externalAssetId ?? null,
     rawSource: summarizeTelematicsSource(row.rawPayload),
@@ -746,6 +779,10 @@ function mapIntegrationJobRow(row: {
   startedAt: Date;
   finishedAt: Date | null;
   lastError: string | null;
+  providerEventId?: string | null;
+  providerAttemptCount?: number | null;
+  lastProcessedAt?: Date | null;
+  replayEligible?: boolean;
 }) {
   return {
     id: row.id,
@@ -757,6 +794,10 @@ function mapIntegrationJobRow(row: {
     startedAt: toIso(row.startedAt) ?? new Date(0).toISOString(),
     finishedAt: toIso(row.finishedAt),
     lastError: row.lastError,
+    providerEventId: row.providerEventId ?? null,
+    providerAttemptCount: row.providerAttemptCount ?? 0,
+    lastProcessedAt: toIso(row.lastProcessedAt),
+    replayEligible: row.replayEligible ?? ["failed", "dead_letter"].includes(row.status),
   } satisfies IntegrationJobRecord;
 }
 
@@ -1239,6 +1280,11 @@ export async function listInspections(filters?: {
       inspectionType: schema.inspections.inspectionType,
       status: schema.inspections.status,
       externalInspectionId: schema.inspections.externalInspectionId,
+      externalUnitId: schema.inspections.externalUnitId,
+      record360SyncState: schema.inspections.record360SyncState,
+      lastSyncAttemptAt: schema.inspections.lastSyncAttemptAt,
+      lastSyncError: schema.inspections.lastSyncError,
+      webhookMatchedBy: schema.inspections.webhookMatchedBy,
       createdAt: schema.inspections.createdAt,
       completedAt: schema.inspections.completedAt,
       resultSummary: schema.inspections.resultSummary,
@@ -1338,6 +1384,13 @@ export async function completeInspection(
       .update(schema.inspections)
       .set({
         status: payload.status,
+        record360SyncState:
+          inspection.externalInspectionId || payload.externalInspectionId
+            ? "result_applied"
+            : inspection.record360SyncState,
+        lastSyncAttemptAt:
+          inspection.externalInspectionId || payload.externalInspectionId ? completedAt : inspection.lastSyncAttemptAt,
+        lastSyncError: null,
         resultSummary: payload.damageSummary,
         externalInspectionId:
           payload.externalInspectionId ?? inspection.externalInspectionId ?? null,
@@ -1694,6 +1747,11 @@ async function resolveInspectionForRecord360Event(event: ReturnType<typeof extra
         inspectionType: schema.inspections.inspectionType,
         status: schema.inspections.status,
         externalInspectionId: schema.inspections.externalInspectionId,
+        externalUnitId: schema.inspections.externalUnitId,
+        record360SyncState: schema.inspections.record360SyncState,
+        lastSyncAttemptAt: schema.inspections.lastSyncAttemptAt,
+        lastSyncError: schema.inspections.lastSyncError,
+        webhookMatchedBy: schema.inspections.webhookMatchedBy,
         resultSummary: schema.inspections.resultSummary,
         damageScore: schema.inspections.damageScore,
         photos: schema.inspections.photos,
@@ -1726,6 +1784,11 @@ async function resolveInspectionForRecord360Event(event: ReturnType<typeof extra
         inspectionType: schema.inspections.inspectionType,
         status: schema.inspections.status,
         externalInspectionId: schema.inspections.externalInspectionId,
+        externalUnitId: schema.inspections.externalUnitId,
+        record360SyncState: schema.inspections.record360SyncState,
+        lastSyncAttemptAt: schema.inspections.lastSyncAttemptAt,
+        lastSyncError: schema.inspections.lastSyncError,
+        webhookMatchedBy: schema.inspections.webhookMatchedBy,
         resultSummary: schema.inspections.resultSummary,
         damageScore: schema.inspections.damageScore,
         photos: schema.inspections.photos,
@@ -1782,6 +1845,21 @@ export async function syncAssetUnitToRecord360(assetId: string) {
     })
     .where(eq(schema.assets.id, asset.id));
 
+  await db
+    .update(schema.inspections)
+    .set({
+      externalUnitId: result.data.unitId,
+      lastSyncAttemptAt: now(),
+      lastSyncError: null,
+      updatedAt: now(),
+    })
+    .where(
+      and(
+        eq(schema.inspections.assetId, asset.id),
+        inArray(schema.inspections.status, ["requested", "in_progress", "needs_review"]),
+      ),
+    );
+
   await upsertExternalEntityMapping({
     provider: "record360",
     entityType: "asset",
@@ -1826,6 +1904,10 @@ export async function syncInspectionRequestToRecord360(inspectionId: string) {
     .update(schema.inspections)
     .set({
       externalInspectionId: result.data.requestId,
+      externalUnitId: result.data.externalUnitId,
+      record360SyncState: "requested_live",
+      lastSyncAttemptAt: now(),
+      lastSyncError: null,
       record360Payload: result.data.payload,
       status: inspection.status === "requested" ? "in_progress" : inspection.status,
       updatedAt: now(),
@@ -1901,7 +1983,24 @@ export async function processRecord360WebhookReceipt(receiptId: string) {
   }
 
   return completeInspection(
-    inspection.id,
+    await db
+      .update(schema.inspections)
+      .set({
+        externalInspectionId: parsed.externalInspectionId ?? inspection.externalInspectionId,
+        externalUnitId: parsed.externalUnitId ?? inspection.externalUnitId ?? null,
+        record360SyncState: "result_received",
+        lastSyncAttemptAt: now(),
+        lastSyncError: null,
+        webhookMatchedBy: parsed.externalInspectionId
+          ? "external_inspection_id"
+          : parsed.assetNumber && parsed.contractNumber
+            ? "asset_and_contract"
+            : "asset_number",
+        updatedAt: now(),
+      })
+      .where(eq(schema.inspections.id, inspection.id))
+      .returning()
+      .then(() => inspection.id),
     {
       status: parsed.status as "passed" | "failed" | "needs_review",
       damageSummary: parsed.damageSummary,
@@ -1927,6 +2026,10 @@ export async function listCollectionCases(filters?: {
       ownerName: schema.users.name,
       balanceAmount: schema.invoices.balanceAmount,
       dueDate: schema.invoices.dueDate,
+      nextStep: schema.collectionCases.nextStep,
+      slaBucket: schema.collectionCases.slaBucket,
+      disputeState: schema.collectionCases.disputeState,
+      latestPortalActivityAt: schema.collectionCases.latestPortalActivityAt,
       lastContactAt: schema.collectionCases.lastContactAt,
       promisedPaymentDate: schema.collectionCases.promisedPaymentDate,
       notes: schema.collectionCases.notes,
@@ -1954,7 +2057,11 @@ export async function listCollectionCases(filters?: {
       latestActivityType: insight?.latestActivityType ?? null,
       latestActivityAt: insight?.latestActivityAt ?? null,
       promisedPaymentAmount: insight?.promisedPaymentAmount ?? null,
-      nextAction: cadence.nextAction,
+      nextAction: row.nextStep ?? cadence.nextAction,
+      slaBucket: row.slaBucket ?? (cadence.overdueDays > 60 ? "critical" : cadence.overdueDays > 30 ? "watch" : "standard"),
+      disputeState: row.disputeState ?? "none",
+      latestPortalActivityAt: row.latestPortalActivityAt,
+      latestTelematicsAt: null,
     });
   });
   const persistedInvoiceNumbers = new Set(persisted.map((row) => row.invoiceNumber));
@@ -1998,6 +2105,10 @@ export async function listCollectionCases(filters?: {
       lastActivityType: null,
       latestActivityAt: null,
       promisedPaymentAmount: null,
+      slaBucket: differenceInDays(now(), row.dueDate) > 30 ? "watch" : "standard",
+      disputeState: "none",
+      latestPortalActivityAt: null,
+      latestTelematicsAt: null,
     }) satisfies CollectionCaseRecord);
 
   return [...persisted, ...derived].filter((caseRecord) => {
@@ -2057,6 +2168,9 @@ export async function sendCollectionsReminder(
       .update(schema.collectionCases)
       .set({
         status: "reminder_sent",
+        nextStep: "Follow up on reminder response.",
+        reminderScheduledAt: followUpAt,
+        slaBucket: "watch",
         lastContactAt: now(),
         notes: nextNotes,
         updatedAt: now(),
@@ -2149,6 +2263,11 @@ export async function updateCollectionCase(
       .update(schema.collectionCases)
       .set({
         status: nextStatus,
+        nextStep: payload.note ?? caseRow.nextStep ?? `Collection case updated to ${nextStatus}.`,
+        slaBucket:
+          nextStatus === "escalated" ? "critical" : nextStatus === "disputed" ? "watch" : caseRow.slaBucket,
+        disputeState: nextStatus === "disputed" ? "open" : payload.status ? "none" : caseRow.disputeState,
+        reminderScheduledAt: promiseDate,
         promisedPaymentDate: promiseDate,
         lastContactAt: now(),
         notes: nextNotes,
@@ -2222,6 +2341,9 @@ export async function listTelematics(assetNumber?: string) {
       longitude: schema.telematicsPings.longitude,
       speedMph: schema.telematicsPings.speedMph,
       heading: schema.telematicsPings.heading,
+      source: schema.telematicsPings.source,
+      trustLevel: schema.telematicsPings.trustLevel,
+      lastProviderSyncAt: schema.telematicsPings.lastProviderSyncAt,
       capturedAt: schema.telematicsPings.capturedAt,
       gpsDeviceId: schema.assets.gpsDeviceId,
       externalAssetId: schema.assets.skybitzAssetId,
@@ -2302,35 +2424,12 @@ export async function syncTelematics(assetNumber: string, userId?: string) {
   const mapping = await ensureSkybitzMapping(asset);
   const lastKnown = await getLatestTelematicsPing(asset.id);
 
-  await enqueueSkybitzPullJob({
+  const outboxJobId = await enqueueSkybitzPullJob({
     assetId: asset.id,
     assetNumber: asset.assetNumber,
     gpsDeviceId: asset.gpsDeviceId ?? null,
     externalAssetId: mapping?.externalId ?? asset.skybitzAssetId ?? null,
     reason: "manual_sync",
-  });
-
-  const latitude = lastKnown ? numericToNumber(lastKnown.latitude) : 39.7392;
-  const longitude = lastKnown ? numericToNumber(lastKnown.longitude) : -104.9903;
-  const pingId = createId("tp");
-
-  await db.insert(schema.telematicsPings).values({
-    id: pingId,
-    assetId: asset.id,
-    provider: "skybitz",
-    latitude: latitude.toFixed(6),
-    longitude: longitude.toFixed(6),
-    heading: lastKnown?.heading ?? 0,
-    speedMph: lastKnown?.speedMph ? String(lastKnown.speedMph) : "0.00",
-    capturedAt: now(),
-    rawPayload: {
-      source: "manual_sync_projection",
-      assetNumber: asset.assetNumber,
-      gpsDeviceId: asset.gpsDeviceId ?? null,
-      externalAssetId: mapping?.externalId ?? asset.skybitzAssetId ?? null,
-      previousPingId: lastKnown?.id ?? null,
-    },
-    createdAt: now(),
   });
 
   await pushAudit({
@@ -2339,16 +2438,38 @@ export async function syncTelematics(assetNumber: string, userId?: string) {
     eventType: "telematics_synced",
     userId,
     metadata: {
-      pingId,
+      outboxJobId,
       provider: "skybitz",
-      projection: true,
+      projection: false,
     },
   });
 
-  return requireRecord(
-    (await listTelematics(asset.assetNumber)).find((entry) => entry.id === pingId),
-    `Telematics ping ${pingId} not found after sync.`,
-  );
+  return {
+    syncQueued: true,
+    outboxJobId,
+    lastKnownPing:
+      lastKnown === null
+        ? null
+        : mapTelematicsRow({
+            id: lastKnown.id,
+            assetNumber: asset.assetNumber,
+            provider: lastKnown.provider,
+            latitude: lastKnown.latitude,
+            longitude: lastKnown.longitude,
+            speedMph: lastKnown.speedMph,
+            heading: lastKnown.heading,
+            source: lastKnown.source,
+            trustLevel: lastKnown.trustLevel,
+            lastProviderSyncAt: lastKnown.lastProviderSyncAt,
+            capturedAt: lastKnown.capturedAt,
+            gpsDeviceId: asset.gpsDeviceId,
+            externalAssetId: asset.skybitzAssetId,
+            rawPayload:
+              lastKnown.rawPayload && typeof lastKnown.rawPayload === "object"
+                ? (lastKnown.rawPayload as Record<string, unknown>)
+                : null,
+          }),
+  };
 }
 
 export async function evaluateCollectionsWorklist(collectionCaseId?: string, userId?: string) {
@@ -2381,6 +2502,10 @@ export async function evaluateCollectionsWorklist(collectionCaseId?: string, use
       .update(schema.collectionCases)
       .set({
         status: cadence.suggestedStatus,
+        nextStep: cadence.nextAction,
+        slaBucket:
+          cadence.shouldEscalate ? "critical" : cadence.overdueDays > 30 ? "watch" : "standard",
+        reminderScheduledAt: cadence.shouldRemind ? now() : null,
         updatedAt: now(),
       })
       .where(eq(schema.collectionCases.id, caseRow.id));
@@ -2440,6 +2565,9 @@ export async function listIntegrationJobs(filters?: {
       entityId: schema.integrationSyncJobs.entityId,
       direction: schema.integrationSyncJobs.direction,
       status: schema.integrationSyncJobs.status,
+      providerEventId: schema.integrationSyncJobs.providerEventId,
+      providerAttemptCount: schema.integrationSyncJobs.providerAttemptCount,
+      lastProcessedAt: schema.integrationSyncJobs.lastProcessedAt,
       startedAt: schema.integrationSyncJobs.startedAt,
       finishedAt: schema.integrationSyncJobs.finishedAt,
       lastError: schema.integrationSyncJobs.lastError,
@@ -2460,6 +2588,9 @@ export async function listIntegrationJobs(filters?: {
       availableAt: schema.outboxJobs.availableAt,
       finishedAt: schema.outboxJobs.finishedAt,
       lastError: schema.outboxJobs.lastError,
+      attempts: schema.outboxJobs.attempts,
+      deadLetteredAt: schema.outboxJobs.deadLetteredAt,
+      payload: schema.outboxJobs.payload,
     })
     .from(schema.outboxJobs)
     .where(or(eq(schema.outboxJobs.status, "pending"), eq(schema.outboxJobs.status, "failed")))
@@ -2485,6 +2616,14 @@ export async function listIntegrationJobs(filters?: {
           startedAt: row.startedAt ?? row.availableAt,
           finishedAt: row.finishedAt,
           lastError: row.lastError,
+          providerEventId:
+            row.payload && typeof row.payload === "object" &&
+            typeof (row.payload as Record<string, unknown>).externalEventId === "string"
+              ? ((row.payload as Record<string, unknown>).externalEventId as string)
+              : null,
+          providerAttemptCount: row.attempts,
+          lastProcessedAt: row.finishedAt,
+          replayEligible: row.status === "failed" || row.status === "dead_letter",
         }),
       ),
   ]
@@ -2500,6 +2639,41 @@ export async function listIntegrationJobs(filters?: {
     }
     return true;
   });
+}
+
+export async function replayIntegrationJob(jobId: string) {
+  const job = await getOutboxJob(jobId);
+  if (!job || !job.provider) {
+    throw new ApiError(404, "Integration job not found.");
+  }
+
+  const replayed = await replayOutboxJob(jobId);
+  if (!replayed) {
+    throw new ApiError(404, "Integration job not found.");
+  }
+
+  return {
+    id: replayed.id,
+    status: replayed.status,
+    provider: replayed.provider,
+  };
+}
+
+export async function replayIntegrationReceipt(receiptId: string) {
+  const receipt = await replayWebhookReceipt(receiptId);
+  if (!receipt) {
+    throw new ApiError(404, "Webhook receipt not found.");
+  }
+
+  return {
+    id: receipt.id,
+    provider: receipt.provider,
+    status: receipt.status,
+  };
+}
+
+export async function listRecord360ReceiptReviewQueue() {
+  return buildRecord360ReceiptReviewQueue();
 }
 
 export async function getCollectionsRecoverySnapshot(assetNumber: string) {

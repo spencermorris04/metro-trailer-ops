@@ -9,6 +9,10 @@ import type {
 } from "@/lib/platform-types";
 import { ApiError } from "@/lib/server/api";
 import {
+  isInvoicePayable,
+  recordInvoiceHistoryEvent,
+} from "@/lib/server/invoice-ops";
+import {
   attachStripePaymentMethod,
   createStripePaymentIntent,
   createStripePortalSession,
@@ -527,6 +531,9 @@ export async function createPaymentIntentForInvoice(
     typeof input === "string" ? undefined : input.paymentMethodId;
 
   const invoice = await getInvoiceByIdOrNumber(invoiceId);
+  if (!isInvoicePayable(invoice)) {
+    throw new ApiError(409, "This invoice is not payable through the customer payment flow.");
+  }
   const customer = requireRecord(
     await db.query.customers.findFirst({
       where: (table, { eq: localEq }) => localEq(table.id, invoice.customerId),
@@ -583,6 +590,15 @@ export async function createPaymentIntentForInvoice(
         createdAt: now(),
       });
     }
+  });
+
+  await recordInvoiceHistoryEvent({
+    invoiceId: invoice.id,
+    eventType: "payment_intent_created",
+    metadata: {
+      externalId: result.data.paymentIntentId,
+      paymentMethodId: localPaymentMethod?.id ?? null,
+    },
   });
 
   return result;
@@ -734,6 +750,17 @@ export async function refundPaymentTransaction(
       amount: amountToRefund,
     },
   });
+  if (transaction.invoiceId) {
+    await recordInvoiceHistoryEvent({
+      invoiceId: transaction.invoiceId,
+      actorUserId: userId ?? null,
+      eventType: "refund_applied",
+      metadata: {
+        sourceTransactionId: transaction.id,
+        amount: amountToRefund,
+      },
+    });
+  }
 
   return refund;
 }
@@ -842,6 +869,16 @@ async function applySuccessfulPaymentIntent(event: Stripe.Event) {
       source: "stripe_webhook",
     },
   });
+  await recordInvoiceHistoryEvent({
+    invoiceId: invoice.id,
+    eventType: "payment_reconciled",
+    metadata: {
+      source: "stripe_webhook",
+      externalId: paymentIntent.id,
+      amount: amountReceived,
+      webhookEventId: event.id,
+    },
+  });
 }
 
 async function applyFailedPaymentIntent(event: Stripe.Event) {
@@ -861,6 +898,17 @@ async function applyFailedPaymentIntent(event: Stripe.Event) {
       errorMessage: paymentIntent.last_payment_error?.message ?? "Stripe payment failed.",
     })
     .where(eq(schema.paymentTransactions.id, existing.id));
+  if (existing.invoiceId) {
+    await recordInvoiceHistoryEvent({
+      invoiceId: existing.invoiceId,
+      eventType: "payment_failed",
+      metadata: {
+        externalId: paymentIntent.id,
+        webhookEventId: event.id,
+        message: paymentIntent.last_payment_error?.message ?? "Stripe payment failed.",
+      },
+    });
+  }
 }
 
 async function applyChargeRefunded(event: Stripe.Event) {
@@ -913,6 +961,16 @@ async function applyChargeRefunded(event: Stripe.Event) {
         createdAt: now(),
         settledAt: now(),
       });
+    });
+    await recordInvoiceHistoryEvent({
+      invoiceId: invoice.id,
+      eventType: "refund_applied",
+      metadata: {
+        source: "stripe_webhook",
+        externalId: refund.id,
+        amount,
+        webhookEventId: event.id,
+      },
     });
   }
 }

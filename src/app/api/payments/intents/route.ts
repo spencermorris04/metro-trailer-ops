@@ -1,6 +1,10 @@
 import { paymentIntentSchema } from "@/lib/domain/validators";
 import { errorResponse, ok, readJson } from "@/lib/server/api";
 import { requireScopedResourceAccess, resolveInvoiceScope } from "@/lib/server/authorization";
+import {
+  getPortalContextFromHeaders,
+  logPortalPaymentAttempt,
+} from "@/lib/server/portal-service";
 import { createPaymentIntentForInvoice } from "@/lib/server/platform";
 
 export async function POST(request: Request) {
@@ -22,6 +26,12 @@ export async function POST(request: Request) {
       parsed.invoiceId,
       parsed.paymentMethodId,
     );
+    const portalContext = await getPortalContextFromHeaders(request.headers);
+    if (portalContext && scope.customerId === portalContext.customerId) {
+      await logPortalPaymentAttempt(portalContext.customerId, parsed.invoiceId, "attempted", {
+        paymentMethodId: parsed.paymentMethodId ?? null,
+      });
+    }
 
     return ok({
       message: "Payment intent created.",

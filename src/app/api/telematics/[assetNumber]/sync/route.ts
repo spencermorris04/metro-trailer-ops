@@ -26,13 +26,13 @@ export async function POST(
     const actor = await requireApiPermission(request, "integrations.manage", {
       branchId: scope.branchId ?? undefined,
     });
-    const ping = await syncTelematics(assetNumber, actor.userId ?? undefined);
+    const sync = await syncTelematics(assetNumber, actor.userId ?? undefined);
     const recovery = await getCollectionsRecoverySnapshot(assetNumber);
 
     return ok({
       message: "Telematics synced.",
       data: {
-        ping,
+        sync,
         recovery: recovery.data,
       },
     });

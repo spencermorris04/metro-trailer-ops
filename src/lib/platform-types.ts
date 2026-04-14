@@ -39,8 +39,13 @@ export interface InspectionRecord {
   photos: string[];
   damageScore?: number | null;
   externalInspectionId?: string | null;
+  externalUnitId?: string | null;
   linkedWorkOrderId?: string | null;
   media?: Array<Record<string, unknown>>;
+  record360SyncState?: string;
+  lastSyncAttemptAt?: string | null;
+  lastSyncError?: string | null;
+  webhookMatchedBy?: string | null;
 }
 
 export interface PaymentMethodRecord {
@@ -85,6 +90,11 @@ export interface CollectionCaseRecord {
   lastActivityType?: string | null;
   latestActivityAt?: string | null;
   promisedPaymentAmount?: number | null;
+  slaBucket?: string | null;
+  disputeState?: string | null;
+  promisedPaymentRisk?: string | null;
+  latestPortalActivityAt?: string | null;
+  latestTelematicsAt?: string | null;
 }
 
 export interface TelematicsRecord {
@@ -101,6 +111,9 @@ export interface TelematicsRecord {
   gpsDeviceId?: string | null;
   externalAssetId?: string | null;
   rawSource?: string | null;
+  source?: string | null;
+  trustLevel?: string | null;
+  lastProviderSyncAt?: string | null;
 }
 
 export interface DocumentRecord {
@@ -129,6 +142,9 @@ export interface DocumentRecord {
   retentionMode: "governance" | "compliance";
   metadata: Record<string, string | number | boolean | null>;
   workOrderId?: string | null;
+  retentionState?: string | null;
+  objectLockVerified?: boolean;
+  downloadAuditCount?: number;
 }
 
 export interface WorkOrderLaborEntryRecord {
@@ -289,6 +305,11 @@ export interface SignatureRequestRecord {
   evidenceHash: string | null;
   requestedAt: string;
   completedAt: string | null;
+  completionState?: string;
+  evidenceState?: string;
+  finalizationAttempts?: number;
+  lastFinalizationError?: string | null;
+  retentionVerified?: boolean;
 }
 
 export interface IntegrationJobRecord {
@@ -301,6 +322,10 @@ export interface IntegrationJobRecord {
   startedAt: string;
   finishedAt: string | null;
   lastError: string | null;
+  providerEventId?: string | null;
+  providerAttemptCount?: number;
+  lastProcessedAt?: string | null;
+  replayEligible?: boolean;
 }
 
 export interface AuditEventRecord {

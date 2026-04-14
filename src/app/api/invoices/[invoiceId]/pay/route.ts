@@ -1,6 +1,6 @@
 import { invoicePaymentSchema } from "@/lib/domain/validators";
 import { errorResponse, ok, readJson } from "@/lib/server/api";
-import { requireScopedResourceAccess, resolveInvoiceScope } from "@/lib/server/authorization";
+import { requireApiPermission, resolveInvoiceScope } from "@/lib/server/authorization";
 import { recordInvoicePayment } from "@/lib/server/platform";
 
 type PayInvoiceRouteParams = {
@@ -21,10 +21,9 @@ export async function POST(
       return ok({ error: "Invoice not found" }, { status: 404 });
     }
 
-    const actor = await requireScopedResourceAccess(request, scope, {
-      allowPortal: true,
-      portalPermission: "portal.pay",
-      staffPermissions: ["accounting.manage"],
+    const actor = await requireApiPermission(request, "accounting.manage", {
+      branchId: scope.branchId ?? undefined,
+      customerId: scope.customerId ?? undefined,
     });
     const payload = await readJson(request);
     const parsed = invoicePaymentSchema.parse(payload);

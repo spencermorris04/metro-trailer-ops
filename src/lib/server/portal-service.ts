@@ -1,5 +1,8 @@
-import { db } from "@/lib/db";
+import { eq } from "drizzle-orm";
+
+import { db, schema } from "@/lib/db";
 import { ApiError } from "@/lib/server/api";
+import { appendAuditEvent } from "@/lib/server/audit";
 import {
   getActorFromHeaders,
   type ResolvedActor,
@@ -18,6 +21,30 @@ function requireRecord<T>(value: T | undefined | null, message: string) {
   }
 
   return value;
+}
+
+async function logPortalActivity(
+  customerId: string,
+  eventType: string,
+  metadata: Record<string, unknown> = {},
+) {
+  await appendAuditEvent({
+    entityType: "customer",
+    entityId: customerId,
+    eventType,
+    metadata: {
+      portalActivity: true,
+      ...metadata,
+    },
+  });
+
+  await db
+    .update(schema.collectionCases)
+    .set({
+      latestPortalActivityAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.collectionCases.customerId, customerId));
 }
 
 type PortalAccountContext = {
@@ -166,8 +193,25 @@ export async function getPortalOverviewForCustomer(
       contractNumbers.has(inspection.contractNumber),
     ),
   };
+  const filtered = filterPortalOverviewByLocations(merged, locationIds);
 
-  return filterPortalOverviewByLocations(merged, locationIds);
+  return {
+    ...filtered,
+    downloadableDocuments: filtered.documents.map((document) => ({
+      id: document.id,
+      filename: document.filename,
+      documentType: document.documentType,
+      status: document.status,
+    })),
+    payableInvoices: filtered.invoices.filter(
+      (invoice) =>
+        !["draft", "voided", "paid"].includes(invoice.status) &&
+        invoice.balanceAmount > 0,
+    ),
+    latestPaymentFailures: filtered.paymentHistory
+      .filter((payment) => payment.status === "failed")
+      .slice(0, 5),
+  };
 }
 
 export async function getPortalContextFromHeaders(inputHeaders: Headers) {
@@ -214,5 +258,65 @@ export async function getPortalCustomerNumberFromHeaders(inputHeaders: Headers) 
 
 export async function getCurrentPortalOverview(inputHeaders: Headers) {
   const context = await requirePortalContextFromHeaders(inputHeaders);
-  return getPortalOverviewForCustomer(context.customerId, context.locationIds);
+  await logPortalActivity(context.customerId, "portal_viewed", {
+    locationIds: context.locationIds,
+  });
+  const overview = await getPortalOverviewForCustomer(context.customerId, context.locationIds);
+
+  return {
+    ...overview,
+    portalPermissions: ["portal.view", "portal.pay", "documents.view"],
+  };
+}
+
+export async function logPortalDocumentDownload(customerId: string, documentId: string) {
+  await logPortalActivity(customerId, "portal_document_downloaded", {
+    documentId,
+  });
+}
+
+export async function logPortalSignatureViewed(customerId: string, signatureRequestId: string) {
+  await logPortalActivity(customerId, "portal_signature_viewed", {
+    signatureRequestId,
+  });
+}
+
+export async function logPortalPaymentAttempt(
+  customerId: string,
+  invoiceId: string,
+  outcome: "attempted" | "succeeded" | "failed",
+  metadata: Record<string, unknown> = {},
+) {
+  await logPortalActivity(customerId, `portal_payment_${outcome}`, {
+    invoiceId,
+    ...metadata,
+  });
+}
+
+export async function listPortalAccessLogs(customerIdentifier: string) {
+  const customer = requireRecord(
+    (await listCustomers()).find(
+      (entry) => entry.id === customerIdentifier || entry.customerNumber === customerIdentifier,
+    ),
+    `Customer ${customerIdentifier} not found.`,
+  );
+
+  const rows = await db.query.auditEvents.findMany({
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.entityType, "customer"),
+        operators.eq(table.entityId, customer.id),
+      ),
+    orderBy: (table, operators) => [operators.desc(table.createdAt)],
+    limit: 100,
+  });
+
+  return rows
+    .filter((row) => Boolean((row.metadata as Record<string, unknown> | null)?.portalActivity))
+    .map((row) => ({
+      id: row.id,
+      eventType: row.eventType,
+      metadata: row.metadata ?? {},
+      createdAt: row.createdAt.toISOString(),
+    }));
 }
