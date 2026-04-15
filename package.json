@@ -17,6 +17,8 @@
     "local:setup": "tsx scripts/local-setup.ts",
     "legacy:import": "tsx scripts/legacy-import.ts",
     "legacy:reconcile": "tsx scripts/legacy-reconcile.ts",
+    "fixed-assets:import": "python scripts/fixed-assets-import.py",
+    "customers:legacy-import": "python scripts/customer-legacy-import.py",
     "perf:harness": "tsx scripts/perf-harness.ts",
     "security:audit": "tsx scripts/security-audit.ts",
     "e2e:smoke": "tsx scripts/e2e-smoke.ts",
