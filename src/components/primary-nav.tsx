@@ -4,62 +4,62 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Icon } from "@/components/icons";
-import { useSidebar } from "@/components/sidebar";
 import { navigationGroups } from "@/lib/navigation";
 
-export function PrimaryNav() {
+export function PrimaryNav({ collapsed }: { collapsed: boolean }) {
   const pathname = usePathname();
-  const { collapsed } = useSidebar();
 
   return (
-    <nav className="flex flex-col gap-5">
+    <nav className="flex flex-col gap-6">
       {navigationGroups.map((group) => (
-        <div key={group.label}>
-          {!collapsed && (
-            <p className="mb-1.5 px-3 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
+        <section key={group.label}>
+          {!collapsed ? (
+            <p className="mb-2 px-3 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
               {group.label}
             </p>
-          )}
-          <div className="flex flex-col gap-0.5">
+          ) : null}
+
+          <div className="flex flex-col gap-1.5">
             {group.items.map((item) => {
-              const isActive =
+              const active =
                 item.href === "/"
                   ? pathname === "/"
-                  : pathname.startsWith(item.href);
+                  : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
               return (
                 <Link
                   key={item.href}
                   href={item.href}
                   title={collapsed ? item.label : undefined}
-                  className={`group relative flex items-center gap-3 rounded-lg transition-all duration-150 ${
-                    collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2"
+                  className={`group relative flex items-center gap-3 rounded-xl border px-3 py-2.5 transition ${
+                    collapsed ? "justify-center px-2.5" : ""
                   } ${
-                    isActive
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    active
+                      ? "border-[var(--line-strong)] bg-[var(--surface-soft)] text-slate-950"
+                      : "border-transparent text-slate-500 hover:border-[var(--line)] hover:bg-[var(--surface-soft)] hover:text-slate-900"
                   }`}
                 >
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-blue-600" />
-                  )}
                   <Icon
                     name={item.icon}
                     size={18}
-                    className={`shrink-0 ${
-                      isActive ? "text-blue-600" : "text-slate-400 group-hover:text-slate-600"
-                    }`}
+                    className={active ? "text-slate-950" : "text-slate-400"}
                   />
-                  {!collapsed && (
-                    <span className="text-[0.8125rem] font-medium leading-tight">
-                      {item.label}
-                    </span>
-                  )}
+
+                  {!collapsed ? (
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{item.label}</p>
+                      <p className="truncate text-[0.68rem] text-slate-500">
+                        {item.description}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {active ? <span className="workspace-nav-active" /> : null}
                 </Link>
               );
             })}
           </div>
-        </div>
+        </section>
       ))}
     </nav>
   );

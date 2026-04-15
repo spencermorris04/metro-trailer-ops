@@ -512,6 +512,24 @@ export const users = pgTable(
   }),
 );
 
+export const workspaceLayouts = pgTable(
+  "workspace_layouts",
+  {
+    id: text().primaryKey(),
+    ownerKey: text().notNull(),
+    pageKey: text().notNull(),
+    layout: jsonb().$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    ownerPageUnique: uniqueIndex("workspace_layouts_owner_page_unique").on(
+      table.ownerKey,
+      table.pageKey,
+    ),
+  }),
+);
+
 export const assets = pgTable(
   "assets",
   {

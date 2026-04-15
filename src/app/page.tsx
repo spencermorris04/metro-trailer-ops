@@ -1,394 +1,333 @@
+import { headers } from "next/headers";
 import Link from "next/link";
 
-import { MetricCard } from "@/components/metric-card";
-import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
-import { assetTransitionMap, contractTransitionMap } from "@/lib/domain/lifecycle";
-import { titleize } from "@/lib/format";
-import { getDashboardSummary } from "@/lib/server/platform";
+import { WorkspacePanels } from "@/components/workspace-panels";
+import { formatCompactNumber, formatCurrency, formatDate, titleize } from "@/lib/format";
 import {
-  domainCards,
-  integrationBlueprint,
-  portfolioMetrics,
-  roadmapPhases,
-} from "@/lib/platform-data";
+  getDashboardSummary,
+  getFinancialOverview,
+  getInventoryOverview,
+  listCustomers,
+} from "@/lib/server/platform";
+import { getWorkspaceLayout } from "@/lib/server/workspace-layouts";
 
 export const dynamic = "force-dynamic";
 
+const defaultLayout = {
+  left: 312,
+  right: 352,
+};
+
 export default async function HomePage() {
-  const summary = await getDashboardSummary();
+  const requestHeaders = new Headers(await headers());
+  const [workspace, summary, inventory, financial, customers] = await Promise.all([
+    getWorkspaceLayout(requestHeaders, "home", defaultLayout),
+    getDashboardSummary(),
+    getInventoryOverview(),
+    getFinancialOverview(),
+    listCustomers(),
+  ]);
+
+  const topCustomers = [...customers]
+    .sort((left, right) => {
+      if (right.locations.length !== left.locations.length) {
+        return right.locations.length - left.locations.length;
+      }
+      if (right.branchCoverage.length !== left.branchCoverage.length) {
+        return right.branchCoverage.length - left.branchCoverage.length;
+      }
+      return left.name.localeCompare(right.name);
+    })
+    .slice(0, 8);
+
+  const portalPending = customers.filter((customer) => !customer.portalEnabled).length;
+  const multiBranchCustomers = customers.filter(
+    (customer) => customer.branchCoverage.length > 1,
+  ).length;
+
+  const summaryCards = [
+    { label: "Assets", value: summary.assets, note: "Tracked fleet units" },
+    { label: "Customers", value: summary.customers, note: "Billing accounts" },
+    { label: "Active contracts", value: summary.activeContracts, note: "Revenue-bearing rentals" },
+    { label: "Overdue invoices", value: summary.overdueInvoices, note: "Collections pressure" },
+  ];
 
   return (
-    <>
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_360px]">
-        <div className="panel overflow-hidden">
-          <div className="border-b border-[var(--line)] px-5 py-4 sm:px-6">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="eyebrow">Overview</p>
-                <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
-                  Fleet and rental operations dashboard
-                </h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                  Core operating posture across inventory, active rentals, overdue
-                  exposure, field execution, and retained documents.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <StatusPill
-                  label={
-                    summary.runtimeMode === "production"
-                      ? "Production runtime"
-                      : "Demo runtime"
-                  }
-                  tone={summary.runtimeMode === "production" ? "emerald" : "amber"}
-                />
-                <Link
-                  href="/dispatch"
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-700"
-                >
-                  Dispatch board
-                </Link>
-                <Link
-                  href="/portal"
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-700"
-                >
-                  Customer portal
-                </Link>
-              </div>
+    <WorkspacePanels
+      pageKey="home"
+      initialLayout={workspace.layout as typeof defaultLayout}
+      left={
+        <div className="space-y-4">
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">System load</p>
+              <h1 className="mt-1 text-xl font-semibold text-slate-950">
+                Operations desktop
+              </h1>
             </div>
-          </div>
-
-          <div className="grid gap-px bg-[var(--line)] lg:grid-cols-4">
-            <div className="bg-white px-5 py-4 sm:px-6">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Assets
-              </p>
-              <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                {summary.assets}
-              </p>
-            </div>
-            <div className="bg-white px-5 py-4 sm:px-6">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Contracts
-              </p>
-              <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                {summary.contracts}
-              </p>
-            </div>
-            <div className="bg-white px-5 py-4 sm:px-6">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Active
-              </p>
-              <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                {summary.activeContracts}
-              </p>
-            </div>
-            <div className="bg-white px-5 py-4 sm:px-6">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Overdue invoices
-              </p>
-              <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                {summary.overdueInvoices}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid gap-px border-t border-[var(--line)] bg-[var(--line)] lg:grid-cols-[1.15fr_0.85fr]">
-            <div className="bg-white px-5 py-5 sm:px-6">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Work queues
-              </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <div className="soft-panel p-4">
-                  <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                    Maintenance queue
+            <div className="grid gap-px bg-[var(--line)]">
+              {summaryCards.map((card) => (
+                <div key={card.label} className="bg-white px-5 py-4">
+                  <p className="workspace-metric-label">{card.label}</p>
+                  <p className="mt-2 text-3xl font-semibold text-slate-950">
+                    {formatCompactNumber(card.value)}
                   </p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-950">
-                    {summary.openWorkOrders}
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">
-                    Open work orders awaiting assignment, execution, or release.
-                  </p>
+                  <p className="mt-1 text-xs text-slate-500">{card.note}</p>
                 </div>
-                <div className="soft-panel p-4">
-                  <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                    Inspection queue
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-950">
-                    {summary.pendingInspections}
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">
-                    Requested or unresolved inspections that can block
-                    availability.
-                  </p>
-                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">Execution queues</p>
+            </div>
+            <div className="divide-y divide-[var(--line)]">
+              <div className="workspace-list-row">
+                <span>Dispatch open</span>
+                <strong>{formatCompactNumber(inventory.activityCounts.dispatchOpen)}</strong>
+              </div>
+              <div className="workspace-list-row">
+                <span>Inspection open</span>
+                <strong>{formatCompactNumber(inventory.activityCounts.inspectionOpen)}</strong>
+              </div>
+              <div className="workspace-list-row">
+                <span>Maintenance open</span>
+                <strong>{formatCompactNumber(inventory.activityCounts.maintenanceOpen)}</strong>
+              </div>
+              <div className="workspace-list-row">
+                <span>Telematics blind</span>
+                <strong>{formatCompactNumber(inventory.activityCounts.telematicsBlind)}</strong>
               </div>
             </div>
+          </section>
 
-            <div className="bg-white px-5 py-5 sm:px-6">
-              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Boundaries
-              </p>
-              <ul className="mt-4 space-y-2 text-sm text-slate-700">
-                <li className="flex items-center justify-between rounded-md border border-[var(--line)] px-3 py-2">
-                  <span>Payments</span>
-                  <span className="mono text-xs text-slate-500">Stripe</span>
-                </li>
-                <li className="flex items-center justify-between rounded-md border border-[var(--line)] px-3 py-2">
-                  <span>Accounting</span>
-                  <span className="mono text-xs text-slate-500">QuickBooks</span>
-                </li>
-                <li className="flex items-center justify-between rounded-md border border-[var(--line)] px-3 py-2">
-                  <span>Inspections</span>
-                  <span className="mono text-xs text-slate-500">Record360</span>
-                </li>
-                <li className="flex items-center justify-between rounded-md border border-[var(--line)] px-3 py-2">
-                  <span>Telematics</span>
-                  <span className="mono text-xs text-slate-500">SkyBitz</span>
-                </li>
-              </ul>
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">Branch pressure</p>
             </div>
-          </div>
-        </div>
-
-        <div className="grid gap-4">
-          <div className="panel p-5">
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-              Immediate actions
-            </p>
-            <div className="mt-4 grid gap-2">
-              <Link
-                href="/contracts"
-                className="rounded-md border border-[var(--line)] bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800"
-              >
-                Review reservation and activation flow
-              </Link>
-              <Link
-                href="/financial"
-                className="rounded-md border border-[var(--line)] bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800"
-              >
-                Review invoice and payment queues
-              </Link>
-              <Link
-                href="/documents"
-                className="rounded-md border border-[var(--line)] bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800"
-              >
-                Review retained documents and signatures
-              </Link>
-            </div>
-          </div>
-
-          <div className="panel p-5">
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-              Operating posture
-            </p>
-            <div className="mt-4 space-y-3 text-sm text-slate-700">
-              <div className="flex items-start justify-between gap-4 border-b border-[var(--line)] pb-3">
-                <span>Runtime mode</span>
-                <span className="mono text-xs text-slate-500">
-                  {summary.runtimeMode}
-                </span>
-              </div>
-              <div className="flex items-start justify-between gap-4 border-b border-[var(--line)] pb-3">
-                <span>Document retention</span>
-                <span className="mono text-xs text-slate-500">
-                  S3 / object lock ready
-                </span>
-              </div>
-              <div className="flex items-start justify-between gap-4">
-                <span>System of record</span>
-                <span className="mono text-xs text-slate-500">Metro Trailer</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {portfolioMetrics.map((metric) => (
-          <MetricCard key={metric.label} {...metric} />
-        ))}
-      </section>
-
-      <SectionCard
-        eyebrow="Core model"
-        title="Operational domains"
-        description="Primary entities and records that drive the platform."
-      >
-        <div className="grid gap-4 lg:grid-cols-3">
-          {domainCards.map((card) => (
-            <div key={card.name} className="soft-panel p-4">
-              <h3 className="text-base font-semibold text-slate-900">{card.name}</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {card.summary}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {card.fields.map((field) => (
-                  <span
-                    key={field}
-                    className="mono rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] text-slate-600"
-                  >
-                    {field}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Lifecycle"
-        title="State transition matrix"
-        description="Explicit contract and asset transitions keep billing, dispatch, and maintenance aligned."
-      >
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="soft-panel p-4">
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-              Contract flow
-            </p>
-            <div className="mt-4 space-y-3">
-              {Object.entries(contractTransitionMap).map(([status, nextStates]) => (
-                <div
-                  key={status}
-                  className="grid gap-2 rounded-md border border-[var(--line)] bg-white p-3"
-                >
-                  <StatusPill label={titleize(status)} />
-                  <p className="text-xs text-slate-500">Allowed next states</p>
-                  <div className="flex flex-wrap gap-2">
-                    {nextStates.length ? (
-                      nextStates.map((nextState) => (
-                        <span
-                          key={nextState}
-                          className="mono rounded-md bg-slate-100 px-2 py-1 text-[0.68rem] text-slate-700"
-                        >
-                          {nextState}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="mono rounded-md bg-slate-100 px-2 py-1 text-[0.68rem] text-slate-700">
-                        terminal
-                      </span>
-                    )}
+            <div className="divide-y divide-[var(--line)]">
+              {inventory.branchPressure.slice(0, 6).map((branch) => (
+                <div key={branch.branch} className="px-5 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{branch.branch}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Ready {branch.available} / Blocked {branch.blocked}
+                      </p>
+                    </div>
+                    <StatusPill label={`${Math.round(branch.readyRate * 100)}% ready`} />
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
+        </div>
+      }
+      center={
+        <div className="space-y-4">
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="workspace-section-label">Live workboard</p>
+                  <h2 className="mt-1 text-2xl font-semibold text-slate-950">
+                    Fleet, finance, and customer pressure
+                  </h2>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link href="/assets" className="btn-secondary">
+                    Inventory
+                  </Link>
+                  <Link href="/dispatch" className="btn-secondary">
+                    Dispatch
+                  </Link>
+                  <Link href="/financial" className="btn-secondary">
+                    Financials
+                  </Link>
+                </div>
+              </div>
+            </div>
+            <div className="grid gap-px bg-[var(--line)] lg:grid-cols-4">
+              <div className="bg-white px-5 py-4">
+                <p className="workspace-metric-label">Rent ready</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatCompactNumber(inventory.summary.rentReadyCount)}
+                </p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <p className="workspace-metric-label">Branch blocked</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatCompactNumber(inventory.summary.branchBlockedCount)}
+                </p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <p className="workspace-metric-label">Outstanding balance</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatCurrency(financial.metrics.outstandingBalance)}
+                </p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <p className="workspace-metric-label">Uninvoiced rent</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatCurrency(financial.metrics.uninvoicedEventAmount)}
+                </p>
+              </div>
+            </div>
+          </section>
 
-          <div className="soft-panel p-4">
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-              Asset flow
-            </p>
-            <div className="mt-4 space-y-3">
-              {Object.entries(assetTransitionMap).map(([status, nextStates]) => (
-                <div
-                  key={status}
-                  className="grid gap-2 rounded-md border border-[var(--line)] bg-white p-3"
-                >
-                  <StatusPill label={titleize(status)} />
-                  <p className="text-xs text-slate-500">Allowed next states</p>
-                  <div className="flex flex-wrap gap-2">
-                    {nextStates.length ? (
-                      nextStates.map((nextState) => (
-                        <span
-                          key={nextState}
-                          className="mono rounded-md bg-slate-100 px-2 py-1 text-[0.68rem] text-slate-700"
-                        >
-                          {nextState}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="mono rounded-md bg-slate-100 px-2 py-1 text-[0.68rem] text-slate-700">
-                        terminal
-                      </span>
-                    )}
+          <section className="grid gap-4 xl:grid-cols-2">
+            {inventory.actionLanes.slice(0, 4).map((lane) => (
+              <div key={lane.key} className="panel overflow-hidden">
+                <div className="border-b border-[var(--line)] px-5 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="workspace-section-label">{lane.title}</p>
+                      <p className="mt-1 text-2xl font-semibold text-slate-950">
+                        {formatCompactNumber(lane.count)}
+                      </p>
+                    </div>
+                    <Link href={lane.href} className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--brand)]">
+                      Open
+                    </Link>
                   </div>
+                </div>
+                <div className="divide-y divide-[var(--line)]">
+                  {lane.assets.length === 0 ? (
+                    <div className="px-5 py-6 text-sm text-slate-500">Queue clear.</div>
+                  ) : (
+                    lane.assets.slice(0, 6).map((asset) => (
+                      <div key={asset.id} className="px-5 py-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="mono text-sm font-semibold text-slate-950">
+                              {asset.assetNumber}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {asset.branch} / {titleize(asset.type)}
+                            </p>
+                          </div>
+                          <StatusPill label={titleize(asset.status)} />
+                        </div>
+                        <p className="mt-2 text-sm text-slate-600">
+                          {asset.blockingReason ?? asset.custodyLocation ?? "Operator review"}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
+          </section>
+
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">Finance queues</p>
+            </div>
+            <div className="grid gap-px bg-[var(--line)] xl:grid-cols-2">
+              <div className="bg-white">
+                <div className="border-b border-[var(--line)] px-5 py-3">
+                  <p className="text-sm font-medium text-slate-900">Awaiting signature</p>
+                </div>
+                <div className="divide-y divide-[var(--line)]">
+                  {financial.queues.awaitingSignature.slice(0, 5).map((contract) => (
+                    <div key={contract.id} className="px-5 py-3">
+                      <p className="mono text-xs text-slate-500">{contract.contractNumber}</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{contract.customerName}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-white">
+                <div className="border-b border-[var(--line)] px-5 py-3">
+                  <p className="text-sm font-medium text-slate-900">Open receivables</p>
+                </div>
+                <div className="divide-y divide-[var(--line)]">
+                  {financial.queues.openReceivables.slice(0, 5).map((contract) => (
+                    <div key={contract.id} className="px-5 py-3">
+                      <p className="mono text-xs text-slate-500">{contract.contractNumber}</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{contract.customerName}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Balance {formatCurrency(contract.outstandingBalance ?? 0)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      }
+      right={
+        <div className="space-y-4">
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">Customer footprint</p>
+            </div>
+            <div className="grid gap-px bg-[var(--line)]">
+              <div className="bg-white px-5 py-4">
+                <p className="workspace-metric-label">Multi-branch accounts</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatCompactNumber(multiBranchCustomers)}
+                </p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <p className="workspace-metric-label">Portal pending</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatCompactNumber(portalPending)}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">Largest customer footprints</p>
+            </div>
+            <div className="divide-y divide-[var(--line)]">
+              {topCustomers.map((customer) => (
+                <div key={customer.id} className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="mono text-xs text-slate-500">{customer.customerNumber}</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{customer.name}</p>
+                    </div>
+                    <StatusPill label={titleize(customer.customerType)} />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    {customer.locations.length} sites / {customer.branchCoverage.length} branches
+                  </p>
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      </SectionCard>
+          </section>
 
-      <SectionCard
-        eyebrow="Roadmap"
-        title="Delivery map"
-        description="Major implementation tracks arranged for operational rollout."
-      >
-        <div className="grid gap-4 lg:grid-cols-2">
-          {roadmapPhases.map((phase) => (
-            <div key={phase.phase} className="soft-panel p-4">
-              <div className="flex items-center justify-between gap-4">
-                <p className="eyebrow">Phase {phase.phase}</p>
-                <StatusPill
-                  label={phase.phase === "0" ? "Foundation ready" : "Queued"}
-                  tone={phase.phase === "0" ? "amber" : "slate"}
-                />
-              </div>
-              <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                {phase.title}
-              </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {phase.summary}
-              </p>
-              <ul className="mt-3 space-y-2 text-sm text-slate-700">
-                {phase.deliverables.map((deliverable) => (
-                  <li
-                    key={deliverable}
-                    className="rounded-md border border-[var(--line)] bg-white px-3 py-2"
-                  >
-                    {deliverable}
-                  </li>
-                ))}
-              </ul>
+          <section className="panel overflow-hidden">
+            <div className="border-b border-[var(--line)] px-5 py-4">
+              <p className="workspace-section-label">Recent invoice pressure</p>
             </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Integration seams"
-        title="Provider boundaries"
-        description="Operational truth stays internal while vendor touchpoints remain narrow and explicit."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {integrationBlueprint.map((integration) => (
-            <div key={integration.provider} className="soft-panel p-4">
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-semibold text-slate-900">
-                  {integration.provider}
-                </h3>
-                <Link
-                  href="/integrations"
-                  className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--brand)]"
-                >
-                  View details
-                </Link>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {integration.purpose}
-              </p>
-              <div className="mt-3 space-y-3 text-sm text-slate-700">
-                <p>
-                  <span className="font-semibold">Sync mode:</span>{" "}
-                  {integration.syncMode}
-                </p>
-                <p>
-                  <span className="font-semibold">System of record:</span>{" "}
-                  {integration.systemOfRecord}
-                </p>
-                <p>
-                  <span className="font-semibold">Boundary:</span>{" "}
-                  {integration.boundary}
-                </p>
-              </div>
+            <div className="divide-y divide-[var(--line)]">
+              {financial.invoices.slice(0, 6).map((invoice) => (
+                <div key={invoice.id} className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="mono text-xs text-slate-500">{invoice.invoiceNumber}</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900">
+                        {invoice.customerName}
+                      </p>
+                    </div>
+                    <StatusPill label={titleize(invoice.status)} />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Due {formatDate(invoice.dueDate)} / Balance {formatCurrency(invoice.balanceAmount)}
+                  </p>
+                </div>
+              ))}
             </div>
-          ))}
+          </section>
         </div>
-      </SectionCard>
-    </>
+      }
+    />
   );
 }
