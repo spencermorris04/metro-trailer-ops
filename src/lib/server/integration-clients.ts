@@ -1404,3 +1404,5 @@ export async function buildPaymentMethodRecord(options: {
     } satisfies PaymentMethodRecord,
   } satisfies IntegrationResult<PaymentMethodRecord>;
 }
+
+export * from "@/lib/server/business-central-client";

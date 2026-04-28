@@ -37,6 +37,7 @@ const auditEntityTypes = [
   "contract",
   "contract_line",
   "financial_event",
+  "commercial_event",
   "invoice",
   "user",
   "dispatch_task",
@@ -108,6 +109,7 @@ const collectionStatuses = [
 const integrationProviders = [
   "stripe",
   "quickbooks",
+  "business_central",
   "record360",
   "skybitz",
   "internal_esign",
@@ -212,6 +214,44 @@ const paymentTransactionStatuses = [
   "failed",
   "cancelled",
   "refunded",
+] as const;
+
+const bcImportRunStatuses = [
+  "pending",
+  "running",
+  "succeeded",
+  "partial_failure",
+  "failed",
+] as const;
+
+const subledgerDocumentStatuses = [
+  "draft",
+  "open",
+  "posted",
+  "partially_applied",
+  "closed",
+  "voided",
+] as const;
+
+const journalLineSides = ["debit", "credit"] as const;
+
+const journalEntryStatuses = ["draft", "posted", "reversed"] as const;
+
+const postingRuleScopes = [
+  "contract",
+  "invoice",
+  "receipt",
+  "bill",
+  "payment",
+  "fixed_asset",
+  "manual",
+] as const;
+
+const cashTransactionTypes = [
+  "receipt",
+  "disbursement",
+  "transfer",
+  "adjustment",
 ] as const;
 
 const workOrderEventTypes = [
@@ -427,6 +467,30 @@ export const accountingSyncIssueStatusEnum = pgEnum(
   "accounting_sync_issue_status",
   accountingSyncIssueStatuses,
 );
+export const bcImportRunStatusEnum = pgEnum(
+  "bc_import_run_status",
+  bcImportRunStatuses,
+);
+export const subledgerDocumentStatusEnum = pgEnum(
+  "subledger_document_status",
+  subledgerDocumentStatuses,
+);
+export const journalLineSideEnum = pgEnum(
+  "journal_line_side",
+  journalLineSides,
+);
+export const journalEntryStatusEnum = pgEnum(
+  "journal_entry_status",
+  journalEntryStatuses,
+);
+export const postingRuleScopeEnum = pgEnum(
+  "posting_rule_scope",
+  postingRuleScopes,
+);
+export const cashTransactionTypeEnum = pgEnum(
+  "cash_transaction_type",
+  cashTransactionTypes,
+);
 
 export const branches = pgTable(
   "branches",
@@ -460,6 +524,7 @@ export const customers = pgTable(
     taxExempt: boolean().default(false).notNull(),
     creditLimit: numeric({ precision: 12, scale: 2 }),
     notes: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
@@ -484,6 +549,7 @@ export const customerLocations = pgTable(
     contactPerson: jsonb().$type<Record<string, unknown>>(),
     deliveryNotes: text(),
     isPrimary: boolean().default(false).notNull(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
@@ -548,6 +614,23 @@ export const assets = pgTable(
     ageInMonths: integer(),
     features: jsonb().$type<string[]>(),
     serialNumber: text(),
+    manufacturer: text(),
+    modelYear: integer(),
+    registrationNumber: text(),
+    faClassCode: text(),
+    faSubclassCode: text(),
+    bcLocationCode: text(),
+    bcDimension1Code: text(),
+    bcProductNo: text(),
+    bcServiceItemNo: text(),
+    isBlocked: boolean().default(false).notNull(),
+    isInactive: boolean().default(false).notNull(),
+    isDisposed: boolean().default(false).notNull(),
+    isOnRent: boolean().default(false).notNull(),
+    isInService: boolean().default(true).notNull(),
+    underMaintenance: boolean().default(false).notNull(),
+    bookValue: numeric({ precision: 12, scale: 2 }),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
     manufacturedAt: timestamp({ withTimezone: true }),
     purchaseDate: timestamp({ withTimezone: true }),
     yardZone: text(),
@@ -643,6 +726,11 @@ export const contracts = pgTable(
     closedAt: timestamp({ withTimezone: true }),
     cancelledAt: timestamp({ withTimezone: true }),
     notes: text(),
+    sourceProvider: integrationProviderEnum(),
+    sourceDocumentType: text(),
+    sourceDocumentNo: text(),
+    sourceStatus: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
@@ -679,6 +767,10 @@ export const contractLines = pgTable(
     adjustments: jsonb().$type<Record<string, unknown>>(),
     deliveryFee: numeric({ precision: 12, scale: 2 }),
     pickupFee: numeric({ precision: 12, scale: 2 }),
+    sourceLineNo: integer(),
+    sourceItemNo: text(),
+    sourceUomCode: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
@@ -712,6 +804,11 @@ export const invoices = pgTable(
     quickBooksLastError: text(),
     quickBooksInvoiceId: text(),
     stripePaymentIntentId: text(),
+    sourceProvider: integrationProviderEnum(),
+    sourceDocumentType: text(),
+    sourceDocumentNo: text(),
+    sourceStatus: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
@@ -748,8 +845,8 @@ export const invoiceHistory = pgTable(
   }),
 );
 
-export const financialEvents = pgTable(
-  "financial_events",
+export const commercialEvents = pgTable(
+  "commercial_events",
   {
     id: text().primaryKey(),
     contractId: text().references(() => contracts.id),
@@ -763,21 +860,25 @@ export const financialEvents = pgTable(
     eventDate: timestamp({ withTimezone: true }).notNull(),
     status: financialEventStatusEnum().default("pending").notNull(),
     externalReference: text(),
+    sourceDocumentType: text(),
+    sourceDocumentNo: text(),
     metadata: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
-    contractStatusIdx: index("financial_events_contract_status_idx").on(
+    contractStatusIdx: index("commercial_events_contract_status_idx").on(
       table.contractId,
       table.status,
     ),
-    assetIdx: index("financial_events_asset_id_idx").on(table.assetId),
-    workOrderIdx: index("financial_events_work_order_id_idx").on(table.workOrderId),
-    invoiceIdx: index("financial_events_invoice_id_idx").on(table.invoiceId),
-    eventDateIdx: index("financial_events_event_date_idx").on(table.eventDate),
+    assetIdx: index("commercial_events_asset_id_idx").on(table.assetId),
+    workOrderIdx: index("commercial_events_work_order_id_idx").on(table.workOrderId),
+    invoiceIdx: index("commercial_events_invoice_id_idx").on(table.invoiceId),
+    eventDateIdx: index("commercial_events_event_date_idx").on(table.eventDate),
   }),
 );
+
+export const financialEvents = commercialEvents;
 
 export const invoiceLines = pgTable(
   "invoice_lines",
@@ -791,11 +892,785 @@ export const invoiceLines = pgTable(
     unitPrice: numeric({ precision: 12, scale: 2 }).notNull(),
     totalAmount: numeric({ precision: 12, scale: 2 }).notNull(),
     sourceFinancialEventId: text(),
+    sourceLineNo: integer(),
+    sourceItemNo: text(),
+    sourceUomCode: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
     invoiceIdx: index("invoice_lines_invoice_id_idx").on(table.invoiceId),
+  }),
+);
+
+export const arInvoices = invoices;
+export const arInvoiceLines = invoiceLines;
+
+export const bcImportRuns = pgTable(
+  "bc_import_runs",
+  {
+    id: text().primaryKey(),
+    provider: integrationProviderEnum().default("business_central").notNull(),
+    entityType: text().notNull(),
+    status: bcImportRunStatusEnum().default("pending").notNull(),
+    sourceWindowStart: timestamp({ withTimezone: true }),
+    sourceWindowEnd: timestamp({ withTimezone: true }),
+    startedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp({ withTimezone: true }),
+    recordsSeen: integer().default(0).notNull(),
+    recordsInserted: integer().default(0).notNull(),
+    recordsUpdated: integer().default(0).notNull(),
+    recordsSkipped: integer().default(0).notNull(),
+    recordsFailed: integer().default(0).notNull(),
+    errorSummary: text(),
+    jobVersion: text(),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("bc_import_runs_status_idx").on(table.entityType, table.status),
+    startedAtIdx: index("bc_import_runs_started_at_idx").on(table.startedAt),
+  }),
+);
+
+export const bcImportErrors = pgTable(
+  "bc_import_errors",
+  {
+    id: text().primaryKey(),
+    runId: text()
+      .notNull()
+      .references(() => bcImportRuns.id, { onDelete: "cascade" }),
+    entityType: text().notNull(),
+    externalId: text(),
+    internalId: text(),
+    pageCursor: text(),
+    errorCode: text(),
+    message: text().notNull(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => ({
+    runIdx: index("bc_import_errors_run_id_idx").on(table.runId),
+    entityIdx: index("bc_import_errors_entity_idx").on(
+      table.entityType,
+      table.externalId,
+    ),
+  }),
+);
+
+export const bcImportCheckpoints = pgTable(
+  "bc_import_checkpoints",
+  {
+    id: text().primaryKey(),
+    entityType: text().notNull(),
+    runId: text().references(() => bcImportRuns.id, { onDelete: "set null" }),
+    cursor: text(),
+    pageNumber: integer().default(0).notNull(),
+    lastExternalId: text(),
+    windowStart: timestamp({ withTimezone: true }),
+    windowEnd: timestamp({ withTimezone: true }),
+    checkpointData: jsonb().$type<Record<string, unknown>>(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entityUnique: uniqueIndex("bc_import_checkpoints_entity_unique").on(
+      table.entityType,
+    ),
+  }),
+);
+
+export const bcSourceDocuments = pgTable(
+  "bc_source_documents",
+  {
+    id: text().primaryKey(),
+    runId: text().references(() => bcImportRuns.id, { onDelete: "set null" }),
+    externalDocumentId: text().notNull(),
+    documentType: text().notNull(),
+    documentNo: text().notNull(),
+    customerExternalId: text(),
+    status: text(),
+    documentDate: timestamp({ withTimezone: true }),
+    dueDate: timestamp({ withTimezone: true }),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    externalUnique: uniqueIndex("bc_source_documents_external_unique").on(
+      table.documentType,
+      table.externalDocumentId,
+    ),
+    documentNoIdx: index("bc_source_documents_document_no_idx").on(
+      table.documentType,
+      table.documentNo,
+    ),
+  }),
+);
+
+export const bcSourceDocumentLines = pgTable(
+  "bc_source_document_lines",
+  {
+    id: text().primaryKey(),
+    sourceDocumentId: text()
+      .notNull()
+      .references(() => bcSourceDocuments.id, { onDelete: "cascade" }),
+    externalLineId: text(),
+    lineNo: integer(),
+    itemNo: text(),
+    uomCode: text(),
+    quantity: numeric({ precision: 12, scale: 2 }),
+    unitPrice: numeric({ precision: 12, scale: 2 }),
+    lineAmount: numeric({ precision: 12, scale: 2 }),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    documentIdx: index("bc_source_document_lines_document_id_idx").on(
+      table.sourceDocumentId,
+    ),
+  }),
+);
+
+export const bcGlAccounts = pgTable(
+  "bc_gl_accounts",
+  {
+    id: text().primaryKey(),
+    accountNo: text().notNull(),
+    name: text().notNull(),
+    accountType: text(),
+    incomeBalance: text(),
+    category: text(),
+    subcategory: text(),
+    blocked: boolean().default(false).notNull(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    accountNoUnique: uniqueIndex("bc_gl_accounts_account_no_unique").on(
+      table.accountNo,
+    ),
+  }),
+);
+
+export const bcVendors = pgTable(
+  "bc_vendors",
+  {
+    id: text().primaryKey(),
+    vendorNo: text().notNull(),
+    name: text().notNull(),
+    status: text(),
+    locationCode: text(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    vendorNoUnique: uniqueIndex("bc_vendors_vendor_no_unique").on(table.vendorNo),
+  }),
+);
+
+export const bcDimensionSets = pgTable("bc_dimension_sets", {
+  id: text().primaryKey(),
+  externalDimensionSetId: text().notNull(),
+  payload: jsonb().$type<Record<string, unknown>>(),
+  importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+});
+
+export const bcDimensionSetEntries = pgTable(
+  "bc_dimension_set_entries",
+  {
+    id: text().primaryKey(),
+    dimensionSetId: text()
+      .notNull()
+      .references(() => bcDimensionSets.id, { onDelete: "cascade" }),
+    dimensionCode: text().notNull(),
+    dimensionValueCode: text().notNull(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    dimensionUnique: uniqueIndex("bc_dimension_set_entries_dimension_unique").on(
+      table.dimensionSetId,
+      table.dimensionCode,
+      table.dimensionValueCode,
+    ),
+  }),
+);
+
+export const bcGlEntries = pgTable(
+  "bc_gl_entries",
+  {
+    id: text().primaryKey(),
+    externalEntryNo: text().notNull(),
+    postingDate: timestamp({ withTimezone: true }),
+    documentNo: text(),
+    description: text(),
+    accountNo: text(),
+    amount: numeric({ precision: 14, scale: 2 }),
+    debitAmount: numeric({ precision: 14, scale: 2 }),
+    creditAmount: numeric({ precision: 14, scale: 2 }),
+    dimensionSetId: text().references(() => bcDimensionSets.id),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex("bc_gl_entries_external_entry_no_unique").on(
+      table.externalEntryNo,
+    ),
+    postingDateIdx: index("bc_gl_entries_posting_date_idx").on(table.postingDate),
+  }),
+);
+
+export const bcBankLedgerEntries = pgTable(
+  "bc_bank_ledger_entries",
+  {
+    id: text().primaryKey(),
+    externalEntryNo: text().notNull(),
+    bankAccountNo: text(),
+    postingDate: timestamp({ withTimezone: true }),
+    documentNo: text(),
+    amount: numeric({ precision: 14, scale: 2 }),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex("bc_bank_ledger_entries_external_entry_no_unique").on(
+      table.externalEntryNo,
+    ),
+  }),
+);
+
+export const bcVendorLedgerEntries = pgTable(
+  "bc_vendor_ledger_entries",
+  {
+    id: text().primaryKey(),
+    externalEntryNo: text().notNull(),
+    vendorNo: text(),
+    postingDate: timestamp({ withTimezone: true }),
+    documentNo: text(),
+    amount: numeric({ precision: 14, scale: 2 }),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex(
+      "bc_vendor_ledger_entries_external_entry_no_unique",
+    ).on(table.externalEntryNo),
+  }),
+);
+
+export const bcCustomerLedgerEntries = pgTable(
+  "bc_customer_ledger_entries",
+  {
+    id: text().primaryKey(),
+    externalEntryNo: text().notNull(),
+    customerNo: text(),
+    postingDate: timestamp({ withTimezone: true }),
+    documentNo: text(),
+    amount: numeric({ precision: 14, scale: 2 }),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex(
+      "bc_customer_ledger_entries_external_entry_no_unique",
+    ).on(table.externalEntryNo),
+  }),
+);
+
+export const bcFaLedgerEntries = pgTable(
+  "bc_fa_ledger_entries",
+  {
+    id: text().primaryKey(),
+    externalEntryNo: text().notNull(),
+    assetNo: text(),
+    postingDate: timestamp({ withTimezone: true }),
+    documentNo: text(),
+    amount: numeric({ precision: 14, scale: 2 }),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex("bc_fa_ledger_entries_external_entry_no_unique").on(
+      table.externalEntryNo,
+    ),
+  }),
+);
+
+export const glAccounts = pgTable(
+  "gl_accounts",
+  {
+    id: text().primaryKey(),
+    accountNumber: text().notNull(),
+    name: text().notNull(),
+    category: text().notNull(),
+    subcategory: text(),
+    normalSide: journalLineSideEnum().notNull(),
+    active: boolean().default(true).notNull(),
+    sourceProvider: integrationProviderEnum(),
+    sourceExternalId: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    accountNumberUnique: uniqueIndex("gl_accounts_account_number_unique").on(
+      table.accountNumber,
+    ),
+  }),
+);
+
+export const glPostingPeriods = pgTable(
+  "gl_posting_periods",
+  {
+    id: text().primaryKey(),
+    name: text().notNull(),
+    startsAt: timestamp({ withTimezone: true }).notNull(),
+    endsAt: timestamp({ withTimezone: true }).notNull(),
+    status: text().default("open").notNull(),
+    closedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    periodRangeUnique: uniqueIndex("gl_posting_periods_range_unique").on(
+      table.startsAt,
+      table.endsAt,
+    ),
+  }),
+);
+
+export const glDimensions = pgTable(
+  "gl_dimensions",
+  {
+    id: text().primaryKey(),
+    code: text().notNull(),
+    name: text().notNull(),
+    active: boolean().default(true).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    codeUnique: uniqueIndex("gl_dimensions_code_unique").on(table.code),
+  }),
+);
+
+export const glDimensionValues = pgTable(
+  "gl_dimension_values",
+  {
+    id: text().primaryKey(),
+    dimensionId: text()
+      .notNull()
+      .references(() => glDimensions.id, { onDelete: "cascade" }),
+    code: text().notNull(),
+    name: text().notNull(),
+    active: boolean().default(true).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    dimensionCodeUnique: uniqueIndex("gl_dimension_values_dimension_code_unique").on(
+      table.dimensionId,
+      table.code,
+    ),
+  }),
+);
+
+export const glJournalBatches = pgTable(
+  "gl_journal_batches",
+  {
+    id: text().primaryKey(),
+    name: text().notNull(),
+    description: text(),
+    status: journalEntryStatusEnum().default("draft").notNull(),
+    source: text(),
+    createdByUserId: text().references(() => users.id),
+    postedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    nameUnique: uniqueIndex("gl_journal_batches_name_unique").on(table.name),
+  }),
+);
+
+export const glJournalEntries = pgTable(
+  "gl_journal_entries",
+  {
+    id: text().primaryKey(),
+    batchId: text().references(() => glJournalBatches.id),
+    postingPeriodId: text().references(() => glPostingPeriods.id),
+    entryNumber: text().notNull(),
+    entryDate: timestamp({ withTimezone: true }).notNull(),
+    sourceType: text(),
+    sourceId: text(),
+    description: text().notNull(),
+    status: journalEntryStatusEnum().default("draft").notNull(),
+    currencyCode: text().default("USD").notNull(),
+    postedAt: timestamp({ withTimezone: true }),
+    reversalOfEntryId: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNumberUnique: uniqueIndex("gl_journal_entries_entry_number_unique").on(
+      table.entryNumber,
+    ),
+    statusIdx: index("gl_journal_entries_status_idx").on(table.status, table.entryDate),
+  }),
+);
+
+export const glJournalLines = pgTable(
+  "gl_journal_lines",
+  {
+    id: text().primaryKey(),
+    journalEntryId: text()
+      .notNull()
+      .references(() => glJournalEntries.id, { onDelete: "cascade" }),
+    lineNo: integer().notNull(),
+    accountId: text()
+      .notNull()
+      .references(() => glAccounts.id),
+    side: journalLineSideEnum().notNull(),
+    amount: numeric({ precision: 14, scale: 2 }).notNull(),
+    description: text(),
+    customerId: text().references(() => customers.id),
+    vendorId: text().references(() => bcVendors.id),
+    assetId: text().references(() => assets.id),
+    contractId: text().references(() => contracts.id),
+    branchId: text().references(() => branches.id),
+    sourceDocumentType: text(),
+    sourceDocumentNo: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    journalLineUnique: uniqueIndex("gl_journal_lines_journal_line_unique").on(
+      table.journalEntryId,
+      table.lineNo,
+    ),
+    accountIdx: index("gl_journal_lines_account_idx").on(table.accountId, table.side),
+  }),
+);
+
+export const glEntryDimensions = pgTable(
+  "gl_entry_dimensions",
+  {
+    id: text().primaryKey(),
+    journalLineId: text()
+      .notNull()
+      .references(() => glJournalLines.id, { onDelete: "cascade" }),
+    dimensionId: text()
+      .notNull()
+      .references(() => glDimensions.id),
+    dimensionValueId: text()
+      .notNull()
+      .references(() => glDimensionValues.id),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    lineDimensionUnique: uniqueIndex("gl_entry_dimensions_line_dimension_unique").on(
+      table.journalLineId,
+      table.dimensionId,
+    ),
+  }),
+);
+
+export const postingRules = pgTable(
+  "posting_rules",
+  {
+    id: text().primaryKey(),
+    code: text().notNull(),
+    name: text().notNull(),
+    scope: postingRuleScopeEnum().notNull(),
+    eventType: text(),
+    active: boolean().default(true).notNull(),
+    metadata: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    codeUnique: uniqueIndex("posting_rules_code_unique").on(table.code),
+  }),
+);
+
+export const postingRuleLines = pgTable(
+  "posting_rule_lines",
+  {
+    id: text().primaryKey(),
+    postingRuleId: text()
+      .notNull()
+      .references(() => postingRules.id, { onDelete: "cascade" }),
+    lineRole: text().notNull(),
+    accountId: text()
+      .notNull()
+      .references(() => glAccounts.id),
+    amountMode: text().default("event_amount").notNull(),
+    memoTemplate: text(),
+    sortOrder: integer().default(0).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    ruleSortUnique: uniqueIndex("posting_rule_lines_rule_sort_unique").on(
+      table.postingRuleId,
+      table.sortOrder,
+    ),
+  }),
+);
+
+export const arCreditMemos = pgTable(
+  "ar_credit_memos",
+  {
+    id: text().primaryKey(),
+    creditMemoNumber: text().notNull(),
+    customerId: text()
+      .notNull()
+      .references(() => customers.id),
+    contractId: text().references(() => contracts.id),
+    status: subledgerDocumentStatusEnum().default("draft").notNull(),
+    creditMemoDate: timestamp({ withTimezone: true }).notNull(),
+    totalAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    balanceAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    sourceProvider: integrationProviderEnum(),
+    sourceDocumentNo: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    creditMemoNumberUnique: uniqueIndex("ar_credit_memos_number_unique").on(
+      table.creditMemoNumber,
+    ),
+  }),
+);
+
+export const arReceipts = pgTable(
+  "ar_receipts",
+  {
+    id: text().primaryKey(),
+    receiptNumber: text().notNull(),
+    customerId: text()
+      .notNull()
+      .references(() => customers.id),
+    cashAccountId: text(),
+    status: subledgerDocumentStatusEnum().default("draft").notNull(),
+    receiptDate: timestamp({ withTimezone: true }).notNull(),
+    amount: numeric({ precision: 12, scale: 2 }).notNull(),
+    unappliedAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    sourceProvider: integrationProviderEnum(),
+    sourceDocumentNo: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    receiptNumberUnique: uniqueIndex("ar_receipts_number_unique").on(
+      table.receiptNumber,
+    ),
+  }),
+);
+
+export const arApplications = pgTable(
+  "ar_applications",
+  {
+    id: text().primaryKey(),
+    receiptId: text()
+      .notNull()
+      .references(() => arReceipts.id, { onDelete: "cascade" }),
+    invoiceId: text().references(() => invoices.id),
+    creditMemoId: text().references(() => arCreditMemos.id),
+    appliedAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    appliedAt: timestamp({ withTimezone: true }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    receiptIdx: index("ar_applications_receipt_id_idx").on(table.receiptId),
+  }),
+);
+
+export const cashAccounts = pgTable(
+  "cash_accounts",
+  {
+    id: text().primaryKey(),
+    accountNumber: text().notNull(),
+    name: text().notNull(),
+    glAccountId: text().references(() => glAccounts.id),
+    active: boolean().default(true).notNull(),
+    sourceProvider: integrationProviderEnum(),
+    sourceExternalId: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    accountNumberUnique: uniqueIndex("cash_accounts_account_number_unique").on(
+      table.accountNumber,
+    ),
+  }),
+);
+
+export const cashTransactions = pgTable(
+  "cash_transactions",
+  {
+    id: text().primaryKey(),
+    cashAccountId: text()
+      .notNull()
+      .references(() => cashAccounts.id),
+    arReceiptId: text().references(() => arReceipts.id),
+    apPaymentId: text(),
+    transactionType: cashTransactionTypeEnum().notNull(),
+    transactionDate: timestamp({ withTimezone: true }).notNull(),
+    amount: numeric({ precision: 12, scale: 2 }).notNull(),
+    description: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    cashDateIdx: index("cash_transactions_cash_date_idx").on(
+      table.cashAccountId,
+      table.transactionDate,
+    ),
+  }),
+);
+
+export const apBills = pgTable(
+  "ap_bills",
+  {
+    id: text().primaryKey(),
+    billNumber: text().notNull(),
+    vendorId: text()
+      .notNull()
+      .references(() => bcVendors.id),
+    status: subledgerDocumentStatusEnum().default("draft").notNull(),
+    billDate: timestamp({ withTimezone: true }).notNull(),
+    dueDate: timestamp({ withTimezone: true }),
+    totalAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    balanceAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    sourceProvider: integrationProviderEnum(),
+    sourceDocumentNo: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    billNumberUnique: uniqueIndex("ap_bills_number_unique").on(table.billNumber),
+  }),
+);
+
+export const apBillLines = pgTable(
+  "ap_bill_lines",
+  {
+    id: text().primaryKey(),
+    billId: text()
+      .notNull()
+      .references(() => apBills.id, { onDelete: "cascade" }),
+    description: text().notNull(),
+    amount: numeric({ precision: 12, scale: 2 }).notNull(),
+    glAccountId: text().references(() => glAccounts.id),
+    assetId: text().references(() => assets.id),
+    sourceLineNo: integer(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    billIdx: index("ap_bill_lines_bill_id_idx").on(table.billId),
+  }),
+);
+
+export const apPayments = pgTable(
+  "ap_payments",
+  {
+    id: text().primaryKey(),
+    paymentNumber: text().notNull(),
+    vendorId: text()
+      .notNull()
+      .references(() => bcVendors.id),
+    cashAccountId: text().references(() => cashAccounts.id),
+    status: subledgerDocumentStatusEnum().default("draft").notNull(),
+    paymentDate: timestamp({ withTimezone: true }).notNull(),
+    amount: numeric({ precision: 12, scale: 2 }).notNull(),
+    unappliedAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    sourceProvider: integrationProviderEnum(),
+    sourceDocumentNo: text(),
+    sourceSnapshot: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    paymentNumberUnique: uniqueIndex("ap_payments_number_unique").on(
+      table.paymentNumber,
+    ),
+  }),
+);
+
+export const apApplications = pgTable(
+  "ap_applications",
+  {
+    id: text().primaryKey(),
+    paymentId: text()
+      .notNull()
+      .references(() => apPayments.id, { onDelete: "cascade" }),
+    billId: text()
+      .notNull()
+      .references(() => apBills.id, { onDelete: "cascade" }),
+    appliedAmount: numeric({ precision: 12, scale: 2 }).notNull(),
+    appliedAt: timestamp({ withTimezone: true }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    paymentIdx: index("ap_applications_payment_id_idx").on(table.paymentId),
+  }),
+);
+
+export const faBooks = pgTable(
+  "fa_books",
+  {
+    id: text().primaryKey(),
+    assetId: text()
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    bookCode: text().notNull(),
+    acquisitionCost: numeric({ precision: 14, scale: 2 }).default("0").notNull(),
+    accumulatedDepreciation: numeric({ precision: 14, scale: 2 })
+      .default("0")
+      .notNull(),
+    netBookValue: numeric({ precision: 14, scale: 2 }).default("0").notNull(),
+    inServiceDate: timestamp({ withTimezone: true }),
+    retiredAt: timestamp({ withTimezone: true }),
+    sourceProvider: integrationProviderEnum(),
+    sourceExternalId: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    assetBookUnique: uniqueIndex("fa_books_asset_book_unique").on(
+      table.assetId,
+      table.bookCode,
+    ),
+  }),
+);
+
+export const faPostings = pgTable(
+  "fa_postings",
+  {
+    id: text().primaryKey(),
+    faBookId: text()
+      .notNull()
+      .references(() => faBooks.id, { onDelete: "cascade" }),
+    journalEntryId: text().references(() => glJournalEntries.id),
+    postingType: text().notNull(),
+    postingDate: timestamp({ withTimezone: true }).notNull(),
+    amount: numeric({ precision: 14, scale: 2 }).notNull(),
+    description: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    bookDateIdx: index("fa_postings_book_date_idx").on(
+      table.faBookId,
+      table.postingDate,
+    ),
   }),
 );
 

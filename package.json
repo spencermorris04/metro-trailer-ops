@@ -20,6 +20,7 @@
     "fixed-assets:import": "python scripts/fixed-assets-import.py",
     "customers:legacy-import": "python scripts/customer-legacy-import.py",
     "bc:export": "tsx business-central/scripts/bc-export.ts",
+    "bc:seed:db": "tsx business-central/scripts/bc-seed-db.ts",
     "record360:test-fetch": "tsx record360/scripts/test-record360-fetch.ts",
     "record360:sync:bc": "tsx record360/scripts/record360-sync-bc.ts",
     "sharepoint:sync:bc": "tsx sharepoint/scripts/sharepoint-sync-bc.ts",

@@ -1,7 +1,13 @@
 export const assetTypes = [
   "commercial_box_trailer",
+  "road_trailer",
+  "cartage_trailer",
+  "storage_trailer",
   "office_trailer",
   "storage_container",
+  "flatbed_trailer",
+  "reefer_trailer",
+  "yard_truck",
   "specialty_trailer",
   "chassis",
 ] as const;
@@ -56,23 +62,27 @@ export const billingUnits = [
   "event",
 ] as const;
 
-export const financialEventTypes = [
+export const commercialEventTypes = [
   "rent",
   "damage",
   "delivery",
   "pickup",
+  "deposit_request",
   "surcharge",
   "credit",
   "adjustment",
   "tax",
 ] as const;
 
-export const financialEventStatuses = [
+export const commercialEventStatuses = [
   "pending",
   "posted",
   "invoiced",
   "voided",
 ] as const;
+
+export const financialEventTypes = commercialEventTypes;
+export const financialEventStatuses = commercialEventStatuses;
 
 export const invoiceStatuses = [
   "draft",
@@ -135,8 +145,10 @@ export type MaintenanceStatusKey = (typeof maintenanceStatuses)[number];
 export type CustomerTypeKey = (typeof customerTypes)[number];
 export type ContractStatusKey = (typeof contractStatuses)[number];
 export type BillingUnitKey = (typeof billingUnits)[number];
-export type FinancialEventTypeKey = (typeof financialEventTypes)[number];
-export type FinancialEventStatusKey = (typeof financialEventStatuses)[number];
+export type CommercialEventTypeKey = (typeof commercialEventTypes)[number];
+export type CommercialEventStatusKey = (typeof commercialEventStatuses)[number];
+export type FinancialEventTypeKey = CommercialEventTypeKey;
+export type FinancialEventStatusKey = CommercialEventStatusKey;
 export type InvoiceStatusKey = (typeof invoiceStatuses)[number];
 export type DispatchTaskStatusKey = (typeof dispatchTaskStatuses)[number];
 export type WorkOrderStatusKey = (typeof workOrderStatuses)[number];
@@ -189,6 +201,22 @@ export interface AssetRecord {
   features: string[];
   subtype?: string | null;
   serialNumber?: string | null;
+  manufacturer?: string | null;
+  modelYear?: number | null;
+  registrationNumber?: string | null;
+  faClassCode?: string | null;
+  faSubclassCode?: string | null;
+  bcLocationCode?: string | null;
+  bcDimension1Code?: string | null;
+  bcProductNo?: string | null;
+  bcServiceItemNo?: string | null;
+  isBlocked?: boolean;
+  isInactive?: boolean;
+  isDisposed?: boolean;
+  isOnRent?: boolean;
+  isInService?: boolean;
+  underMaintenance?: boolean;
+  bookValue?: number | null;
   yardZone?: string | null;
   yardRow?: string | null;
   yardSlot?: string | null;
@@ -206,6 +234,8 @@ export interface AssetRecord {
   activeWorkOrderStatus?: string | null;
   record360UnitId?: string | null;
   skybitzAssetId?: string | null;
+  sourceProvider?: string | null;
+  sourcePayload?: Record<string, unknown> | null;
   telematicsFreshnessMinutes?: number | null;
   telematicsStale?: boolean;
 }
@@ -226,6 +256,7 @@ export interface CustomerRecord {
   portalEnabled: boolean;
   branchCoverage: string[];
   locations: CustomerLocationRecord[];
+  sourcePayload?: Record<string, unknown> | null;
 }
 
 export interface ContractRecord {
@@ -255,17 +286,25 @@ export interface ContractRecord {
   financialExceptions?: string[];
   lastInvoiceSentAt?: string | null;
   reconciliationState?: string;
+  sourceProvider?: string | null;
+  sourceDocumentType?: string | null;
+  sourceDocumentNo?: string | null;
+  sourceStatus?: string | null;
 }
 
-export interface FinancialEventRecord {
+export interface CommercialEventRecord {
   id: string;
   contractNumber: string;
-  eventType: FinancialEventTypeKey;
+  eventType: CommercialEventTypeKey;
   description: string;
   amount: number;
   eventDate: string;
-  status: FinancialEventStatusKey;
+  status: CommercialEventStatusKey;
+  sourceDocumentType?: string | null;
+  sourceDocumentNo?: string | null;
 }
+
+export type FinancialEventRecord = CommercialEventRecord;
 
 export interface InvoiceRecord {
   id: string;
@@ -284,6 +323,10 @@ export interface InvoiceRecord {
   quickBooksLastSyncedAt?: string | null;
   quickBooksLastError?: string | null;
   reconciliationState?: string;
+  sourceProvider?: string | null;
+  sourceDocumentType?: string | null;
+  sourceDocumentNo?: string | null;
+  sourceStatus?: string | null;
 }
 
 export interface DispatchTaskRecord {

@@ -20,6 +20,7 @@ import {
 const integrationProviders = [
   "stripe",
   "quickbooks",
+  "business_central",
   "record360",
   "skybitz",
   "internal_esign",
@@ -57,6 +58,23 @@ export const assetSchema = z.object({
   maintenanceStatus: z.enum(maintenanceStatuses).default("clear"),
   gpsDeviceId: z.string().optional(),
   serialNumber: z.string().max(120).optional(),
+  manufacturer: z.string().max(160).optional(),
+  modelYear: z.number().int().min(1900).max(9999).optional(),
+  registrationNumber: z.string().max(120).optional(),
+  faClassCode: z.string().max(80).optional(),
+  faSubclassCode: z.string().max(80).optional(),
+  bcLocationCode: z.string().max(80).optional(),
+  bcDimension1Code: z.string().max(80).optional(),
+  bcProductNo: z.string().max(120).optional(),
+  bcServiceItemNo: z.string().max(120).optional(),
+  isBlocked: z.boolean().optional(),
+  isInactive: z.boolean().optional(),
+  isDisposed: z.boolean().optional(),
+  isOnRent: z.boolean().optional(),
+  isInService: z.boolean().optional(),
+  underMaintenance: z.boolean().optional(),
+  bookValue: z.number().optional(),
+  sourcePayload: z.record(z.string(), z.unknown()).optional(),
   dimensions: z.string().optional(),
   ageInMonths: z.number().int().nonnegative().optional(),
   features: z.array(z.string()).default([]),
@@ -91,6 +109,7 @@ export const customerLocationInputSchema = z.object({
   name: z.string().min(1),
   address: addressSchema,
   contactPerson: contactSchema,
+  sourcePayload: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const customerSchema = z.object({
@@ -100,6 +119,7 @@ export const customerSchema = z.object({
   contactInfo: contactSchema,
   billingAddress: addressSchema,
   locations: z.array(customerLocationInputSchema).default([]),
+  sourcePayload: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const customerUpdateSchema = z.object({
@@ -119,6 +139,10 @@ export const contractLineSchema = z
     startDate: z.coerce.date(),
     endDate: z.coerce.date().nullable().optional(),
     adjustments: z.array(z.string()).default([]),
+    sourceLineNo: z.number().int().optional(),
+    sourceItemNo: z.string().max(120).optional(),
+    sourceUomCode: z.string().max(40).optional(),
+    sourceSnapshot: z.record(z.string(), z.unknown()).optional(),
   })
   .refine(
     (line) => !line.endDate || line.endDate >= line.startDate,
@@ -138,6 +162,11 @@ export const contractSchema = z
     startDate: z.coerce.date(),
     endDate: z.coerce.date().nullable().optional(),
     status: z.enum(contractStatuses).default("quoted"),
+    sourceProvider: z.enum(integrationProviders).optional(),
+    sourceDocumentType: z.string().max(80).optional(),
+    sourceDocumentNo: z.string().max(120).optional(),
+    sourceStatus: z.string().max(80).optional(),
+    sourceSnapshot: z.record(z.string(), z.unknown()).optional(),
     lines: z.array(contractLineSchema).min(1),
     idempotencyKey: z.string().min(8).max(200).optional(),
   })
@@ -188,6 +217,8 @@ export const financialEventSchema = z.object({
   amount: z.number(),
   eventDate: z.coerce.date(),
   status: z.enum(financialEventStatuses).default("pending"),
+  sourceDocumentType: z.string().max(80).optional(),
+  sourceDocumentNo: z.string().max(120).optional(),
 });
 
 export const invoiceSchema = z.object({
@@ -196,6 +227,11 @@ export const invoiceSchema = z.object({
   status: z.enum(invoiceStatuses).default("draft"),
   invoiceDate: z.coerce.date(),
   dueDate: z.coerce.date(),
+  sourceProvider: z.enum(integrationProviders).optional(),
+  sourceDocumentType: z.string().max(80).optional(),
+  sourceDocumentNo: z.string().max(120).optional(),
+  sourceStatus: z.string().max(80).optional(),
+  sourceSnapshot: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const dispatchTaskSchema = z.object({

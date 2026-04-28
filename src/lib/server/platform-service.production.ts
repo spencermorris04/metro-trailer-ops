@@ -109,6 +109,7 @@ type CustomerLocationInput = {
   name: string;
   address: AddressInput;
   contactPerson: ContactInput;
+  sourcePayload?: Record<string, unknown>;
 };
 
 export type CreateAssetInput = {
@@ -121,6 +122,23 @@ export type CreateAssetInput = {
   maintenanceStatus?: AssetRecord["maintenanceStatus"];
   gpsDeviceId?: string;
   serialNumber?: string;
+  manufacturer?: string;
+  modelYear?: number;
+  registrationNumber?: string;
+  faClassCode?: string;
+  faSubclassCode?: string;
+  bcLocationCode?: string;
+  bcDimension1Code?: string;
+  bcProductNo?: string;
+  bcServiceItemNo?: string;
+  isBlocked?: boolean;
+  isInactive?: boolean;
+  isDisposed?: boolean;
+  isOnRent?: boolean;
+  isInService?: boolean;
+  underMaintenance?: boolean;
+  bookValue?: string | number | null;
+  sourcePayload?: Record<string, unknown>;
   dimensions?: string;
   ageInMonths?: number;
   features?: string[];
@@ -144,6 +162,7 @@ export type CreateCustomerInput = {
   contactInfo?: ContactInput;
   billingAddress: AddressInput;
   locations?: CustomerLocationInput[];
+  sourcePayload?: Record<string, unknown>;
   idempotencyKey?: string;
 };
 
@@ -164,6 +183,10 @@ export type ContractLineInput = {
   endDate?: Date | null;
   adjustments?: string[];
   lineId?: string;
+  sourceLineNo?: number;
+  sourceItemNo?: string;
+  sourceUomCode?: string;
+  sourceSnapshot?: Record<string, unknown>;
 };
 
 export type CreateContractInput = {
@@ -176,6 +199,11 @@ export type CreateContractInput = {
   billingCadence?: BillingCadence;
   paymentTermsDays?: number;
   status?: ContractRecord["status"];
+  sourceProvider?: typeof schema.contracts.$inferInsert.sourceProvider;
+  sourceDocumentType?: string;
+  sourceDocumentNo?: string;
+  sourceStatus?: string;
+  sourceSnapshot?: Record<string, unknown>;
   lines: ContractLineInput[];
   idempotencyKey?: string;
 };
@@ -207,6 +235,8 @@ export type CreateFinancialEventInput = {
   contractLineId?: string;
   assetId?: string;
   externalReference?: string;
+  sourceDocumentType?: string;
+  sourceDocumentNo?: string;
   metadata?: Record<string, unknown>;
   reversalForEventId?: string;
   status?: FinancialEventRecord["status"];
@@ -867,6 +897,10 @@ async function getContractFinanceRows(contractId: string) {
       adjustments: schema.contractLines.adjustments,
       deliveryFee: schema.contractLines.deliveryFee,
       pickupFee: schema.contractLines.pickupFee,
+      sourceLineNo: schema.contractLines.sourceLineNo,
+      sourceItemNo: schema.contractLines.sourceItemNo,
+      sourceUomCode: schema.contractLines.sourceUomCode,
+      sourceSnapshot: schema.contractLines.sourceSnapshot,
       createdAt: schema.contractLines.createdAt,
       updatedAt: schema.contractLines.updatedAt,
       assetType: schema.assets.type,

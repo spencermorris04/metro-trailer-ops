@@ -63,6 +63,7 @@ type CustomerLocationInput = {
   name: string;
   address: AddressInput;
   contactPerson: ContactInput;
+  sourcePayload?: Record<string, unknown>;
 };
 
 type CreateAssetInput = {
@@ -73,6 +74,24 @@ type CreateAssetInput = {
   availability?: AssetRecord["availability"];
   maintenanceStatus?: AssetRecord["maintenanceStatus"];
   gpsDeviceId?: string;
+  serialNumber?: string;
+  manufacturer?: string;
+  modelYear?: number;
+  registrationNumber?: string;
+  faClassCode?: string;
+  faSubclassCode?: string;
+  bcLocationCode?: string;
+  bcDimension1Code?: string;
+  bcProductNo?: string;
+  bcServiceItemNo?: string;
+  isBlocked?: boolean;
+  isInactive?: boolean;
+  isDisposed?: boolean;
+  isOnRent?: boolean;
+  isInService?: boolean;
+  underMaintenance?: boolean;
+  bookValue?: string | number | null;
+  sourcePayload?: Record<string, unknown>;
   dimensions?: string;
   ageInMonths?: number;
   features?: string[];
@@ -87,6 +106,7 @@ type CreateCustomerInput = {
   contactInfo?: ContactInput;
   billingAddress: AddressInput;
   locations?: CustomerLocationInput[];
+  sourcePayload?: Record<string, unknown>;
 };
 
 type UpdateCustomerInput = {
@@ -105,6 +125,10 @@ type ContractLineInput = {
   startDate: Date;
   endDate?: Date | null;
   adjustments?: string[];
+  sourceLineNo?: number;
+  sourceItemNo?: string;
+  sourceUomCode?: string;
+  sourceSnapshot?: Record<string, unknown>;
 };
 
 type CreateContractInput = {
@@ -115,6 +139,11 @@ type CreateContractInput = {
   startDate: Date;
   endDate?: Date | null;
   status?: ContractRecord["status"];
+  sourceProvider?: string;
+  sourceDocumentType?: string;
+  sourceDocumentNo?: string;
+  sourceStatus?: string;
+  sourceSnapshot?: Record<string, unknown>;
   lines: ContractLineInput[];
 };
 
@@ -133,6 +162,8 @@ type CreateFinancialEventInput = {
   amount: number;
   eventDate: Date | string;
   status?: FinancialEventRecord["status"];
+  sourceDocumentType?: string;
+  sourceDocumentNo?: string;
 };
 
 type CreateDispatchTaskInput = {

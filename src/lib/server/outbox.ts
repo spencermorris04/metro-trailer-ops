@@ -4,7 +4,14 @@ import { db, pool, schema } from "@/lib/db";
 import { createId, now } from "@/lib/server/production-utils";
 import { isProductionRuntime } from "@/lib/server/runtime";
 
-type Provider = "stripe" | "quickbooks" | "record360" | "skybitz" | "internal_esign" | "internal";
+type Provider =
+  | "stripe"
+  | "quickbooks"
+  | "business_central"
+  | "record360"
+  | "skybitz"
+  | "internal_esign"
+  | "internal";
 
 type EnqueueOutboxOptions = {
   jobType: string;
