@@ -1,169 +1,106 @@
+import Link from "next/link";
+
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
-import { getFinancialOverview } from "@/lib/server/platform";
+import { getFinancialDashboardView } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
 export default async function FinancialPage() {
-  const overview = await getFinancialOverview();
+  const dashboard = await getFinancialDashboardView();
 
   return (
-    <>
+    <div className="space-y-2">
       <PageHeader
-        eyebrow="Unified Commercial State"
-        title="Finance, inventory, invoicing, and e-sign now move on one contract spine"
-        description="Commercial health is derived per contract so the team can see what is blocking execution, what is ready to bill, what is sitting in receivables, and what can be closed without cross-checking four systems by hand."
+        eyebrow="Accounting"
+        title="Finance overview"
+        description="Commercial events, subledger balances, general ledger posture, and BC reconciliation exceptions."
+        actions={
+          <>
+            <Link href="/ar/invoices" className="btn-secondary">
+              AR
+            </Link>
+            <Link href="/gl/journal" className="btn-secondary">
+              GL journal
+            </Link>
+            <Link href="/integrations/business-central" className="btn-secondary">
+              BC admin
+            </Link>
+          </>
+        }
       />
 
-      <SectionCard
-        eyebrow="Commercial Posture"
-        title="Contract-centric metrics"
-        description="These counts come from the same derived contract-commercial state used by the service layer."
-      >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <MetricCard
-            label="Awaiting signature"
-            value={String(overview.metrics.awaitingSignature)}
-            detail="Contracts with an active e-sign packet still blocking execution."
-          />
-          <MetricCard
-            label="Ready to invoice"
-            value={String(overview.metrics.readyToInvoice)}
-            detail={`${formatCurrency(overview.metrics.uninvoicedEventAmount)} of posted activity is still uninvoiced.`}
-          />
-          <MetricCard
-            label="Open receivables"
-            value={String(overview.metrics.openReceivables)}
-            detail={`${formatCurrency(overview.metrics.outstandingBalance)} remains outstanding across open contracts.`}
-          />
-          <MetricCard
-            label="Ready to close"
-            value={String(overview.metrics.readyToClose)}
-            detail="Completed contracts with clean billing and no remaining contract-controlled holds."
-          />
-          <MetricCard
-            label="Contracts tracked"
-            value={String(overview.metrics.contractCount)}
-            detail="Every contract carries its own signature, billing, and closeout posture."
-          />
-        </div>
-      </SectionCard>
+      <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
+        {[
+          {
+            label: "Uninvoiced events",
+            value: dashboard.metrics.uninvoicedCommercialEvents,
+            sub: formatCurrency(dashboard.metrics.uninvoicedCommercialAmount),
+          },
+          {
+            label: "Open AR",
+            value: dashboard.metrics.openArInvoices,
+            sub: formatCurrency(dashboard.metrics.openArBalance),
+          },
+          {
+            label: "Unapplied receipts",
+            value: dashboard.metrics.unappliedReceipts,
+            sub: formatCurrency(dashboard.metrics.unappliedReceiptAmount),
+          },
+          {
+            label: "Open AP",
+            value: dashboard.metrics.openApBills,
+            sub: formatCurrency(dashboard.metrics.openApBalance),
+          },
+          {
+            label: "Posted journals",
+            value: dashboard.metrics.postedJournals,
+            sub: formatCurrency(dashboard.metrics.currentTrialBalanceDelta),
+          },
+          {
+            label: "BC import errors",
+            value: dashboard.metrics.bcImportErrors,
+            sub: dashboard.bcOverview.latestRun?.status ?? "No run",
+          },
+        ].map((metric) => (
+          <div key={metric.label} className="bg-white px-3 py-2">
+            <p className="workspace-metric-label">{metric.label}</p>
+            <p className="text-lg font-semibold text-slate-900">{metric.value}</p>
+            <p className="text-[0.65rem] text-slate-400">{metric.sub}</p>
+          </div>
+        ))}
+      </div>
 
-      <SectionCard
-        eyebrow="Exception Queues"
-        title="Where commercial work is stuck"
-        description="Each queue is derived from contract state rather than separate invoice or signature lists."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          <QueueCard
-            title="Awaiting Signature"
-            emptyMessage="No contracts are waiting on signer action."
-            contracts={overview.queues.awaitingSignature}
-          />
-          <QueueCard
-            title="Ready To Invoice"
-            emptyMessage="No posted contract activity is waiting for invoicing."
-            contracts={overview.queues.readyToInvoice}
-          />
-          <QueueCard
-            title="Open Receivables"
-            emptyMessage="No contract currently has outstanding receivables."
-            contracts={overview.queues.openReceivables}
-          />
-          <QueueCard
-            title="Ready To Close"
-            emptyMessage="No completed contract is fully reconciled yet."
-            contracts={overview.queues.readyToClose}
-          />
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Latest Contracts"
-        title="Unified commercial ledger"
-        description="This table shows the combined signature, invoice, inventory-closeout, and receivables posture for each agreement."
-      >
-        <div className="data-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Contract</th>
-                <th>Status</th>
-                <th>Signature</th>
-                <th>Commercial stage</th>
-                <th>Invoices</th>
-                <th>Outstanding</th>
-                <th>Next action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.contracts.map((contract) => (
-                <tr key={contract.id}>
-                  <td>
-                    <p className="font-semibold text-slate-900">
-                      {contract.contractNumber}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {contract.customerName} at {contract.locationName}
-                    </p>
-                  </td>
-                  <td>
-                    <StatusPill label={titleize(contract.status)} />
-                  </td>
-                  <td className="text-sm text-slate-700">
-                    {titleize(contract.signatureStatus ?? "not_requested")}
-                  </td>
-                  <td className="text-sm text-slate-700">
-                    {titleize(contract.commercialStage ?? "quote_draft")}
-                  </td>
-                  <td className="text-sm text-slate-700">
-                    <p>{contract.invoiceCount ?? 0} total</p>
-                    <p className="mt-1 text-slate-500">
-                      {(contract.uninvoicedEventCount ?? 0) > 0
-                        ? `${contract.uninvoicedEventCount} posted events pending invoice`
-                        : `${contract.openInvoiceCount ?? 0} open invoices`}
-                    </p>
-                  </td>
-                  <td className="text-sm font-semibold text-slate-900">
-                    {formatCurrency(contract.outstandingBalance ?? 0)}
-                  </td>
-                  <td className="text-sm text-slate-600">
-                    {contract.nextAction ?? "No immediate commercial action."}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-2 xl:grid-cols-2">
         <SectionCard
-          eyebrow="Recent Invoices"
-          title="Invoice stream"
-          description="The invoice list now reads in the context of the contract-commercial state above."
+          eyebrow="Commercial"
+          title="Operational billing events"
+          description="Commercial events stay operational; they do not represent posted accounting on their own."
         >
-          <div className="space-y-3">
-            {overview.invoices.map((invoice) => (
-              <div key={invoice.id} className="soft-panel p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                      {invoice.invoiceNumber}
-                    </p>
-                    <h3 className="mt-2 text-base font-semibold text-slate-900">
-                      {invoice.customerName}
-                    </h3>
+          <div className="divide-y divide-[var(--line)]">
+            {dashboard.commercialEvents.map((event) => (
+              <div key={event.id} className="flex items-center justify-between gap-3 py-1.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="mono text-[0.65rem] text-slate-500">
+                      {event.contractNumber}
+                    </span>
+                    <StatusPill label={titleize(event.eventType)} />
                   </div>
-                  <StatusPill label={titleize(invoice.status)} />
+                  <div className="text-[0.75rem] text-slate-700">{event.description}</div>
+                  <div className="text-[0.65rem] text-slate-400">
+                    {formatDate(event.eventDate)} / {event.sourceDocumentType ?? "No source doc"}
+                  </div>
                 </div>
-                <div className="mt-3 text-sm leading-6 text-slate-600">
-                  <p>Contract: {invoice.contractNumber}</p>
-                  <p>Invoice date: {formatDate(invoice.invoiceDate)}</p>
-                  <p>Due date: {formatDate(invoice.dueDate)}</p>
-                  <p>Balance: {formatCurrency(invoice.balanceAmount)}</p>
+                <div className="text-right">
+                  <div className="font-semibold text-slate-900">
+                    {formatCurrency(event.amount)}
+                  </div>
+                  <div className="text-[0.65rem] text-slate-400">
+                    {event.invoiceNumber ?? "Uninvoiced"}
+                  </div>
                 </div>
               </div>
             ))}
@@ -171,80 +108,149 @@ export default async function FinancialPage() {
         </SectionCard>
 
         <SectionCard
-          eyebrow="Recent Events"
-          title="Posted financial activity"
-          description="Operations and accounting still reconcile through the event ledger, but now the contract surface shows the resulting billing posture directly."
+          eyebrow="Subledger"
+          title="AR and AP posture"
+          description="App-native invoices, receipts, and bills. BC history stays separate."
         >
-          <div className="space-y-3">
-            {overview.recentEvents.map((event) => (
-              <div key={event.id} className="soft-panel p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {event.contractNumber}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-600">{event.description}</p>
-                  </div>
-                  <StatusPill label={titleize(event.eventType)} />
-                </div>
-                <div className="mt-3 text-sm text-slate-600">
-                  <p>Date: {formatDate(event.eventDate)}</p>
-                  <p>Amount: {formatCurrency(event.amount)}</p>
-                </div>
+          <div className="grid gap-3">
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="workspace-section-label">AR invoices</span>
+                <Link href="/ar/invoices" className="text-[var(--brand)]">
+                  Open
+                </Link>
               </div>
-            ))}
+              <div className="divide-y divide-[var(--line)]">
+                {dashboard.arInvoices.map((invoice) => (
+                  <div key={invoice.id} className="flex items-center justify-between py-1.5">
+                    <div>
+                      <div className="mono text-[0.65rem] text-slate-500">
+                        {invoice.invoiceNumber}
+                      </div>
+                      <div className="text-[0.75rem] text-slate-700">
+                        {invoice.customerName}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-semibold text-slate-900">
+                        {formatCurrency(invoice.balanceAmount)}
+                      </div>
+                      <div className="text-[0.65rem] text-slate-400">
+                        {titleize(invoice.status)} / {formatDate(invoice.dueDate)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="workspace-section-label">AP bills</span>
+                <Link href="/ap/bills" className="text-[var(--brand)]">
+                  Open
+                </Link>
+              </div>
+              <div className="divide-y divide-[var(--line)]">
+                {dashboard.apBills.map((bill) => (
+                  <div key={bill.id} className="flex items-center justify-between py-1.5">
+                    <div>
+                      <div className="mono text-[0.65rem] text-slate-500">
+                        {bill.billNumber}
+                      </div>
+                      <div className="text-[0.75rem] text-slate-700">{bill.vendorName}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-semibold text-slate-900">
+                        {formatCurrency(bill.balanceAmount)}
+                      </div>
+                      <div className="text-[0.65rem] text-slate-400">
+                        {titleize(bill.status)} / {formatDate(bill.dueDate)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </SectionCard>
       </div>
-    </>
-  );
-}
 
-function MetricCard(props: {
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div className="soft-panel p-5">
-      <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-        {props.label}
-      </p>
-      <p className="mt-4 text-3xl font-semibold text-slate-900">{props.value}</p>
-      <p className="mt-3 text-sm leading-6 text-slate-600">{props.detail}</p>
-    </div>
-  );
-}
-
-function QueueCard(props: {
-  title: string;
-  emptyMessage: string;
-  contracts: Awaited<ReturnType<typeof getFinancialOverview>>["queues"]["awaitingSignature"];
-}) {
-  return (
-    <div className="soft-panel p-5">
-      <p className="text-sm font-semibold text-slate-900">{props.title}</p>
-      <div className="mt-4 space-y-3">
-        {props.contracts.length === 0 ? (
-          <p className="text-sm text-slate-500">{props.emptyMessage}</p>
-        ) : (
-          props.contracts.map((contract) => (
-            <div key={contract.id} className="rounded-xl border border-[var(--line)] bg-white p-4">
-              <div className="flex items-start justify-between gap-3">
+      <div className="grid gap-2 xl:grid-cols-2">
+        <SectionCard
+          eyebrow="General Ledger"
+          title="Recent journal entries"
+          description="Posted accounting is shown here, not in the commercial event stream."
+        >
+          <div className="divide-y divide-[var(--line)]">
+            {dashboard.journals.map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between gap-3 py-1.5">
                 <div>
-                  <p className="font-semibold text-slate-900">{contract.contractNumber}</p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {contract.customerName}
-                  </p>
+                  <div className="mono text-[0.65rem] text-slate-500">
+                    {entry.entryNumber}
+                  </div>
+                  <div className="text-[0.75rem] text-slate-700">{entry.description}</div>
+                  <div className="text-[0.65rem] text-slate-400">
+                    {formatDate(entry.entryDate)} / {entry.sourceType ?? "manual"}
+                  </div>
                 </div>
-                <StatusPill label={titleize(contract.commercialStage ?? contract.status)} />
+                <div className="text-right">
+                  <div className="font-semibold text-slate-900">
+                    {formatCurrency(entry.debitTotal)} / {formatCurrency(entry.creditTotal)}
+                  </div>
+                  <StatusPill label={titleize(entry.status)} />
+                </div>
               </div>
-              <p className="mt-3 text-sm text-slate-600">
-                {contract.nextAction ?? "No immediate action."}
-              </p>
+            ))}
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          eyebrow="BC Reconciliation"
+          title="Imported history and exceptions"
+          description="Business Central remains history and fallback while app-native records become the source of truth."
+        >
+          <div className="grid gap-3">
+            <div className="grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
+              {[
+                ["Assets", dashboard.bcOverview.metrics.assets],
+                ["Customers", dashboard.bcOverview.metrics.customers],
+                ["Contracts", dashboard.bcOverview.metrics.contracts],
+                ["Invoices", dashboard.bcOverview.metrics.invoices],
+                ["Source docs", dashboard.bcOverview.metrics.sourceDocuments],
+                ["BC GL rows", dashboard.bcOverview.metrics.bcGlEntries],
+              ].map(([label, value]) => (
+                <div key={label} className="bg-white px-3 py-2">
+                  <p className="workspace-metric-label">{label}</p>
+                  <p className="text-base font-semibold text-slate-900">{value}</p>
+                </div>
+              ))}
             </div>
-          ))
-        )}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="workspace-section-label">Recent import errors</span>
+                <Link
+                  href="/integrations/business-central/import-errors"
+                  className="text-[var(--brand)]"
+                >
+                  Open
+                </Link>
+              </div>
+              <div className="divide-y divide-[var(--line)]">
+                {dashboard.bcOverview.recentErrors.slice(0, 6).map((error) => (
+                  <div key={error.id} className="py-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="mono text-[0.65rem] text-slate-500">
+                        {error.entityType}
+                      </span>
+                      <StatusPill label={error.errorCode} />
+                    </div>
+                    <div className="text-[0.75rem] text-slate-700">{error.message}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </SectionCard>
       </div>
     </div>
   );

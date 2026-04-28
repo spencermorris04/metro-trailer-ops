@@ -12,6 +12,7 @@ export * from "./platform/portal";
 export * from "./platform/reports";
 export * from "./platform/telematics";
 export * from "./platform/work-orders";
+export * from "./platform/v1";
 
 export {
   createDocument,

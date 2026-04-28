@@ -1,185 +1,226 @@
 import Link from "next/link";
 
-import { SectionCard } from "@/components/section-card";
+import { PageHeader } from "@/components/page-header";
 import { StatusPill } from "@/components/status-pill";
-import {
-  amendmentActions,
-  contractGuardrails,
-  contractTransitionMap,
-} from "@/lib/domain/lifecycle";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
-import { listContracts, listFinancialEvents } from "@/lib/server/platform";
+import { getContractListView } from "@/lib/server/platform";
 
 export const dynamic = "force-dynamic";
 
-export default async function ContractsPage() {
-  const sampleContracts = await listContracts();
-  const financialEvents = await listFinancialEvents();
+type ContractsPageProps = {
+  searchParams: Promise<{
+    q?: string | string[];
+    status?: string | string[];
+    branch?: string | string[];
+    sourceProvider?: string | string[];
+    sourceDocumentType?: string | string[];
+  }>;
+};
+
+function getParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function ContractsPage({ searchParams }: ContractsPageProps) {
+  const resolved = await searchParams;
+  const filters = {
+    q: getParam(resolved.q),
+    status: getParam(resolved.status),
+    branch: getParam(resolved.branch),
+    sourceProvider: getParam(resolved.sourceProvider),
+    sourceDocumentType: getParam(resolved.sourceDocumentType),
+  };
+
+  const contracts = await getContractListView(filters);
 
   return (
-    <>
-      <SectionCard
-        eyebrow="Phase 1.3"
-        title="Contracts own the rental lifecycle"
-        description="Quote, reservation, active rent, completion, closure, and cancellation are explicit states with clear operational consequences."
-      >
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.9fr]">
-          <div className="space-y-4 text-sm leading-6 text-slate-600">
-            <p>
-              This foundation encodes the contract workflow directly into the
-              domain layer. That makes it easier to enforce dispatch readiness,
-              billing eligibility, amendment behavior, and audit logging with a
-              single state machine instead of ad hoc flags.
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/api/contracts"
-                className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-white"
-              >
-                GET /api/contracts
-              </Link>
-              <Link
-                href="/api/contracts/contract_002/transition"
-                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
-              >
-                POST transition preview
-              </Link>
-            </div>
-          </div>
+    <div className="space-y-2">
+      <PageHeader
+        eyebrow="Commercial"
+        title="Contracts"
+        description="Operational rental agreements with source-aware BC document lineage, invoice exposure, and asset allocation context."
+        actions={
+          <>
+            <Link href="/commercial-events" className="btn-secondary">
+              Commercial events
+            </Link>
+            <Link href="/source-documents" className="btn-secondary">
+              Source documents
+            </Link>
+          </>
+        }
+      />
 
-          <div className="soft-panel p-5">
-            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-              Amendment paths
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {amendmentActions.map((action) => (
-                <span
-                  key={action}
-                  className="mono rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] text-slate-700"
-                >
-                  {action}
-                </span>
-              ))}
-            </div>
-            <p className="mt-4 text-sm leading-6 text-slate-600">
-              Extensions, swaps, partial returns, and rate adjustments are
-              modeled as amendments on the same agreement rather than detached
-              side records.
+      <div className="panel px-3 py-2">
+        <form className="flex flex-wrap items-end gap-2" action="/contracts">
+          <input
+            type="text"
+            name="q"
+            defaultValue={filters.q ?? ""}
+            placeholder="Contract, customer, site..."
+            className="workspace-input w-48"
+          />
+          <input
+            type="text"
+            name="branch"
+            defaultValue={filters.branch ?? ""}
+            placeholder="Branch"
+            className="workspace-input w-28"
+          />
+          <input
+            type="text"
+            name="status"
+            defaultValue={filters.status ?? ""}
+            placeholder="Status"
+            className="workspace-input w-28"
+          />
+          <select
+            name="sourceProvider"
+            defaultValue={filters.sourceProvider ?? ""}
+            className="workspace-input w-36"
+          >
+            <option value="">Any source</option>
+            <option value="business_central">Business Central</option>
+            <option value="internal">Internal</option>
+          </select>
+          <input
+            type="text"
+            name="sourceDocumentType"
+            defaultValue={filters.sourceDocumentType ?? ""}
+            placeholder="Source doc type"
+            className="workspace-input w-36"
+          />
+          <button type="submit" className="btn-primary">
+            Apply
+          </button>
+          <Link href="/contracts" className="btn-secondary">
+            Reset
+          </Link>
+        </form>
+      </div>
+
+      <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
+        {[
+          { label: "Contracts", value: contracts.length },
+          {
+            label: "BC seeded",
+            value: contracts.filter(
+              (contract) =>
+                (contract.sourceProvider ?? "internal") === "business_central",
+            ).length,
+          },
+          {
+            label: "Open balance",
+            value: formatCurrency(
+              contracts.reduce(
+                (sum, contract) => sum + (contract.outstandingBalance ?? 0),
+                0,
+              ),
+            ),
+          },
+          {
+            label: "Invoices",
+            value: contracts.reduce(
+              (sum, contract) => sum + (contract.invoiceCount ?? 0),
+              0,
+            ),
+          },
+        ].map((metric) => (
+          <div key={metric.label} className="bg-white px-3 py-2">
+            <p className="workspace-metric-label">{metric.label}</p>
+            <p className="text-base font-semibold text-slate-900">
+              {typeof metric.value === "number" ? metric.value : metric.value}
             </p>
           </div>
-        </div>
-      </SectionCard>
+        ))}
+      </div>
 
-      <SectionCard
-        eyebrow="Sample Agreements"
-        title="Representative rental contracts"
-        description="These records mirror the operational mix of reservations, active rentals, and closeout work."
-      >
-        <div className="data-table">
+      <div className="panel overflow-hidden">
+        <div className="data-table border-0">
           <table>
             <thead>
               <tr>
                 <th>Contract</th>
-                <th>Customer</th>
-                <th>Branch</th>
+                <th>Customer / site</th>
                 <th>Dates</th>
+                <th>Commercial posture</th>
+                <th>Source</th>
                 <th>Assets</th>
-                <th>Status</th>
-                <th>Value</th>
               </tr>
             </thead>
             <tbody>
-              {sampleContracts.map((contract) => (
-                <tr key={contract.id}>
-                  <td>
-                    <p className="font-semibold text-slate-900">
-                      {contract.contractNumber}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {contract.locationName}
-                    </p>
-                  </td>
-                  <td className="text-sm text-slate-700">
-                    {contract.customerName}
-                  </td>
-                  <td className="text-sm text-slate-700">{contract.branch}</td>
-                  <td className="text-sm text-slate-700">
-                    <p>{formatDate(contract.startDate)}</p>
-                    <p className="mt-1 text-slate-500">
-                      {contract.endDate ? formatDate(contract.endDate) : "Open-ended"}
-                    </p>
-                  </td>
-                  <td className="text-sm text-slate-700">
-                    {contract.assets.join(", ")}
-                  </td>
-                  <td>
-                    <StatusPill label={titleize(contract.status)} />
-                  </td>
-                  <td className="text-sm font-semibold text-slate-900">
-                    {formatCurrency(contract.value)}
+              {contracts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-slate-400">
+                    No contracts match the current scope.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                contracts.map((contract) => (
+                  <tr key={contract.id}>
+                    <td>
+                      <Link
+                        href={`/contracts/${contract.id}`}
+                        className="font-semibold text-[var(--brand)]"
+                      >
+                        {contract.contractNumber}
+                      </Link>
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {titleize(contract.status)}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-slate-700">{contract.customerName}</span>
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {contract.locationName}
+                      </span>
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {contract.branch}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-slate-700">{formatDate(contract.startDate)}</span>
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {contract.endDate ? formatDate(contract.endDate) : "Open"}
+                      </span>
+                    </td>
+                    <td>
+                      <StatusPill label={titleize(contract.commercialStage ?? contract.status)} />
+                      <div className="mt-1 text-[0.65rem] text-slate-400">
+                        {contract.invoiceCount ?? 0} invoices /{" "}
+                        {contract.uninvoicedEventCount ?? 0} uninvoiced events
+                      </div>
+                      <div className="text-[0.65rem] text-slate-400">
+                        Bal. {formatCurrency(contract.outstandingBalance ?? 0)}
+                      </div>
+                    </td>
+                    <td>
+                      <StatusPill
+                        label={titleize(
+                          (contract.sourceProvider ?? "internal").replaceAll("_", " "),
+                        )}
+                      />
+                      <div className="mt-1 text-[0.65rem] text-slate-400">
+                        {contract.sourceDocumentType ?? "No source type"}
+                      </div>
+                      <div className="text-[0.65rem] text-slate-400">
+                        {contract.sourceDocumentNo ?? "No source doc no."}
+                      </div>
+                    </td>
+                    <td className="text-slate-600">
+                      {contract.assets.join(", ") || "No assets"}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Transition Rules"
-        title="Lifecycle guardrails and allowed next states"
-        description="The workflow remains understandable because transitions are finite and each state carries operational rules."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {Object.entries(contractGuardrails).map(([status, rules]) => (
-            <div key={status} className="soft-panel p-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <StatusPill label={titleize(status)} />
-                <div className="flex flex-wrap gap-2">
-                  {contractTransitionMap[status as keyof typeof contractTransitionMap].map(
-                    (nextState) => (
-                      <span
-                        key={nextState}
-                        className="mono rounded-md border border-[var(--line)] bg-white px-2 py-1 text-[0.68rem] text-slate-600"
-                      >
-                        {nextState}
-                      </span>
-                    ),
-                  )}
-                </div>
-              </div>
-              <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
-                {rules.map((rule) => (
-                  <li key={rule}>{rule}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Billing Readiness"
-        title="Financial events attach directly to contracts"
-        description="The same agreement that owns asset assignments also becomes the source of delivery, rent, damage, credit, and pickup events."
-      >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {financialEvents.map((event) => (
-            <div key={event.id} className="soft-panel p-4">
-              <StatusPill label={titleize(event.eventType)} />
-              <p className="mt-4 text-base font-semibold text-slate-900">
-                {event.contractNumber}
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {event.description}
-              </p>
-              <p className="mt-3 text-sm font-semibold text-slate-900">
-                {formatCurrency(event.amount)}
-              </p>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-    </>
+      </div>
+    </div>
   );
 }

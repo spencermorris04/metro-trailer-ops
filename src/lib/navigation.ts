@@ -14,31 +14,13 @@ export type NavGroup = {
 
 export const navigationGroups: NavGroup[] = [
   {
-    label: "Core",
+    label: "Overview",
     items: [
       {
         href: "/",
         label: "Overview",
-        description: "Platform blueprint and phase map",
+        description: "Platform blueprint, readiness posture, and cutover map",
         icon: "home",
-      },
-      {
-        href: "/assets",
-        label: "Assets",
-        description: "Fleet inventory, status, and availability rules",
-        icon: "truck",
-      },
-      {
-        href: "/customers",
-        label: "Customers",
-        description: "Accounts, billing profiles, and yard locations",
-        icon: "users",
-      },
-      {
-        href: "/contracts",
-        label: "Contracts",
-        description: "Quote, reservation, active rental, and return lifecycle",
-        icon: "file-text",
       },
     ],
   },
@@ -46,9 +28,21 @@ export const navigationGroups: NavGroup[] = [
     label: "Operations",
     items: [
       {
+        href: "/assets",
+        label: "Assets",
+        description: "Fleet master, BC lineage, placement, and readiness state",
+        icon: "truck",
+      },
+      {
+        href: "/customers",
+        label: "Customers",
+        description: "Accounts, sites, contract history, and receivables context",
+        icon: "users",
+      },      
+      {
         href: "/operations",
         label: "Operations",
-        description: "Execution overview across dispatch, inspections, and fleet health",
+        description: "Execution overview across dispatch, inspections, and maintenance",
         icon: "layers",
       },
       {
@@ -72,13 +66,78 @@ export const navigationGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Finance",
+    label: "Commercial",
+    items: [
+      {
+        href: "/contracts",
+        label: "Contracts",
+        description: "Rental agreements, line allocations, invoices, and source lineage",
+        icon: "file-text",
+      },
+      {
+        href: "/commercial-events",
+        label: "Commercial Events",
+        description: "Operational billing events and invoice readiness",
+        icon: "activity",
+      },
+      {
+        href: "/documents",
+        label: "Documents",
+        description: "Internal docs, e-sign packets, and linked source lineage",
+        icon: "folder",
+      },
+    ],
+  },
+  {
+    label: "Accounting",
     items: [
       {
         href: "/financial",
-        label: "Financials",
-        description: "Rates, events, invoices, payments, and reconciliation",
+        label: "Finance",
+        description: "Commercial, subledger, GL, and BC reconciliation overview",
         icon: "dollar",
+      },
+      {
+        href: "/ar/invoices",
+        label: "AR Invoices",
+        description: "App-native receivables invoices with source awareness",
+        icon: "file-text",
+      },
+      {
+        href: "/ar/receipts",
+        label: "AR Receipts",
+        description: "Customer receipts, applications, and unapplied cash",
+        icon: "phone",
+      },
+      {
+        href: "/ap/bills",
+        label: "AP Bills",
+        description: "Vendor bills, due dates, balances, and source lineage",
+        icon: "clipboard",
+      },
+      {
+        href: "/gl/accounts",
+        label: "GL Accounts",
+        description: "Account master and BC-origin account references",
+        icon: "layers",
+      },
+      {
+        href: "/gl/journal",
+        label: "GL Journal",
+        description: "Journal entries, lines, and posting posture",
+        icon: "bar-chart",
+      },
+      {
+        href: "/gl/periods",
+        label: "GL Periods",
+        description: "Posting periods and close status",
+        icon: "bell",
+      },
+      {
+        href: "/cash",
+        label: "Cash",
+        description: "Cash accounts, transactions, and receipt/payment links",
+        icon: "globe",
       },
       {
         href: "/collections",
@@ -95,25 +154,31 @@ export const navigationGroups: NavGroup[] = [
     ],
   },
   {
-    label: "System",
+    label: "Admin",
     items: [
-      {
-        href: "/reports",
-        label: "Reports",
-        description: "Utilization, revenue, overdue exposure, and audit visibility",
-        icon: "bar-chart",
-      },
-      {
-        href: "/documents",
-        label: "Documents",
-        description: "Invoices, contracts, signatures, and immutable storage posture",
-        icon: "folder",
-      },
       {
         href: "/integrations",
         label: "Integrations",
-        description: "Stripe, QuickBooks, Record360, and SkyBitz boundaries",
+        description: "Provider boundaries, sync posture, and BC migration status",
         icon: "link",
+      },
+      {
+        href: "/integrations/business-central",
+        label: "Business Central",
+        description: "Import runs, reconciliation, checkpoints, and source coverage",
+        icon: "link",
+      },
+      {
+        href: "/source-documents",
+        label: "Source Documents",
+        description: "Imported BC commercial documents and app-native linkage",
+        icon: "search",
+      },
+      {
+        href: "/reports",
+        label: "Reports",
+        description: "Operations, commercial, accounting, and BC reconciliation views",
+        icon: "bar-chart",
       },
     ],
   },
