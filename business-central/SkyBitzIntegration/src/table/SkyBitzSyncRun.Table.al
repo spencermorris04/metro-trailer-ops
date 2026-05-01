@@ -71,6 +71,16 @@ table 50161 "SkyBitz Sync Run"
             Caption = 'Job Version';
             DataClassification = SystemMetadata;
         }
+        field(14; "Source Window Start"; DateTime)
+        {
+            Caption = 'Source Window Start';
+            DataClassification = SystemMetadata;
+        }
+        field(15; "Source Window End"; DateTime)
+        {
+            Caption = 'Source Window End';
+            DataClassification = SystemMetadata;
+        }
     }
 
     keys

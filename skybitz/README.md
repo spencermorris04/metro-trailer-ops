@@ -39,11 +39,12 @@ This is the more reliable production sync pattern for Business Central.
 The vendor docs support `QueryPositions` with `from` and `to` date windows. For nightly operation, the sync script now uses:
 
 1. a bounded `from` / `to` window against `QueryPositions`
-2. a small overlap on every run
-3. a small safety lag on the window end
-4. client-side dedupe by `mtsn + time`
-5. collapse to the newest message per `mtsn`
-6. BC upsert only for the resulting latest-per-tracker set
+2. small fixed chunk windows during catch-up, not one giant replay query
+3. a small overlap on every run
+4. a small safety lag on the window end
+5. client-side dedupe by `mtsn + time`
+6. collapse to the newest message per `mtsn`
+7. BC upsert only for the resulting latest-per-tracker set
 
 That avoids reprocessing the entire `30k+` asset snapshot every night and is the correct way to consume SkyBitz movement updates reliably.
 
@@ -54,7 +55,7 @@ The practical windowing modes are:
 - derived from BC state:
   - `--since-last-successful-run`
 
-If there is no prior successful BC sync run yet, the script falls back to a bootstrap lookback window.
+If there is no prior successful BC sync run yet, the script falls back to a bootstrap lookback window. Each successful BC sync run now stores `sourceWindowStart` and `sourceWindowEnd`, and the next incremental run uses that explicit source watermark rather than inferring state from `finishedAt`.
 
 One implementation detail that mattered in practice: the latest-position snapshot query works with `assetid=ALL`, while the ranged history query is currently using `assetid=All`. That matches the live behavior we observed against v2.76.
 
@@ -161,6 +162,7 @@ npm run skybitz:sync:bc -- --since-last-successful-run
 
 Optional controls for the incremental mode:
 
+- `--window-chunk-minutes=60`
 - `--overlap-minutes=15`
 - `--safety-lag-minutes=5`
 - `--bootstrap-lookback-hours=24`
@@ -177,6 +179,7 @@ The Business Central sync now supports:
 - full latest-state snapshot writes
 - explicit windowed history pulls
 - `since-last-successful-run` watermark mode
+- chunked catch-up windows with explicit source-window persistence
 - overlap and safety-lag controls
 - BC-side retry/backoff for throttling
 

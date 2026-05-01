@@ -78,6 +78,14 @@ page 50171 "SkyBitz Sync Run API"
                 {
                     Caption = 'Job Version';
                 }
+                field(sourceWindowStart; Rec."Source Window Start")
+                {
+                    Caption = 'Source Window Start';
+                }
+                field(sourceWindowEnd; Rec."Source Window End")
+                {
+                    Caption = 'Source Window End';
+                }
             }
         }
     }

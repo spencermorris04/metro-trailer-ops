@@ -7,7 +7,7 @@ This Business Central extension creates the SkyBitz data model, integration API 
 - `SkyBitz Tracker` table
   One current row per SkyBitz device/location payload keyed by `MTSN`.
 - `SkyBitz Sync Run` table
-  One row per sync execution.
+  One row per processed source window, including explicit `Source Window Start` and `Source Window End` watermarks.
 - `SkyBitz Sync Error` table
   Row-level sync failures for operational debugging.
 - Custom API pages
