@@ -255,6 +255,7 @@ type BootstrapCounts = {
   emptySeeded: number;
   logSeeded: number;
   skippedExisting: number;
+  failed: number;
 };
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
@@ -1550,7 +1551,7 @@ class BusinessCentralClient {
     });
   }
 
-  async upsertFolderState(payload: FolderStatePayload) {
+  async upsertFolderState(payload: FolderStatePayload, options?: { onDuplicate?: "lookup" | "skip" }) {
     const state = await this.listFolderStates();
     const existing = state.byFolderName.get(payload.folderName.toUpperCase()) ?? null;
 
@@ -1576,6 +1577,10 @@ class BusinessCentralClient {
       } catch (error) {
         if (!isDuplicateKeyError(error)) {
           throw error;
+        }
+
+        if (options?.onDuplicate === "skip") {
+          return "skipped" as const;
         }
 
         this.existingFolderStateCache = null;
@@ -1623,9 +1628,9 @@ class BusinessCentralClient {
     return "updated" as const;
   }
 
-  async safeUpsertFolderState(payload: FolderStatePayload) {
+  async safeUpsertFolderState(payload: FolderStatePayload, options?: { onDuplicate?: "lookup" | "skip" }) {
     try {
-      return await this.upsertFolderState(payload);
+      return await this.upsertFolderState(payload, options);
     } catch (error) {
       throw error;
     }
@@ -2023,18 +2028,61 @@ async function bootstrapFolderStates(args: {
   baseChildren: FolderRef[];
   savedBackfillState: BackfillState | null;
   backfillStateMatches: boolean;
+  onProgress?: (snapshot: {
+    stage: "documents" | "empty";
+    scanned: number;
+    writes: number;
+    counts: BootstrapCounts;
+    lastFolderName: string;
+    lastMessage: string;
+  }) => Promise<void>;
 }) {
   const counts: BootstrapCounts = {
     documentBackedSeeded: 0,
     emptySeeded: 0,
     logSeeded: 0,
     skippedExisting: 0,
+    failed: 0,
   };
   const now = nowIso();
   const byFolderName = new Map(args.baseChildren.map((folder) => [folder.name.toUpperCase(), folder]));
   const logEvidence = await readTrustedFolderEvidenceFromLogs(path.join(process.cwd(), "artifacts", "sharepoint"));
+  let bootstrapWrites = 0;
+  let bootstrapScanned = 0;
+
+  async function noteBootstrapWrite(stage: "documents" | "empty", lastFolderName: string, lastMessage: string) {
+    bootstrapWrites += 1;
+
+    if (bootstrapWrites % 25 === 0) {
+      console.log(`Bootstrap ${stage}: wrote ${bootstrapWrites} folder state rows so far...`);
+      await args.onProgress?.({
+        stage,
+        scanned: bootstrapScanned,
+        writes: bootstrapWrites,
+        counts: { ...counts },
+        lastFolderName,
+        lastMessage,
+      });
+      await sleep(2000);
+      return;
+    }
+
+    if (bootstrapWrites % 5 === 0) {
+      await args.onProgress?.({
+        stage,
+        scanned: bootstrapScanned,
+        writes: bootstrapWrites,
+        counts: { ...counts },
+        lastFolderName,
+        lastMessage,
+      });
+    }
+
+    await sleep(100);
+  }
 
   for (const [folderKey, docs] of Array.from(args.existingDocumentState.byFolderName.entries())) {
+    bootstrapScanned += 1;
     const activeDocs = docs.filter((doc) => doc.active);
     const sampleDoc = activeDocs[0] ?? docs[0];
     if (!sampleDoc) {
@@ -2059,11 +2107,34 @@ async function bootstrapFolderStates(args: {
       active: true,
     };
 
-    const result = await args.bcClient.upsertFolderState(payload);
-    if (result === "inserted" || result === "updated") {
-      counts.documentBackedSeeded += 1;
-    } else {
-      counts.skippedExisting += 1;
+    try {
+      const result = await args.bcClient.upsertFolderState(payload, { onDuplicate: "skip" });
+      if (result === "inserted" || result === "updated") {
+        counts.documentBackedSeeded += 1;
+        await noteBootstrapWrite("documents", sampleDoc.folderName, "seeded document-backed folder");
+      } else {
+        counts.skippedExisting += 1;
+      }
+    } catch (error) {
+      counts.failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Bootstrap documents failed for ${sampleDoc.folderName}: ${message}`);
+      await args.onProgress?.({
+        stage: "documents",
+        scanned: bootstrapScanned,
+        writes: bootstrapWrites,
+        counts: { ...counts },
+        lastFolderName: sampleDoc.folderName,
+        lastMessage: `failed: ${message}`,
+      });
+      await sleep(5000);
+      continue;
+    }
+
+    if (bootstrapScanned % 250 === 0) {
+      console.log(
+        `Bootstrap documents: scanned ${bootstrapScanned}/${args.existingDocumentState.byFolderName.size} folder buckets, seeded ${counts.documentBackedSeeded}.`,
+      );
     }
   }
 
@@ -2098,6 +2169,7 @@ async function bootstrapFolderStates(args: {
   }
 
   for (const folderKey of Array.from(inferredEmptyKeys)) {
+    bootstrapScanned += 1;
     if (args.existingDocumentState.byFolderName.has(folderKey)) {
       continue;
     }
@@ -2132,14 +2204,35 @@ async function bootstrapFolderStates(args: {
       active: true,
     };
 
-    const result = await args.bcClient.upsertFolderState(payload);
-    if (result === "inserted" || result === "updated") {
-      counts.emptySeeded += 1;
-      if (logEvidence.get(folderKey) === "SeenEmpty") {
-        counts.logSeeded += 1;
+    try {
+      const result = await args.bcClient.upsertFolderState(payload, { onDuplicate: "skip" });
+      if (result === "inserted" || result === "updated") {
+        counts.emptySeeded += 1;
+        await noteBootstrapWrite("empty", folder.name, "seeded empty folder");
+        if (logEvidence.get(folderKey) === "SeenEmpty") {
+          counts.logSeeded += 1;
+        }
+      } else {
+        counts.skippedExisting += 1;
       }
-    } else {
-      counts.skippedExisting += 1;
+    } catch (error) {
+      counts.failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Bootstrap empty failed for ${folder.name}: ${message}`);
+      await args.onProgress?.({
+        stage: "empty",
+        scanned: bootstrapScanned,
+        writes: bootstrapWrites,
+        counts: { ...counts },
+        lastFolderName: folder.name,
+        lastMessage: `failed: ${message}`,
+      });
+      await sleep(5000);
+      continue;
+    }
+
+    if (bootstrapScanned % 250 === 0) {
+      console.log(`Bootstrap empty/log: scanned ${bootstrapScanned} folder candidates, seeded ${counts.emptySeeded} empty states.`);
     }
   }
 
@@ -2171,11 +2264,17 @@ async function main() {
   let totalSeenFolders = 0;
   let foldersPromotedThisRun = 0;
   let foldersMarkedEmptyThisRun = 0;
+  let bootstrapStage: "idle" | "documents" | "empty" | "complete" = "idle";
+  let bootstrapScannedFolders = 0;
+  let bootstrapWritesCompleted = 0;
+  let bootstrapLastFolderName = "";
+  let bootstrapLastMessage = "";
   const bootstrapCounts: BootstrapCounts = {
     documentBackedSeeded: 0,
     emptySeeded: 0,
     logSeeded: 0,
     skippedExisting: 0,
+    failed: 0,
   };
   const savedBackfillState = await readBackfillState(options.backfillStatePath);
   const savedSiteId = normalizeText(savedBackfillState?.siteId);
@@ -2192,6 +2291,43 @@ async function main() {
         .filter((item) => Boolean(item.folder))
         .map(makeFolderRef);
 
+  async function writeBootstrapSummary(reason: string) {
+    const snapshot = {
+      site: {
+        id: site.id,
+        displayName: site.displayName ?? "",
+      },
+      drive: {
+        id: drive.id,
+        name: drive.name,
+      },
+      baseFolderPath,
+      write: options.write,
+      mode,
+      status: "BootstrappingFolderState",
+      reason,
+      totalSeenFolders,
+      deltaQueueSize,
+      unseenBackfillQueueSize,
+      bootstrapStage,
+      bootstrapScannedFolders,
+      bootstrapWritesCompleted,
+      bootstrapLastFolderName,
+      bootstrapLastMessage,
+      bootstrapCounts,
+      generatedAt: nowIso(),
+    };
+
+    const summaryWriteError = await bcClient.safeWriteSummary(options.summaryPath, snapshot);
+    if (summaryWriteError) {
+      console.error(`Bootstrap summary write failed: ${summaryWriteError}`);
+    }
+  }
+
+  bootstrapStage = "documents";
+  bootstrapLastMessage = "starting folder-state bootstrap";
+  await writeBootstrapSummary("bootstrap-start");
+
   const bootstrap = await bootstrapFolderStates({
     bcClient,
     matcher,
@@ -2202,11 +2338,28 @@ async function main() {
     baseChildren,
     savedBackfillState,
     backfillStateMatches: Boolean(backfillStateMatches),
+    onProgress: async (snapshot) => {
+      bootstrapStage = snapshot.stage;
+      bootstrapScannedFolders = snapshot.scanned;
+      bootstrapWritesCompleted = snapshot.writes;
+      bootstrapLastFolderName = snapshot.lastFolderName;
+      bootstrapLastMessage = snapshot.lastMessage;
+      bootstrapCounts.documentBackedSeeded = snapshot.counts.documentBackedSeeded;
+      bootstrapCounts.emptySeeded = snapshot.counts.emptySeeded;
+      bootstrapCounts.logSeeded = snapshot.counts.logSeeded;
+      bootstrapCounts.skippedExisting = snapshot.counts.skippedExisting;
+      bootstrapCounts.failed = snapshot.counts.failed;
+      await writeBootstrapSummary(`bootstrap-${snapshot.stage}`);
+    },
   });
   bootstrapCounts.documentBackedSeeded = bootstrap.documentBackedSeeded;
   bootstrapCounts.emptySeeded = bootstrap.emptySeeded;
   bootstrapCounts.logSeeded = bootstrap.logSeeded;
   bootstrapCounts.skippedExisting = bootstrap.skippedExisting;
+  bootstrapCounts.failed = bootstrap.failed;
+  bootstrapStage = "complete";
+  bootstrapLastMessage = "folder-state bootstrap complete";
+  await writeBootstrapSummary("bootstrap-complete");
 
   const refreshedFolderStateCache = await bcClient.listFolderStates();
   const successFolderNames = new Set(
