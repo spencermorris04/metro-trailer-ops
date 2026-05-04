@@ -133,6 +133,7 @@ type SyncOptions = {
   concurrency: number;
   summaryPath: string;
   onlyBcUnmatched: boolean;
+  trailerNo: string | null;
   createdAfter: string | null;
   createdBefore: string | null;
 };
@@ -296,6 +297,7 @@ function parseArgs(argv: string[]): SyncOptions {
   let concurrency = DEFAULT_CONCURRENCY;
   let summaryPath = buildDefaultSummaryPath();
   let onlyBcUnmatched = false;
+  let trailerNo: string | null = null;
   let createdAfter: string | null = null;
   let createdBefore: string | null = null;
 
@@ -317,6 +319,14 @@ function parseArgs(argv: string[]): SyncOptions {
 
     if (arg.startsWith("--created-before=")) {
       createdBefore = parseIsoDateTime(arg.slice("--created-before=".length), "--created-before");
+      continue;
+    }
+
+    if (arg.startsWith("--trailer-no=")) {
+      trailerNo = normalizeText(arg.slice("--trailer-no=".length));
+      if (!trailerNo) {
+        throw new Error("--trailer-no must be a non-empty fixed asset number.");
+      }
       continue;
     }
 
@@ -350,6 +360,7 @@ function parseArgs(argv: string[]): SyncOptions {
     concurrency,
     summaryPath,
     onlyBcUnmatched,
+    trailerNo,
     createdAfter,
     createdBefore,
   };
@@ -1314,6 +1325,33 @@ function filterInspectionsByCreatedAt(
   });
 }
 
+function filterInspectionsByTrailerNo(
+  inspections: Record360InspectionSource[],
+  unitById: Map<string, Record360Unit>,
+  trailerNo: string | null,
+) {
+  const normalizedTrailerNo = normalizeText(trailerNo).toUpperCase();
+  if (!normalizedTrailerNo) {
+    return inspections;
+  }
+
+  return inspections.filter((inspection) => {
+    const fields = mapFieldValues(inspection);
+    const unitId =
+      inspection.unit?.id !== null && inspection.unit?.id !== undefined
+        ? String(inspection.unit.id)
+        : "";
+    const unit = unitId ? unitById.get(unitId) : undefined;
+    const candidates = [
+      normalizeText(inspection.unit?.reference_number),
+      normalizeText(unit?.reference_number),
+      getFieldValue(fields, ["customer unit"]),
+    ].map((value) => value.toUpperCase());
+
+    return candidates.some((candidate) => candidate === normalizedTrailerNo);
+  });
+}
+
 function buildInspectionPayload(
   inspection: Record360InspectionSource,
   unitById: Map<string, Record360Unit>,
@@ -1503,6 +1541,7 @@ async function main() {
       checkpointCreatedAfter: loadedSource.checkpointCreatedAfter,
       write: options.write,
       onlyBcUnmatched: options.onlyBcUnmatched,
+      trailerNo: options.trailerNo,
       createdAfter: effectiveCreatedAfter,
       createdBefore: effectiveCreatedBefore,
       unmatchedFilterCount: null,
@@ -1547,6 +1586,8 @@ async function main() {
     );
   }
 
+  filteredInspections = filterInspectionsByTrailerNo(filteredInspections, unitById, options.trailerNo);
+
   filteredInspections = filterInspectionsByCreatedAt(filteredInspections, {
     createdAfter: effectiveCreatedAfter,
     createdBefore: effectiveCreatedBefore,
@@ -1561,6 +1602,7 @@ async function main() {
       checkpointCreatedAfter: loadedSource.checkpointCreatedAfter,
       write: options.write,
       onlyBcUnmatched: options.onlyBcUnmatched,
+      trailerNo: options.trailerNo,
       createdAfter: effectiveCreatedAfter,
       createdBefore: effectiveCreatedBefore,
       unmatchedFilterCount: unmatchedFilterCount ?? null,
@@ -1745,6 +1787,7 @@ async function main() {
     checkpointCreatedAfter: loadedSource.checkpointCreatedAfter,
     write: options.write,
     onlyBcUnmatched: options.onlyBcUnmatched,
+    trailerNo: options.trailerNo,
     createdAfter: effectiveCreatedAfter,
     createdBefore: effectiveCreatedBefore,
     unmatchedFilterCount: unmatchedFilterCount ?? null,

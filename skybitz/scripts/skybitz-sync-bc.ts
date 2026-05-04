@@ -225,6 +225,9 @@ type SyncOptions = {
   write: boolean;
   limit: number | null;
   concurrency: number;
+  maxWindowCount: number | null;
+  syncMethod: "auto" | "latest-snapshot" | "history-window";
+  assetId: string;
   inputPath: string | null;
   outputPath: string;
   rematchUnmatched: boolean;
@@ -245,6 +248,14 @@ type ExistingSkyBitzSyncRun = {
   sourceWindowStart?: string;
   sourceWindowEnd?: string;
   status?: SyncRunStatus;
+  recordsSeen?: number;
+  recordsInserted?: number;
+  recordsUpdated?: number;
+  recordsSkipped?: number;
+  recordsFailed?: number;
+  matchedCount?: number;
+  unmatchedCount?: number;
+  errorSummary?: string;
 };
 
 type WindowPlan = {
@@ -257,6 +268,7 @@ type WindowBatchSummary = {
   runId: string;
   write: boolean;
   companyId: string;
+  assetIdFilter: string;
   windowMode: string;
   windowStart: string | null;
   windowEnd: string | null;
@@ -282,9 +294,12 @@ const SKYBITZ_DEFAULT_TOKEN_URL = "https://prodssoidp.skybitz.com/oauth2/token";
 const SKYBITZ_PROD_DISCOVERY_URL =
   "https://prodssoidp.skybitz.com/oauth2/oidcdiscovery/.well-known/openid-configuration";
 const SKYBITZ_VERSION = "2.76";
-const JOB_VERSION = "skybitz-bc-sync/1.1.0";
+const JOB_VERSION = "skybitz-bc-sync/1.2.0";
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_WINDOW_CHUNK_MINUTES = 60;
+const PROGRESS_UPDATE_EVERY = 100;
+const PROGRESS_UPDATE_INTERVAL_MS = 10000;
+const STALE_RUNNING_RUN_MINUTES = 30;
 const MAX_ERROR_SUMMARY_LENGTH = 2048;
 const MAX_BC_RETRIES = 6;
 const MAX_SKYBITZ_RETRIES = 5;
@@ -316,6 +331,9 @@ function parseArgs(argv: string[]): SyncOptions {
   let write = false;
   let limit: number | null = null;
   let concurrency = DEFAULT_CONCURRENCY;
+  let maxWindowCount: number | null = null;
+  let syncMethod: SyncOptions["syncMethod"] = "auto";
+  let assetId = "ALL";
   let inputPath: string | null = null;
   let outputPath = buildDefaultOutputPath();
   let rematchUnmatched = false;
@@ -343,8 +361,36 @@ function parseArgs(argv: string[]): SyncOptions {
       continue;
     }
 
+    if (arg.startsWith("--max-window-count=")) {
+      maxWindowCount = parsePositiveInteger(arg.slice("--max-window-count=".length), "--max-window-count");
+      continue;
+    }
+
     if (arg.startsWith("--input=")) {
       inputPath = path.resolve(arg.slice("--input=".length).trim());
+      continue;
+    }
+
+    if (arg.startsWith("--assetid=")) {
+      assetId = arg.slice("--assetid=".length).trim() || "ALL";
+      continue;
+    }
+
+    if (arg === "--latest-snapshot") {
+      if (syncMethod === "history-window") {
+        throw new Error("Cannot combine --latest-snapshot with --history-window.");
+      }
+
+      syncMethod = "latest-snapshot";
+      continue;
+    }
+
+    if (arg === "--history-window") {
+      if (syncMethod === "latest-snapshot") {
+        throw new Error("Cannot combine --history-window with --latest-snapshot.");
+      }
+
+      syncMethod = "history-window";
       continue;
     }
 
@@ -406,10 +452,21 @@ function parseArgs(argv: string[]): SyncOptions {
     throw new Error("--window-chunk-minutes must be greater than --overlap-minutes.");
   }
 
+  if (syncMethod === "latest-snapshot" && (from || to || sinceLastSuccessfulRun)) {
+    throw new Error("--latest-snapshot cannot be combined with --from, --to, or --since-last-successful-run.");
+  }
+
+  if (inputPath && syncMethod === "history-window") {
+    throw new Error("--history-window cannot be combined with --input.");
+  }
+
   return {
     write,
     limit,
     concurrency,
+    maxWindowCount,
+    syncMethod,
+    assetId,
     inputPath,
     outputPath,
     rematchUnmatched,
@@ -618,10 +675,10 @@ async function getSkyBitzAccessToken() {
   throw new Error(`SkyBitz token request failed.\n${failures.join("\n")}`);
 }
 
-async function fetchSkyBitzLatestLocations() {
+async function fetchSkyBitzLatestLocations(assetId: string) {
   const accessToken = await getSkyBitzAccessToken();
   const url = new URL("QueryPositions", SKYBITZ_SERVICE_URL);
-  url.searchParams.set("assetid", "ALL");
+  url.searchParams.set("assetid", assetId);
   url.searchParams.set("accessToken", accessToken);
   url.searchParams.set("version", SKYBITZ_VERSION);
   url.searchParams.set("sortby", "1");
@@ -642,10 +699,10 @@ async function fetchSkyBitzLatestLocations() {
   };
 }
 
-async function fetchSkyBitzWindowedLocations(windowStart: Date, windowEnd: Date) {
+async function fetchSkyBitzWindowedLocations(windowStart: Date, windowEnd: Date, assetId: string) {
   const accessToken = await getSkyBitzAccessToken();
   const url = new URL("QueryPositions", SKYBITZ_SERVICE_URL);
-  url.searchParams.set("assetid", "All");
+  url.searchParams.set("assetid", assetId === "ALL" ? "All" : assetId);
   url.searchParams.set("accessToken", accessToken);
   url.searchParams.set("from", formatSkyBitzQueryDate(windowStart));
   url.searchParams.set("to", formatSkyBitzQueryDate(windowEnd));
@@ -1255,6 +1312,27 @@ async function fetchLatestSuccessfulSyncRun(accessToken: string, companyId: stri
   return payload.value?.[0] ?? null;
 }
 
+async function fetchStaleRunningSyncRuns(accessToken: string, companyId: string) {
+  const url =
+    `${getSkyBitzApiRoot(companyId)}/skybitzSyncRuns` +
+    `?$filter=status eq 'Running'&$orderby=startedAt desc&$top=50`;
+  const { response, bodyText } = await bcRequest(url, accessToken);
+  if (!response.ok) {
+    throw new Error(`Unable to fetch running SkyBitz sync runs (${response.status}): ${bodyText}`);
+  }
+
+  const payload = JSON.parse(bodyText) as { value?: ExistingSkyBitzSyncRun[] };
+  const staleBefore = Date.now() - STALE_RUNNING_RUN_MINUTES * 60 * 1000;
+  return (payload.value ?? []).filter((run) => {
+    if (!run.id || !run.startedAt) {
+      return false;
+    }
+
+    const startedAt = new Date(run.startedAt).getTime();
+    return Number.isFinite(startedAt) && startedAt < staleBefore;
+  });
+}
+
 function dedupeAndCollapseLatest(locations: NormalizedLocation[]) {
   const exactSeen = new Set<string>();
   const latestByMtsn = new Map<string, NormalizedLocation>();
@@ -1288,6 +1366,10 @@ function dedupeAndCollapseLatest(locations: NormalizedLocation[]) {
 
 function payloadNeedsUpdate(existing: ExistingSkyBitzTracker, next: SkyBitzTrackerPayload) {
   return existing.sourceHash !== next.sourceHash || existing.fixedAssetNo !== next.fixedAssetNo || existing.lastError !== next.lastError;
+}
+
+function escapeODataString(value: string) {
+  return value.replace(/'/g, "''");
 }
 
 async function createSyncRun(accessToken: string, companyId: string, payload: SyncRunPayload, write: boolean) {
@@ -1348,6 +1430,19 @@ async function createSyncError(accessToken: string, companyId: string, payload: 
   if (!response.ok) {
     throw new Error(`Unable to create SkyBitz sync error (${response.status}): ${bodyText}`);
   }
+}
+
+async function fetchExistingTrackerByMtsn(accessToken: string, companyId: string, mtsn: string) {
+  const url =
+    `${getSkyBitzApiRoot(companyId)}/skybitzTrackers` +
+    `?$filter=mtsn eq '${escapeODataString(mtsn)}'&$top=1`;
+  const { response, bodyText } = await bcRequest(url, accessToken);
+  if (!response.ok) {
+    throw new Error(`Unable to fetch SkyBitz tracker ${mtsn} (${response.status}): ${bodyText}`);
+  }
+
+  const payload = JSON.parse(bodyText) as { value?: ExistingSkyBitzTracker[] };
+  return payload.value?.[0] ?? null;
 }
 
 function buildErrorSummary(errors: string[]) {
@@ -1412,6 +1507,40 @@ async function upsertTracker(
     });
 
     if (!response.ok) {
+      const duplicateKey =
+        response.status === 400 &&
+        (bodyText.includes("EntityWithSameKeyExists") || bodyText.includes("already exists"));
+
+      if (duplicateKey) {
+        const resolvedExisting = await fetchExistingTrackerByMtsn(accessToken, companyId, payload.mtsn);
+        if (resolvedExisting) {
+          existingMap.set(payload.mtsn, resolvedExisting);
+
+          if (!payloadNeedsUpdate(resolvedExisting, payload)) {
+            return "skipped" as const;
+          }
+
+          const patchUrl = `${getSkyBitzApiRoot(companyId)}/skybitzTrackers(${resolvedExisting.id})`;
+          const patchResult = await bcRequest(patchUrl, accessToken, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              "If-Match": "*",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!patchResult.response.ok) {
+            throw new Error(
+              `Unable to reconcile SkyBitz tracker ${payload.mtsn} after duplicate insert (${patchResult.response.status}): ${patchResult.bodyText}`,
+            );
+          }
+
+          existingMap.set(payload.mtsn, { ...resolvedExisting, ...payload });
+          return "updated" as const;
+        }
+      }
+
       throw new Error(`Unable to insert SkyBitz tracker ${payload.mtsn} (${response.status}): ${bodyText}`);
     }
 
@@ -1457,6 +1586,15 @@ function addCounters(target: SyncCounters, source: SyncCounters) {
   target.unmatchedCount += source.unmatchedCount;
 }
 
+function getCompletedCount(counters: SyncCounters) {
+  return counters.recordsInserted + counters.recordsUpdated + counters.recordsSkipped + counters.recordsFailed;
+}
+
+async function writeSummarySnapshot(outputPath: string, summary: unknown) {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+}
+
 async function recordFailedWindowRun(
   accessToken: string,
   companyId: string,
@@ -1486,6 +1624,52 @@ async function recordFailedWindowRun(
     jobVersion: JOB_VERSION,
   };
   await createSyncRun(accessToken, companyId, payload, write);
+}
+
+async function failStaleRunningSyncRuns(accessToken: string, companyId: string, write: boolean) {
+  if (!write) {
+    return [];
+  }
+
+  const staleRuns = await fetchStaleRunningSyncRuns(accessToken, companyId);
+  const failedIds: string[] = [];
+  for (const run of staleRuns) {
+    if (!run.id || !run.runId || !run.startedAt) {
+      continue;
+    }
+
+    const payload: SyncRunPayload = {
+      runId: run.runId,
+      startedAt: run.startedAt,
+      finishedAt: new Date().toISOString(),
+      sourceWindowStart: run.sourceWindowStart || undefined,
+      sourceWindowEnd: run.sourceWindowEnd || undefined,
+      status: "Failed",
+      recordsSeen: run.recordsSeen ?? 0,
+      recordsInserted: run.recordsInserted ?? 0,
+      recordsUpdated: run.recordsUpdated ?? 0,
+      recordsSkipped: run.recordsSkipped ?? 0,
+      recordsFailed: run.recordsFailed ?? 0,
+      matchedCount: run.matchedCount ?? 0,
+      unmatchedCount: run.unmatchedCount ?? 0,
+      errorSummary: truncate(
+        run.errorSummary
+          ? `${run.errorSummary} | Marked failed on startup after stale running state.`
+          : "Marked failed on startup after stale running state.",
+        MAX_ERROR_SUMMARY_LENGTH,
+      ),
+      jobVersion: JOB_VERSION,
+    };
+
+    try {
+      await updateSyncRun(accessToken, companyId, run.id, payload, write);
+      failedIds.push(run.id);
+    } catch {
+      // Leave the row untouched if the repair fails; do not block the new run.
+    }
+  }
+
+  return failedIds;
 }
 
 async function syncLocationBatch(params: {
@@ -1542,6 +1726,63 @@ async function syncLocationBatch(params: {
   const syncedAt = new Date().toISOString();
   const pendingWithoutLookup: PendingTracker[] = [];
   const pendingWithLookup: PendingTracker[] = [];
+  let lastProgressCount = 0;
+  let lastProgressAt = Date.now();
+  let progressChain: Promise<void> = Promise.resolve();
+
+  const queueProgressUpdate = (force = false) => {
+    const completed = getCompletedCount(counters);
+    const now = Date.now();
+    if (
+      !force &&
+      completed < locations.length &&
+      completed - lastProgressCount < PROGRESS_UPDATE_EVERY &&
+      now - lastProgressAt < PROGRESS_UPDATE_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    lastProgressCount = completed;
+    lastProgressAt = now;
+
+    if (!options.write) {
+      console.log(
+        `[skybitz] ${runId} progress ${completed}/${locations.length} ` +
+          `(inserted=${counters.recordsInserted}, updated=${counters.recordsUpdated}, skipped=${counters.recordsSkipped}, failed=${counters.recordsFailed})`,
+      );
+      return;
+    }
+
+    const progressPayload: SyncRunPayload = {
+      runId,
+      startedAt,
+      sourceWindowStart: sourceWindowStart || undefined,
+      sourceWindowEnd: sourceWindowEnd || undefined,
+      status: "Running",
+      recordsSeen: locations.length,
+      recordsInserted: counters.recordsInserted,
+      recordsUpdated: counters.recordsUpdated,
+      recordsSkipped: counters.recordsSkipped,
+      recordsFailed: counters.recordsFailed,
+      matchedCount: counters.matchedCount,
+      unmatchedCount: counters.unmatchedCount,
+      errorSummary: buildErrorSummary(errors),
+      jobVersion: JOB_VERSION,
+    };
+
+    progressChain = progressChain.then(async () => {
+      try {
+        await updateSyncRun(accessToken, companyId, createdRun.id, progressPayload, options.write);
+        console.log(
+          `[skybitz] ${runId} progress ${completed}/${locations.length} ` +
+            `(inserted=${counters.recordsInserted}, updated=${counters.recordsUpdated}, skipped=${counters.recordsSkipped}, failed=${counters.recordsFailed})`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[skybitz] progress update failed for ${runId}: ${message}`);
+      }
+    });
+  };
 
   for (const location of locations) {
     counters.recordsSeen += 1;
@@ -1577,6 +1818,10 @@ async function syncLocationBatch(params: {
     pendingWithLookup.push({ location, sourceHash, existing: existing ?? null });
   }
 
+  if (options.write) {
+    queueProgressUpdate(true);
+  }
+
   if (pendingWithLookup.length > 0 && !indexesCache.value) {
     const fixedAssets = await fetchAllFixedAssets(accessToken);
     indexesCache.value = buildFixedAssetIndexes(fixedAssets);
@@ -1609,6 +1854,8 @@ async function syncLocationBatch(params: {
       const message = error instanceof Error ? error.message : String(error);
       counters.recordsFailed += 1;
       errors.push(message);
+    } finally {
+      queueProgressUpdate();
     }
   });
 
@@ -1659,8 +1906,13 @@ async function syncLocationBatch(params: {
         const logMessage = logError instanceof Error ? logError.message : String(logError);
         errors.push(`Failed to log sync error for ${payload.mtsn}: ${logMessage}`);
       }
+    } finally {
+      queueProgressUpdate();
     }
   });
+
+  queueProgressUpdate(true);
+  await progressChain;
 
   const finishedAt = new Date().toISOString();
   const finalRunPayload: SyncRunPayload = {
@@ -1686,6 +1938,7 @@ async function syncLocationBatch(params: {
     runId,
     write: options.write,
     companyId,
+    assetIdFilter: options.assetId,
     windowMode,
     windowStart: sourceWindowStart,
     windowEnd: sourceWindowEnd,
@@ -1710,16 +1963,42 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const accessToken = await getBcAccessToken();
   const companyId = await resolveCompanyId(accessToken);
+  const staleRunIds = await failStaleRunningSyncRuns(accessToken, companyId, options.write);
   const existingState = await fetchExistingTrackers(accessToken, companyId, !options.write);
   const existingTrackers = existingState.existing;
   const indexesCache: { value: ReturnType<typeof buildFixedAssetIndexes> | null } = { value: null };
   const batchSummaries: WindowBatchSummary[] = [];
   const overallCounters = createEmptyCounters();
-  let overallWindowMode = "latest-all";
+  let overallWindowMode = "latest-snapshot";
   let overallWindowStart: string | null = null;
   let overallWindowEnd: string | null = null;
   let remainingLimit = options.limit;
   let stoppedOnError: string | null = null;
+
+  const persistOverallSummary = async () => {
+    const summary = {
+      write: options.write,
+      companyId,
+      syncMethod: options.syncMethod === "auto" ? overallWindowMode : options.syncMethod,
+      assetIdFilter: options.assetId,
+      windowMode: overallWindowMode,
+      windowStart: overallWindowStart,
+      windowEnd: overallWindowEnd,
+      customApiAvailable: existingState.apiAvailable,
+      windowChunkMinutes: options.windowChunkMinutes,
+      overlapMinutes: options.overlapMinutes,
+      safetyLagMinutes: options.safetyLagMinutes,
+      maxWindowCount: options.maxWindowCount,
+      staleRunIdsClosedOnStartup: staleRunIds,
+      stoppedOnError,
+      batchesProcessed: batchSummaries.length,
+      counters: overallCounters,
+      batches: batchSummaries,
+      outputGeneratedAt: new Date().toISOString(),
+    };
+    await writeSummarySnapshot(options.outputPath, summary);
+    return summary;
+  };
 
   if (options.inputPath) {
     overallWindowMode = "input";
@@ -1740,7 +2019,11 @@ async function main() {
     });
     batchSummaries.push(summary);
     addCounters(overallCounters, summary.counters);
-  } else if (options.from || options.to || options.sinceLastSuccessfulRun) {
+    await persistOverallSummary();
+  } else if (
+    options.syncMethod === "history-window" ||
+    (options.syncMethod !== "latest-snapshot" && (options.from || options.to || options.sinceLastSuccessfulRun))
+  ) {
     const requestedWindowEnd = options.to
       ? parseIsoDateTime(options.to, "--to")
       : new Date(Date.now() - options.safetyLagMinutes * 60 * 1000);
@@ -1782,8 +2065,13 @@ async function main() {
       overallWindowMode,
     );
 
-    for (const window of windows) {
+    for (let windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
+      const window = windows[windowIndex];
       if (remainingLimit !== null && remainingLimit <= 0) {
+        break;
+      }
+
+      if (options.maxWindowCount !== null && windowIndex >= options.maxWindowCount) {
         break;
       }
 
@@ -1791,7 +2079,7 @@ async function main() {
       const sourceWindowEnd = window.windowEnd.toISOString();
 
       try {
-        const windowedSource = await fetchSkyBitzWindowedLocations(window.windowStart, window.windowEnd);
+        const windowedSource = await fetchSkyBitzWindowedLocations(window.windowStart, window.windowEnd, options.assetId);
         const collapsed = dedupeAndCollapseLatest(windowedSource.records);
         const summary = await syncLocationBatch({
           accessToken,
@@ -1818,6 +2106,7 @@ async function main() {
         if (remainingLimit !== null) {
           remainingLimit -= summary.processed;
         }
+        await persistOverallSummary();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         stoppedOnError = message;
@@ -1830,11 +2119,13 @@ async function main() {
           sourceWindowEnd,
           message,
         );
+        await persistOverallSummary();
         break;
       }
     }
   } else {
-    const source = await fetchSkyBitzLatestLocations();
+    overallWindowMode = "latest-snapshot";
+    const source = await fetchSkyBitzLatestLocations(options.assetId);
     const summary = await syncLocationBatch({
       accessToken,
       companyId,
@@ -1851,27 +2142,10 @@ async function main() {
     });
     batchSummaries.push(summary);
     addCounters(overallCounters, summary.counters);
+    await persistOverallSummary();
   }
 
-  const summary = {
-    write: options.write,
-    companyId,
-    windowMode: overallWindowMode,
-    windowStart: overallWindowStart,
-    windowEnd: overallWindowEnd,
-    customApiAvailable: existingState.apiAvailable,
-    windowChunkMinutes: options.windowChunkMinutes,
-    overlapMinutes: options.overlapMinutes,
-    safetyLagMinutes: options.safetyLagMinutes,
-    stoppedOnError,
-    batchesProcessed: batchSummaries.length,
-    counters: overallCounters,
-    batches: batchSummaries,
-    outputGeneratedAt: new Date().toISOString(),
-  };
-
-  await mkdir(path.dirname(options.outputPath), { recursive: true });
-  await writeFile(options.outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  const summary = await persistOverallSummary();
   console.log(JSON.stringify(summary, null, 2));
 
   if (stoppedOnError) {

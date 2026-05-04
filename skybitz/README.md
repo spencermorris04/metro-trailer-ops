@@ -24,17 +24,29 @@ There are two distinct SkyBitz pull patterns:
 
 ### Latest-state polling
 
-This is the simple snapshot mode:
+This is the primary production sync mode for the current BC table design.
+
+The `SkyBitz Tracker` BC table stores current tracker state, not movement history. Because of that, the fastest and most reliable operational sync is:
 
 - `QueryPositions?assetid=ALL`
 - omit `from` and `to`
 - SkyBitz returns the most recent position for the requested asset scope
 
-This is what `scripts/fetch-latest-locations.ts` uses.
+The BC sync script now treats this as the preferred path:
+
+1. fetch one latest-state snapshot from SkyBitz
+2. preload existing BC SkyBitz tracker rows by `mtsn`
+3. preload the BC fixed asset match index once
+4. compare by `sourceHash`
+5. only insert or patch changed trackers
+
+This avoids replaying intermediate location chatter that the BC table does not preserve anyway.
+
+This is what `scripts/fetch-latest-locations.ts` uses, and it is also the recommended nightly methodology for `scripts/skybitz-sync-bc.ts`.
 
 ### Incremental history polling
 
-This is the more reliable production sync pattern for Business Central.
+This is the recovery/backfill pattern, not the default nightly path.
 
 The vendor docs support `QueryPositions` with `from` and `to` date windows. For nightly operation, the sync script now uses:
 
@@ -46,14 +58,20 @@ The vendor docs support `QueryPositions` with `from` and `to` date windows. For 
 6. collapse to the newest message per `mtsn`
 7. BC upsert only for the resulting latest-per-tracker set
 
-That avoids reprocessing the entire `30k+` asset snapshot every night and is the correct way to consume SkyBitz movement updates reliably.
+That approach is useful when you specifically need controlled backfill/recovery windows. It is slower because SkyBitz returns many intermediate messages for the same tracker, and the BC script still collapses those to a single latest row per `mtsn`.
 
-The practical windowing modes are:
+The practical modes are:
 
-- explicit:
-  - `--from=... --to=...`
-- derived from BC state:
-  - `--since-last-successful-run`
+- explicit latest snapshot:
+  - `--latest-snapshot`
+- implicit latest snapshot:
+  - no window flags at all
+- explicit history replay:
+  - `--history-window --from=... --to=...`
+- BC-watermark history replay:
+  - `--history-window --since-last-successful-run`
+
+The history mode remains available, but it should be treated as a backfill tool. For day-to-day syncing, use latest snapshot mode.
 
 If there is no prior successful BC sync run yet, the script falls back to a bootstrap lookback window. Each successful BC sync run now stores `sourceWindowStart` and `sourceWindowEnd`, and the next incremental run uses that explicit source watermark rather than inferring state from `finishedAt`.
 
@@ -136,31 +154,37 @@ Export the full returned location set to CSV while still using the first 100 row
 npm run skybitz:latest-locations -- --max-results=100 --csv-output=artifacts/skybitz/latest-locations.csv
 ```
 
-Dry-run the BC sync:
+Dry-run the BC sync using the recommended latest snapshot methodology:
 
 ```bash
-npm run skybitz:sync:bc -- --limit=100
+npm run skybitz:sync:bc:latest -- --limit=100
 ```
 
-Write the BC sync:
+Write the BC sync using the recommended latest snapshot methodology:
 
 ```bash
-npm run skybitz:sync:bc -- --write
+npm run skybitz:sync:bc:latest -- --write
 ```
 
-Run an explicit incremental window:
+Run a narrow on-demand sync for one fixed asset number:
 
 ```bash
-npm run skybitz:sync:bc -- --from=2026-04-27T23:00:00Z --to=2026-04-28T00:00:00Z
+npm run skybitz:sync:bc:latest -- --write --assetid=533442
 ```
 
-Run using the last successful BC sync run as the watermark source:
+Run an explicit incremental history window:
 
 ```bash
-npm run skybitz:sync:bc -- --since-last-successful-run
+npm run skybitz:sync:bc:history -- --from=2026-04-27T23:00:00Z --to=2026-04-28T00:00:00Z
 ```
 
-Optional controls for the incremental mode:
+Run history replay using the last successful BC sync run as the watermark source:
+
+```bash
+npm run skybitz:sync:bc:history -- --since-last-successful-run
+```
+
+Optional controls for the history mode:
 
 - `--window-chunk-minutes=60`
 - `--overlap-minutes=15`
@@ -176,11 +200,11 @@ The OAuth2 client credentials flow is working in this workspace against:
 
 The Business Central sync now supports:
 
-- full latest-state snapshot writes
+- full latest-state snapshot writes as the recommended current-state sync path
 - explicit windowed history pulls
 - `since-last-successful-run` watermark mode
 - chunked catch-up windows with explicit source-window persistence
 - overlap and safety-lag controls
 - BC-side retry/backoff for throttling
 
-Large historical windows can still be slow on the SkyBitz side. In practice, the nightly job should use a short rolling window rather than a full-day replay unless you are backfilling.
+Large historical windows are still slower than snapshot mode. In practice, the nightly job should use latest snapshot mode unless you are intentionally backfilling or repairing a gap.

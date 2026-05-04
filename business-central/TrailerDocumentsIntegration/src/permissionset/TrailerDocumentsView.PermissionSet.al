@@ -16,5 +16,6 @@ permissionset 50241 "TRAILER DOCS VIEW"
         page "Trailer Document Card" = X,
         page "Trailer Doc Summary FB" = X,
         page "Trailer Doc History FB" = X,
-        page "Trailer Document Unmatched" = X;
+        page "Trailer Document Unmatched" = X,
+        codeunit "Trailer Document Sync Request" = X;
 }

@@ -8,5 +8,6 @@ permissionset 50191 "SKYBITZ VIEW"
         table "SkyBitz Tracker" = X,
         page "SkyBitz Tracker List" = X,
         page "SkyBitz Tracker Card" = X,
-        page "SkyBitz Tracker FactBox" = X;
+        page "SkyBitz Tracker FactBox" = X,
+        codeunit "SkyBitz Sync Request" = X;
 }

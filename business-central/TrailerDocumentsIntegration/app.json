@@ -2,7 +2,7 @@
   "id": "2e4ec194-23b9-4a74-94f3-d22ae1bd87e6",
   "name": "Trailer Documents Integration",
   "publisher": "Metro Trailer",
-  "version": "1.0.0.2",
+  "version": "1.0.0.3",
   "brief": "SharePoint trailer document data model, APIs, and Fixed Asset UI integration for Business Central.",
   "description": "Creates trailer document, sync run, and sync error data structures, API pages for integration workloads, and Fixed Asset user experience pages and FactBoxes for registration and FHWA inspection documents.",
   "platform": "27.0.0.0",

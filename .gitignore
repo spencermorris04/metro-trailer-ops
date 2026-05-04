@@ -19,11 +19,15 @@
 
 # production
 /build
+business-central/**/build/
+business-central/**/.alpackages/
 
 # misc
 .DS_Store
 *.pem
 /artifacts/
+/.codex-logs/
+/cdk.out/
 
 # debug
 npm-debug.log*

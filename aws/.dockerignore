@@ -1,0 +1,7 @@
+node_modules
+.next
+artifacts
+.git
+.aws
+business-central/**/.alpackages
+business-central/**/build
