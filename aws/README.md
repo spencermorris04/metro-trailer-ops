@@ -12,7 +12,7 @@ This folder contains the AWS infrastructure and runtime code for the unified syn
 
 ## Deployment Notes
 
-The CDK stack creates the ECR repository, ECS cluster, task definition, schedules, queue, API, and secrets. The ECS task definition references the `latest` tag in the generated ECR repository.
+The CDK stack creates the ECR repository, ECS cluster, task definition, schedules, queue, API, and secrets. By default the ECS task definition references the `latest` image tag, but GitHub Actions deployments pass `workerImageTag=<git-sha>` so production tasks use immutable image tags.
 
 Synthesize the stack:
 
@@ -44,6 +44,30 @@ Worker image build flow:
 4. The project builds `aws/Dockerfile` and pushes `latest` to `WorkerRepositoryUri`.
 
 The SkyBitz and Record360 daily schedules are enabled. The trailer-documents daily schedule is currently created disabled so it does not fail before the SharePoint host/site/library secret values are complete.
+
+## GitHub Actions Deployment
+
+The preferred deployment path is the manual GitHub Actions workflow:
+
+- workflow: `.github/workflows/deploy-aws-sync-backend.yml`
+- trigger: manual `workflow_dispatch`
+- repo: `spencermorris04/metro-trailer-ops`
+- branch: `main`
+- AWS role: `arn:aws:iam::452391802972:role/metro-trailer-github-actions-deploy`
+
+The workflow:
+
+1. checks out the repo
+2. installs npm dependencies
+3. type-checks the AWS worker/CDK/SkyBitz sync code
+4. assumes the AWS deploy role using GitHub OIDC
+5. builds `aws/Dockerfile`
+6. pushes the worker image to ECR using the Git commit SHA as the image tag
+7. deploys CDK with `-c workerImageTag=<git-sha>`
+
+That means future ECS tasks use an immutable image tag tied to a Git commit, not a mutable `latest` tag.
+
+The S3 + CodeBuild worker image flow above remains available as a local fallback, but it should not be the normal deployment method once the GitHub workflow has been verified.
 
 ## Runtime Modes
 

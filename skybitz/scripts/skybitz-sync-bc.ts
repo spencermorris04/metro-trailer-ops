@@ -237,6 +237,8 @@ type SyncOptions = {
   overlapMinutes: number;
   safetyLagMinutes: number;
   bootstrapLookbackHours: number;
+  maxLookbackHours: number | null;
+  staleAfterHours: number;
   windowChunkMinutes: number;
 };
 
@@ -297,6 +299,7 @@ const SKYBITZ_VERSION = "2.76";
 const JOB_VERSION = "skybitz-bc-sync/1.2.0";
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_WINDOW_CHUNK_MINUTES = 60;
+const DEFAULT_STALE_AFTER_HOURS = 24;
 const PROGRESS_UPDATE_EVERY = 100;
 const PROGRESS_UPDATE_INTERVAL_MS = 10000;
 const STALE_RUNNING_RUN_MINUTES = 30;
@@ -343,6 +346,8 @@ function parseArgs(argv: string[]): SyncOptions {
   let overlapMinutes = 15;
   let safetyLagMinutes = 5;
   let bootstrapLookbackHours = 24;
+  let maxLookbackHours: number | null = null;
+  let staleAfterHours = DEFAULT_STALE_AFTER_HOURS;
   let windowChunkMinutes = DEFAULT_WINDOW_CHUNK_MINUTES;
 
   for (const arg of argv) {
@@ -437,6 +442,16 @@ function parseArgs(argv: string[]): SyncOptions {
       continue;
     }
 
+    if (arg.startsWith("--max-lookback-hours=")) {
+      maxLookbackHours = parsePositiveInteger(arg.slice("--max-lookback-hours=".length), "--max-lookback-hours");
+      continue;
+    }
+
+    if (arg.startsWith("--stale-after-hours=")) {
+      staleAfterHours = parsePositiveInteger(arg.slice("--stale-after-hours=".length), "--stale-after-hours");
+      continue;
+    }
+
     if (arg.startsWith("--window-chunk-minutes=")) {
       windowChunkMinutes = parsePositiveInteger(
         arg.slice("--window-chunk-minutes=".length),
@@ -476,6 +491,8 @@ function parseArgs(argv: string[]): SyncOptions {
     overlapMinutes,
     safetyLagMinutes,
     bootstrapLookbackHours,
+    maxLookbackHours,
+    staleAfterHours,
     windowChunkMinutes,
   };
 }
@@ -770,7 +787,13 @@ async function loadLocationsFromInput(inputPath: string) {
   };
 }
 
-async function getBcAccessToken() {
+let cachedBcAccessToken: string | null = null;
+
+async function getBcAccessToken(forceRefresh = false) {
+  if (cachedBcAccessToken && !forceRefresh) {
+    return cachedBcAccessToken;
+  }
+
   const tenantId = requireEnv("METRO_GRAPH_TENANT_ID");
   const clientId = requireEnv("METRO_GRAPH_CLIENT_ID");
   const clientSecret = requireEnv("METRO_GRAPH_CLIENT_SECRET");
@@ -796,7 +819,8 @@ async function getBcAccessToken() {
     throw new Error(payload.error_description || `BC authentication failed with HTTP ${response.status}.`);
   }
 
-  return payload.access_token;
+  cachedBcAccessToken = payload.access_token;
+  return cachedBcAccessToken;
 }
 
 function getBcBaseApiRoot() {
@@ -817,17 +841,24 @@ function getSkyBitzApiRoot(companyId: string) {
 }
 
 async function bcRequest(url: string, accessToken: string, init?: RequestInit) {
+  let currentAccessToken = cachedBcAccessToken ?? accessToken;
+
   for (let attempt = 0; attempt <= MAX_BC_RETRIES; attempt += 1) {
     const response = await fetch(url, {
       ...init,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${currentAccessToken}`,
         Accept: "application/json",
         ...(init?.headers ?? {}),
       },
     });
 
     const bodyText = await response.text();
+    if (response.status === 401 && attempt === 0) {
+      currentAccessToken = await getBcAccessToken(true);
+      continue;
+    }
+
     if (response.status !== 429 && response.status !== 503) {
       return { response, bodyText };
     }
@@ -1368,6 +1399,23 @@ function payloadNeedsUpdate(existing: ExistingSkyBitzTracker, next: SkyBitzTrack
   return existing.sourceHash !== next.sourceHash || existing.fixedAssetNo !== next.fixedAssetNo || existing.lastError !== next.lastError;
 }
 
+function isBroadAssetSync(options: SyncOptions) {
+  return options.assetId.toUpperCase() === "ALL";
+}
+
+function isExistingTrackerFresh(existing: ExistingSkyBitzTracker, staleAfterHours: number) {
+  if (!existing.lastSyncedAt) {
+    return false;
+  }
+
+  const lastSyncedAt = new Date(existing.lastSyncedAt).getTime();
+  if (!Number.isFinite(lastSyncedAt)) {
+    return false;
+  }
+
+  return Date.now() - lastSyncedAt < staleAfterHours * 60 * 60 * 1000;
+}
+
 function escapeODataString(value: string) {
   return value.replace(/'/g, "''");
 }
@@ -1789,6 +1837,16 @@ async function syncLocationBatch(params: {
     const sourceHash = buildRawSourceHash(location);
     const existing = existingTrackers.get(truncate(location.mtsn, 30));
 
+    if (existing && isBroadAssetSync(options) && isExistingTrackerFresh(existing, options.staleAfterHours)) {
+      counters.recordsSkipped += 1;
+      if (existing.matchStatus === "Matched") {
+        counters.matchedCount += 1;
+      } else {
+        counters.unmatchedCount += 1;
+      }
+      continue;
+    }
+
     if (existing && (existing.sourceHash === sourceHash || rawSourceMatchesExisting(existing, location))) {
       const existingMatched = existing.matchStatus === "Matched";
       const shouldSkip = existingMatched || !options.rematchUnmatched;
@@ -2050,6 +2108,18 @@ async function main() {
       overallWindowMode = "implicit-lookback";
     }
 
+    if (options.maxLookbackHours !== null) {
+      const earliestAllowedStart = new Date(requestedWindowEnd.getTime() - options.maxLookbackHours * 60 * 60 * 1000);
+      if (requestedWindowStart.getTime() < earliestAllowedStart.getTime()) {
+        console.log(
+          `[skybitz] capping history start from ${requestedWindowStart.toISOString()} ` +
+            `to ${earliestAllowedStart.toISOString()} (--max-lookback-hours=${options.maxLookbackHours})`,
+        );
+        requestedWindowStart = earliestAllowedStart;
+        overallWindowMode = `${overallWindowMode}-capped`;
+      }
+    }
+
     if (requestedWindowStart.getTime() >= requestedWindowEnd.getTime()) {
       throw new Error("SkyBitz sync window start must be earlier than window end.");
     }
@@ -2065,48 +2135,28 @@ async function main() {
       overallWindowMode,
     );
 
-    for (let windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
-      const window = windows[windowIndex];
-      if (remainingLimit !== null && remainingLimit <= 0) {
-        break;
-      }
+    const plannedWindows =
+      options.maxWindowCount === null ? windows : windows.slice(0, options.maxWindowCount);
+    const rawWindowRecords: NormalizedLocation[] = [];
+    const requestUrls: string[] = [];
+    let responseErrorCode = "";
+    let responseErrorText = "";
 
-      if (options.maxWindowCount !== null && windowIndex >= options.maxWindowCount) {
-        break;
-      }
-
+    for (let windowIndex = 0; windowIndex < plannedWindows.length; windowIndex += 1) {
+      const window = plannedWindows[windowIndex];
       const sourceWindowStart = window.windowStart.toISOString();
       const sourceWindowEnd = window.windowEnd.toISOString();
 
       try {
+        console.log(
+          `[skybitz] fetching history window ${windowIndex + 1}/${plannedWindows.length}: ` +
+            `${sourceWindowStart} to ${sourceWindowEnd}`,
+        );
         const windowedSource = await fetchSkyBitzWindowedLocations(window.windowStart, window.windowEnd, options.assetId);
-        const collapsed = dedupeAndCollapseLatest(windowedSource.records);
-        const summary = await syncLocationBatch({
-          accessToken,
-          companyId,
-          options,
-          existingTrackers,
-          customApiAvailable: existingState.apiAvailable,
-          indexesCache,
-          source: {
-            ...windowedSource,
-            records: collapsed.latestPerTracker,
-          },
-          windowMode: overallWindowMode,
-          sourceWindowStart,
-          sourceWindowEnd,
-          dedupeStats: {
-            distinctMessages: collapsed.distinctMessages,
-            latestPerTrackerCount: collapsed.latestPerTracker.length,
-          },
-          limitOverride: remainingLimit,
-        });
-        batchSummaries.push(summary);
-        addCounters(overallCounters, summary.counters);
-        if (remainingLimit !== null) {
-          remainingLimit -= summary.processed;
-        }
-        await persistOverallSummary();
+        rawWindowRecords.push(...windowedSource.records);
+        requestUrls.push(windowedSource.requestUrl);
+        responseErrorCode ||= windowedSource.responseErrorCode;
+        responseErrorText ||= windowedSource.responseErrorText;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         stoppedOnError = message;
@@ -2122,6 +2172,45 @@ async function main() {
         await persistOverallSummary();
         break;
       }
+    }
+
+    if (!stoppedOnError) {
+      const collapsed = dedupeAndCollapseLatest(rawWindowRecords);
+      const sourceWindowStart = plannedWindows[0]?.windowStart.toISOString() ?? overallWindowStart;
+      const sourceWindowEnd =
+        plannedWindows[plannedWindows.length - 1]?.windowEnd.toISOString() ?? overallWindowEnd;
+      const source: SourceFetchResult = {
+        requestUrl: requestUrls.length === 1 ? requestUrls[0] : `windowed:${requestUrls.length}`,
+        responseErrorCode,
+        responseErrorText,
+        records: collapsed.latestPerTracker,
+      };
+
+      console.log(
+        `[skybitz] collapsed ${collapsed.distinctMessages} distinct history message(s) ` +
+          `to ${collapsed.latestPerTracker.length} latest tracker row(s) before BC writes.`,
+      );
+
+      const summary = await syncLocationBatch({
+        accessToken,
+        companyId,
+        options,
+        existingTrackers,
+        customApiAvailable: existingState.apiAvailable,
+        indexesCache,
+        source,
+        windowMode: overallWindowMode,
+        sourceWindowStart,
+        sourceWindowEnd,
+        dedupeStats: {
+          distinctMessages: collapsed.distinctMessages,
+          latestPerTrackerCount: collapsed.latestPerTracker.length,
+        },
+        limitOverride: remainingLimit,
+      });
+      batchSummaries.push(summary);
+      addCounters(overallCounters, summary.counters);
+      await persistOverallSummary();
     }
   } else {
     overallWindowMode = "latest-snapshot";

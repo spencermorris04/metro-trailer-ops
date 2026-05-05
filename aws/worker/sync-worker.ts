@@ -4,7 +4,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
-type Integration = "skybitz" | "record360" | "trailerDocuments";
+type Integration = "skybitz" | "skybitzReconcile" | "record360" | "trailerDocuments";
 type Mode = "daily" | "ondemand";
 
 type SyncRequest = {
@@ -38,41 +38,47 @@ async function processQueue() {
     throw new Error("SYNC_REQUEST_QUEUE_URL is required for queue mode.");
   }
 
-  const received = await sqs.send(
-    new ReceiveMessageCommand({
-      QueueUrl: queueUrl,
-      MaxNumberOfMessages: 5,
-      WaitTimeSeconds: 5,
-      VisibilityTimeout: 7200,
-    }),
-  );
+  let processedCount = 0;
 
-  const messages = received.Messages ?? [];
-  if (messages.length === 0) {
-    console.log("No queued sync requests.");
-    return;
-  }
+  while (true) {
+    const received = await sqs.send(
+      new ReceiveMessageCommand({
+        QueueUrl: queueUrl,
+        MaxNumberOfMessages: 5,
+        WaitTimeSeconds: 5,
+        VisibilityTimeout: 7200,
+      }),
+    );
 
-  for (const message of messages) {
-    if (!message.Body || !message.ReceiptHandle) {
-      continue;
+    const messages = received.Messages ?? [];
+    if (messages.length === 0) {
+      console.log(processedCount === 0 ? "No queued sync requests." : `Queue drained after ${processedCount} request(s).`);
+      return;
     }
 
-    const request = JSON.parse(message.Body) as SyncRequest;
-    await updateRequest(request.requestId, "Running", "");
-    try {
-      await runJob(request);
-      await updateRequest(request.requestId, "Succeeded", "");
-      await sqs.send(
-        new DeleteMessageCommand({
-          QueueUrl: queueUrl,
-          ReceiptHandle: message.ReceiptHandle,
-        }),
-      );
-    } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error);
-      await updateRequest(request.requestId, "Failed", messageText);
-      throw error;
+    console.log(`Received ${messages.length} queued sync request(s).`);
+    for (const message of messages) {
+      if (!message.Body || !message.ReceiptHandle) {
+        continue;
+      }
+
+      const request = JSON.parse(message.Body) as SyncRequest;
+      await updateRequest(request.requestId, "Running", "");
+      try {
+        await runJob(request);
+        await updateRequest(request.requestId, "Succeeded", "");
+        await sqs.send(
+          new DeleteMessageCommand({
+            QueueUrl: queueUrl,
+            ReceiptHandle: message.ReceiptHandle,
+          }),
+        );
+        processedCount += 1;
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+        await updateRequest(request.requestId, "Failed", messageText);
+        console.error(`Sync request ${request.requestId} failed: ${messageText}`);
+      }
     }
   }
 }
@@ -98,6 +104,9 @@ function normalizeIntegration(value: string): Integration {
   if (value === "skybitz") {
     return "skybitz";
   }
+  if (value === "skybitz-reconcile" || value === "skybitzReconcile") {
+    return "skybitzReconcile";
+  }
   if (value === "record360") {
     return "record360";
   }
@@ -117,12 +126,30 @@ async function runJob(request: SyncRequest) {
 function buildCommand(request: SyncRequest) {
   if (request.mode === "daily") {
     if (request.integration === "skybitz") {
+      return [
+        "npm",
+        "run",
+        "skybitz:sync:bc:history",
+        "--",
+        "--write",
+        "--since-last-successful-run",
+        "--window-chunk-minutes=60",
+        "--overlap-minutes=15",
+        "--safety-lag-minutes=5",
+        "--max-lookback-hours=24",
+        "--stale-after-hours=24",
+        "--concurrency=3",
+      ];
+    }
+    if (request.integration === "skybitzReconcile") {
       return ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", "--concurrency=3"];
     }
     if (request.integration === "record360") {
       return ["npm", "run", "record360:sync:bc", "--", "--write", "--concurrency=3"];
     }
-    return ["npm", "run", "sharepoint:sync:bc", "--", "--write", "--delta", "--concurrency=6"];
+    if (request.integration === "trailerDocuments") {
+      return ["npm", "run", "sharepoint:sync:bc", "--", "--write", "--delta", "--concurrency=6"];
+    }
   }
 
   const fixedAssetNo = request.fixedAssetNo?.trim();
@@ -136,7 +163,11 @@ function buildCommand(request: SyncRequest) {
   if (request.integration === "record360") {
     return ["npm", "run", "record360:sync:bc", "--", "--write", `--trailer-no=${fixedAssetNo}`, "--concurrency=2"];
   }
-  return ["npm", "run", "sharepoint:sync:bc", "--", "--write", `--folders=${fixedAssetNo}`, "--concurrency=1"];
+  if (request.integration === "trailerDocuments") {
+    return ["npm", "run", "sharepoint:sync:bc", "--", "--write", `--folders=${fixedAssetNo}`, "--concurrency=1"];
+  }
+
+  throw new Error(`Unsupported sync request: ${request.mode}:${request.integration}`);
 }
 
 function run(command: string, args: string[]) {

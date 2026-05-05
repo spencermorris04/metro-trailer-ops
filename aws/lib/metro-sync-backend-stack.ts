@@ -21,6 +21,10 @@ export class MetroSyncBackendStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
+    const workerImageTag = String(this.node.tryGetContext("workerImageTag") ?? process.env.WORKER_IMAGE_TAG ?? "latest");
+    const githubOwner = "spencermorris04";
+    const githubRepo = "metro-trailer-ops";
+
     const vpc = new ec2.Vpc(this, "Vpc", {
       maxAzs: 2,
       natGateways: 0,
@@ -44,6 +48,24 @@ export class MetroSyncBackendStack extends Stack {
       imageScanOnPush: true,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+
+    const githubOidcProvider = iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(
+      this,
+      "GitHubOidcProvider",
+      `arn:aws:iam::${this.account}:oidc-provider/token.actions.githubusercontent.com`,
+    );
+
+    const githubDeployRole = new iam.Role(this, "GitHubActionsDeployRole", {
+      roleName: "metro-trailer-github-actions-deploy",
+      assumedBy: new iam.WebIdentityPrincipal(githubOidcProvider.openIdConnectProviderArn, {
+        StringEquals: {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": `repo:${githubOwner}/${githubRepo}:ref:refs/heads/main`,
+        },
+      }),
+      description: "Manual GitHub Actions deploy role for the Metro Trailer AWS sync backend.",
+    });
+    githubDeployRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess"));
 
     const sourceBucket = new s3.Bucket(this, "WorkerSourceBucket", {
       bucketName: `metro-trailer-sync-worker-source-${this.account}-${this.region}`,
@@ -167,9 +189,12 @@ export class MetroSyncBackendStack extends Stack {
       secretName: "metro-trailer/sharepoint",
       secretStringValue: cdk.SecretValue.unsafePlainText(
         JSON.stringify({
-          SHAREPOINT_HOSTNAME: "",
+          SHAREPOINT_HOSTNAME: "metrotrailerleasing.sharepoint.com",
+          SHAREPOINT_SITE_ID:
+            "metrotrailerleasing.sharepoint.com,36d1633f-ec13-4c65-a9dc-18ec62cd8679,c509d15b-1e9a-405f-80f6-e3315235f226",
           SHAREPOINT_SITE_PATH: "",
-          SHAREPOINT_LIBRARY_NAME: "",
+          SHAREPOINT_DRIVE_ID: "",
+          SHAREPOINT_LIBRARY_NAME: "WebPortal",
           SHAREPOINT_BASE_FOLDER_PATH: "FixedAssets",
         }),
       ),
@@ -188,7 +213,7 @@ export class MetroSyncBackendStack extends Stack {
     });
 
     const container = taskDefinition.addContainer("worker", {
-      image: ecs.ContainerImage.fromEcrRepository(repository, "latest"),
+      image: ecs.ContainerImage.fromEcrRepository(repository, workerImageTag),
       logging: ecs.LogDrivers.awsLogs({
         logGroup: taskLogGroup,
         streamPrefix: "worker",
@@ -213,7 +238,9 @@ export class MetroSyncBackendStack extends Stack {
         RECORD360_API_KEY_SECRET: ecs.Secret.fromSecretsManager(record360Secret, "RECORD360_API_KEY_SECRET"),
         RECORD360_API_BASE_URL: ecs.Secret.fromSecretsManager(record360Secret, "RECORD360_API_BASE_URL"),
         SHAREPOINT_HOSTNAME: ecs.Secret.fromSecretsManager(sharePointSecret, "SHAREPOINT_HOSTNAME"),
+        SHAREPOINT_SITE_ID: ecs.Secret.fromSecretsManager(sharePointSecret, "SHAREPOINT_SITE_ID"),
         SHAREPOINT_SITE_PATH: ecs.Secret.fromSecretsManager(sharePointSecret, "SHAREPOINT_SITE_PATH"),
+        SHAREPOINT_DRIVE_ID: ecs.Secret.fromSecretsManager(sharePointSecret, "SHAREPOINT_DRIVE_ID"),
         SHAREPOINT_LIBRARY_NAME: ecs.Secret.fromSecretsManager(sharePointSecret, "SHAREPOINT_LIBRARY_NAME"),
         SHAREPOINT_BASE_FOLDER_PATH: ecs.Secret.fromSecretsManager(sharePointSecret, "SHAREPOINT_BASE_FOLDER_PATH"),
       },
@@ -281,6 +308,12 @@ export class MetroSyncBackendStack extends Stack {
       ruleName: "metro-trailer-daily-skybitz-sync",
       schedule: events.Schedule.cron({ minute: "15", hour: "6" }),
       targets: [runTaskTarget("daily:skybitz")],
+    });
+
+    new events.Rule(this, "WeeklySkyBitzReconciliationSchedule", {
+      ruleName: "metro-trailer-weekly-skybitz-reconciliation",
+      schedule: events.Schedule.cron({ minute: "5", hour: "6", weekDay: "SUN" }),
+      targets: [runTaskTarget("daily:skybitz-reconcile")],
     });
 
     new events.Rule(this, "DailyRecord360Schedule", {
@@ -372,6 +405,12 @@ export class MetroSyncBackendStack extends Stack {
     });
     new cdk.CfnOutput(this, "ApiSecretName", {
       value: apiSecret.secretName,
+    });
+    new cdk.CfnOutput(this, "GitHubActionsDeployRoleArn", {
+      value: githubDeployRole.roleArn,
+    });
+    new cdk.CfnOutput(this, "WorkerImageTag", {
+      value: workerImageTag,
     });
   }
 }

@@ -22,9 +22,39 @@ There are two distinct SkyBitz pull patterns:
 1. latest-state polling
 2. incremental history polling
 
-### Latest-state polling
+### Daily incremental refresh
 
 This is the primary production sync mode for the current BC table design.
+
+The vendor docs support `QueryPositions` with `from` and `to` date windows. The daily AWS job uses that windowed pull instead of re-reading every tracker:
+
+- `QueryPositions?assetid=All`
+- `from` comes from the last successful BC SkyBitz sync run's `sourceWindowEnd`
+- `to` is the current time minus a small safety lag
+- each run overlaps the prior source window slightly
+- routine daily catch-up is capped at 24 hours unless a backfill is run explicitly
+- existing tracker rows synced within the last 24 hours are treated as fresh and skipped
+
+The daily command is:
+
+```bash
+npm run skybitz:sync:bc:history -- --write --since-last-successful-run --window-chunk-minutes=60 --overlap-minutes=15 --safety-lag-minutes=5 --max-lookback-hours=24 --stale-after-hours=24 --concurrency=3
+```
+
+The sync script then:
+
+1. splits catch-up ranges into fixed 60-minute windows
+2. dedupes by `mtsn + time`
+3. collapses the entire source range to the newest message per `mtsn`
+4. matches those trackers to BC fixed assets
+5. inserts new rows and patches only stale changed BC tracker rows once
+6. records `sourceWindowStart` and `sourceWindowEnd` for the completed source range
+
+This is faster than a full latest-state snapshot because the daily job processes trackers that reported recently, not all 30k+ trackers.
+
+On-demand syncs intentionally bypass the 24-hour freshness rule because the user is asking for a specific trailer refresh.
+
+### Latest-state polling
 
 The `SkyBitz Tracker` BC table stores current tracker state, not movement history. Because of that, the fastest and most reliable operational sync is:
 
@@ -42,23 +72,26 @@ The BC sync script now treats this as the preferred path:
 
 This avoids replaying intermediate location chatter that the BC table does not preserve anyway.
 
-This is what `scripts/fetch-latest-locations.ts` uses, and it is also the recommended nightly methodology for `scripts/skybitz-sync-bc.ts`.
+This is what `scripts/fetch-latest-locations.ts` uses. In AWS, latest-state polling is used for:
+
+- per-trailer on-demand sync from the FactBox/API button
+- weekly full reconciliation so stale or missed trackers are corrected
 
 ### Incremental history polling
 
-This is the recovery/backfill pattern, not the default nightly path.
+This is the daily refresh and recovery/backfill pattern.
 
-The vendor docs support `QueryPositions` with `from` and `to` date windows. For nightly operation, the sync script now uses:
+For nightly operation, the sync script uses:
 
 1. a bounded `from` / `to` window against `QueryPositions`
 2. small fixed chunk windows during catch-up, not one giant replay query
 3. a small overlap on every run
 4. a small safety lag on the window end
 5. client-side dedupe by `mtsn + time`
-6. collapse to the newest message per `mtsn`
+6. collapse the full source range to the newest message per `mtsn`
 7. BC upsert only for the resulting latest-per-tracker set
 
-That approach is useful when you specifically need controlled backfill/recovery windows. It is slower because SkyBitz returns many intermediate messages for the same tracker, and the BC script still collapses those to a single latest row per `mtsn`.
+That approach is useful when you specifically need controlled daily refresh or backfill/recovery windows. It can return many intermediate messages for the same tracker, so the BC script collapses those to a single latest row per `mtsn` before writing. The script intentionally does not write after every one-hour fetch chunk, because that would update the same active tracker repeatedly during catch-up.
 
 The practical modes are:
 
@@ -71,7 +104,7 @@ The practical modes are:
 - BC-watermark history replay:
   - `--history-window --since-last-successful-run`
 
-The history mode remains available, but it should be treated as a backfill tool. For day-to-day syncing, use latest snapshot mode.
+The AWS daily job uses the BC-watermark history replay mode. Weekly reconciliation uses latest snapshot mode.
 
 If there is no prior successful BC sync run yet, the script falls back to a bootstrap lookback window. Each successful BC sync run now stores `sourceWindowStart` and `sourceWindowEnd`, and the next incremental run uses that explicit source watermark rather than inferring state from `finishedAt`.
 
@@ -154,13 +187,13 @@ Export the full returned location set to CSV while still using the first 100 row
 npm run skybitz:latest-locations -- --max-results=100 --csv-output=artifacts/skybitz/latest-locations.csv
 ```
 
-Dry-run the BC sync using the recommended latest snapshot methodology:
+Dry-run the BC sync using latest snapshot methodology:
 
 ```bash
 npm run skybitz:sync:bc:latest -- --limit=100
 ```
 
-Write the BC sync using the recommended latest snapshot methodology:
+Write the BC sync using latest snapshot methodology:
 
 ```bash
 npm run skybitz:sync:bc:latest -- --write
@@ -184,12 +217,20 @@ Run history replay using the last successful BC sync run as the watermark source
 npm run skybitz:sync:bc:history -- --since-last-successful-run
 ```
 
+Write the daily incremental refresh mode used by AWS:
+
+```bash
+npm run skybitz:sync:bc:history -- --write --since-last-successful-run --window-chunk-minutes=60 --overlap-minutes=15 --safety-lag-minutes=5 --max-lookback-hours=24 --stale-after-hours=24 --concurrency=3
+```
+
 Optional controls for the history mode:
 
 - `--window-chunk-minutes=60`
 - `--overlap-minutes=15`
 - `--safety-lag-minutes=5`
 - `--bootstrap-lookback-hours=24`
+- `--max-lookback-hours=24`
+- `--stale-after-hours=24`
 - `--rematch-unmatched`
 
 ## Current status
@@ -200,11 +241,14 @@ The OAuth2 client credentials flow is working in this workspace against:
 
 The Business Central sync now supports:
 
-- full latest-state snapshot writes as the recommended current-state sync path
+- daily incremental history-window writes as the recommended current-state sync path
+- weekly full latest-state snapshot writes as reconciliation
 - explicit windowed history pulls
 - `since-last-successful-run` watermark mode
 - chunked catch-up windows with explicit source-window persistence
 - overlap and safety-lag controls
 - BC-side retry/backoff for throttling
 
-Large historical windows are still slower than snapshot mode. In practice, the nightly job should use latest snapshot mode unless you are intentionally backfilling or repairing a gap.
+Large historical catch-up windows can still be slow. In practice, the daily job should use the last-successful watermark with chunking, and the weekly reconciliation job should use latest snapshot mode to correct any stale or missed trackers.
+
+SkyBitz Data Push would be the next improvement if near-real-time updates are required. It is not implemented here because it requires vendor-side endpoint setup and receiver hardening.

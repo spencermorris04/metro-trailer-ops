@@ -1,0 +1,60 @@
+name: Deploy AWS Sync Backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-2
+  AWS_ACCOUNT_ID: "452391802972"
+  ECR_REPOSITORY: metro-trailer-sync-worker
+  DEPLOY_ROLE_ARN: arn:aws:iam::452391802972:role/metro-trailer-github-actions-deploy
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate sync backend TypeScript
+        run: npx tsc --noEmit --skipLibCheck --module nodenext --moduleResolution nodenext --target es2022 aws/worker/sync-worker.ts skybitz/scripts/skybitz-sync-bc.ts aws/lib/metro-sync-backend-stack.ts
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push worker image
+        env:
+          IMAGE_URI: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          docker build -f aws/Dockerfile -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+
+      - name: Deploy CDK stack
+        run: npm run aws:deploy -- --require-approval never -c workerImageTag=${{ github.sha }}
+
+      - name: Deployment summary
+        run: |
+          echo "Deployed worker image tag: ${{ github.sha }}"
+          echo "Stack: MetroTrailerSyncBackend"
