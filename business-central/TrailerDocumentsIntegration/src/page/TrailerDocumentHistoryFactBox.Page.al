@@ -85,6 +85,22 @@ page 50226 "Trailer Doc History FB"
                     Page.Run(Page::"Trailer Document List", Document);
                 end;
             }
+            action(RequestSync)
+            {
+                Caption = 'Request Sync';
+                ApplicationArea = All;
+                Image = Refresh;
+
+                trigger OnAction()
+                var
+                    SyncRequest: Codeunit "Trailer Document Sync Request";
+                    FixedAssetNo: Code[20];
+                begin
+                    FixedAssetNo := GetCurrentFixedAssetNo();
+                    SyncRequest.RequestOnDemandSync(FixedAssetNo);
+                    Message('Trailer document sync request queued for fixed asset %1.', FixedAssetNo);
+                end;
+            }
         }
     }
 
@@ -108,6 +124,21 @@ page 50226 "Trailer Doc History FB"
             Error('No document URL is available for this record.');
 
         Hyperlink(Rec."Web URL");
+    end;
+
+    local procedure GetCurrentFixedAssetNo(): Code[20]
+    var
+        FixedAssetFilter: Text;
+    begin
+        if Rec."Fixed Asset No." <> '' then
+            exit(CopyStr(Rec."Fixed Asset No.", 1, 20));
+
+        FixedAssetFilter := Rec.GetFilter("Fixed Asset No.");
+        FixedAssetFilter := DelChr(FixedAssetFilter, '=', '''');
+        if FixedAssetFilter <> '' then
+            exit(CopyStr(FixedAssetFilter, 1, 20));
+
+        Error('No fixed asset number is available for this Trailer Documents FactBox.');
     end;
 
     var

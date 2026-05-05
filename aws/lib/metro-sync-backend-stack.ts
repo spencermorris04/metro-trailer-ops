@@ -326,7 +326,6 @@ export class MetroSyncBackendStack extends Stack {
 
     new events.Rule(this, "DailyTrailerDocumentsSchedule", {
       ruleName: "metro-trailer-daily-trailer-documents-sync",
-      enabled: false,
       schedule: events.Schedule.cron({ minute: "15", hour: "7" }),
       targets: [runTaskTarget("daily:trailer-documents")],
     });

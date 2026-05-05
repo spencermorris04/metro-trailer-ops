@@ -82,6 +82,22 @@ page 50175 "SkyBitz Tracker FactBox"
                     Page.Run(Page::"SkyBitz Tracker Card", Rec);
                 end;
             }
+            action(RequestSync)
+            {
+                Caption = 'Request Sync';
+                ApplicationArea = All;
+                Image = Refresh;
+
+                trigger OnAction()
+                var
+                    SyncRequest: Codeunit "SkyBitz Sync Request";
+                    FixedAssetNo: Code[20];
+                begin
+                    FixedAssetNo := GetCurrentFixedAssetNo();
+                    SyncRequest.RequestOnDemandSync(FixedAssetNo);
+                    Message('SkyBitz sync request queued for fixed asset %1.', FixedAssetNo);
+                end;
+            }
         }
     }
 
@@ -97,5 +113,20 @@ page 50175 "SkyBitz Tracker FactBox"
             Error('No coordinates are available for this SkyBitz tracker.');
 
         Hyperlink(StrSubstNo('https://www.google.com/maps?q=%1,%2', Format(Rec.Latitude), Format(Rec.Longitude)));
+    end;
+
+    local procedure GetCurrentFixedAssetNo(): Code[20]
+    var
+        FixedAssetFilter: Text;
+    begin
+        if Rec."Fixed Asset No." <> '' then
+            exit(CopyStr(Rec."Fixed Asset No.", 1, 20));
+
+        FixedAssetFilter := Rec.GetFilter("Fixed Asset No.");
+        FixedAssetFilter := DelChr(FixedAssetFilter, '=', '''');
+        if FixedAssetFilter <> '' then
+            exit(CopyStr(FixedAssetFilter, 1, 20));
+
+        Error('No fixed asset number is available for this SkyBitz FactBox.');
     end;
 }

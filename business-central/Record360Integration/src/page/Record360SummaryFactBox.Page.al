@@ -89,6 +89,22 @@ page 50115 "Record360 Summary FactBox"
                     Page.Run(Page::"Record360 Inspection List", Inspection);
                 end;
             }
+            action(RequestSync)
+            {
+                Caption = 'Request Sync';
+                ApplicationArea = All;
+                Image = Refresh;
+
+                trigger OnAction()
+                var
+                    SyncRequest: Codeunit "Record360 Sync Request";
+                    FixedAssetNo: Code[20];
+                begin
+                    FixedAssetNo := GetCurrentFixedAssetNo();
+                    SyncRequest.RequestOnDemandSync(FixedAssetNo);
+                    Message('Record360 sync request queued for fixed asset %1.', FixedAssetNo);
+                end;
+            }
         }
     }
 
@@ -112,5 +128,20 @@ page 50115 "Record360 Summary FactBox"
             Error('No Record360 dashboard URL is available for this inspection.');
 
         Hyperlink(Rec."Dashboard URL");
+    end;
+
+    local procedure GetCurrentFixedAssetNo(): Code[20]
+    var
+        TrailerFilter: Text;
+    begin
+        if Rec."Trailer No." <> '' then
+            exit(CopyStr(Rec."Trailer No.", 1, 20));
+
+        TrailerFilter := Rec.GetFilter("Trailer No.");
+        TrailerFilter := DelChr(TrailerFilter, '=', '''');
+        if TrailerFilter <> '' then
+            exit(CopyStr(TrailerFilter, 1, 20));
+
+        Error('No fixed asset number is available for this Record360 FactBox.');
     end;
 }

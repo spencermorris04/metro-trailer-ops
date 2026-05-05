@@ -43,7 +43,7 @@ Worker image build flow:
 3. Start the `WorkerImageBuildProjectName` CodeBuild project.
 4. The project builds `aws/Dockerfile` and pushes `latest` to `WorkerRepositoryUri`.
 
-The SkyBitz and Record360 daily schedules are enabled. The trailer-documents daily schedule is currently created disabled so it does not fail before the SharePoint host/site/library secret values are complete.
+The SkyBitz, Record360, and trailer-documents daily schedules are enabled. Trailer documents uses the SharePoint delta/backfill state files so the daily run does not intentionally rescan every folder.
 
 ## GitHub Actions Deployment
 
@@ -94,7 +94,7 @@ The API intake and queue worker have been smoke-tested with an on-demand SkyBitz
 
 ## Business Central Buttons
 
-Each BC extension now includes a small setup page and a `Request Sync` action on the Fixed Asset Card:
+Each BC extension now includes a small setup page and `Request Sync` actions on the Fixed Asset Card and related FactBox:
 
 - `SkyBitz Sync API Setup`
 - `Record360 Sync API Setup`
