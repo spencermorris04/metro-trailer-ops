@@ -148,7 +148,16 @@ function buildCommand(request: SyncRequest) {
       return ["npm", "run", "record360:sync:bc", "--", "--write", "--concurrency=3"];
     }
     if (request.integration === "trailerDocuments") {
-      return ["npm", "run", "sharepoint:sync:bc", "--", "--write", "--delta", "--concurrency=6"];
+      return [
+        "npm",
+        "run",
+        "sharepoint:sync:bc",
+        "--",
+        "--write",
+        "--delta",
+        ...buildSharePointStateArgs(),
+        "--concurrency=6",
+      ];
     }
   }
 
@@ -168,6 +177,18 @@ function buildCommand(request: SyncRequest) {
   }
 
   throw new Error(`Unsupported sync request: ${request.mode}:${request.integration}`);
+}
+
+function buildSharePointStateArgs() {
+  const bucket = process.env.SHAREPOINT_SYNC_STATE_BUCKET?.trim();
+  if (!bucket) {
+    return [];
+  }
+
+  return [
+    `--delta-state=s3://${bucket}/state/sharepoint-sync-state.json`,
+    `--backfill-state=s3://${bucket}/state/sharepoint-backfill-state.json`,
+  ];
 }
 
 function run(command: string, args: string[]) {

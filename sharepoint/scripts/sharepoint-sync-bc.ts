@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
+import { GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { config as loadEnv } from "dotenv";
 
 loadEnv();
@@ -283,6 +284,7 @@ const DEFAULT_BACKFILL_STATE_PATH = path.join(
 const JOB_VERSION = "sharepoint-bc-sync/1.0.0";
 const MAX_ERROR_SUMMARY_LENGTH = 2048;
 let runtimeRequestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
+const s3Client = new S3Client({});
 
 function requireFirstEnv(names: string[]) {
   for (const name of names) {
@@ -385,12 +387,12 @@ function parseArgs(argv: string[]): SyncOptions {
     }
 
     if (arg.startsWith("--delta-state=")) {
-      deltaStatePath = path.resolve(arg.slice("--delta-state=".length).trim());
+      deltaStatePath = normalizeStoragePath(arg.slice("--delta-state=".length).trim());
       continue;
     }
 
     if (arg.startsWith("--backfill-state=")) {
-      backfillStatePath = path.resolve(arg.slice("--backfill-state=".length).trim());
+      backfillStatePath = normalizeStoragePath(arg.slice("--backfill-state=".length).trim());
       continue;
     }
 
@@ -474,6 +476,32 @@ function normalizeFolderPath(folderPath: string) {
     .map((segment) => segment.trim())
     .filter(Boolean)
     .join("/");
+}
+
+function normalizeStoragePath(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase().startsWith("s3://")) {
+    return trimmed;
+  }
+
+  return path.resolve(trimmed);
+}
+
+function parseS3Uri(value: string) {
+  if (!value.toLowerCase().startsWith("s3://")) {
+    return null;
+  }
+
+  const withoutScheme = value.slice("s3://".length);
+  const slashIndex = withoutScheme.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === withoutScheme.length - 1) {
+    throw new Error(`Invalid S3 URI: ${value}`);
+  }
+
+  return {
+    bucket: withoutScheme.slice(0, slashIndex),
+    key: withoutScheme.slice(slashIndex + 1),
+  };
 }
 
 function encodeGraphPath(folderPath: string) {
@@ -1886,11 +1914,22 @@ function buildDocumentPayload(
 }
 
 async function writeSummary(summaryPath: string, payload: Record<string, unknown>) {
+  const s3Uri = parseS3Uri(summaryPath);
+  if (s3Uri) {
+    await writeJsonToS3(s3Uri.bucket, s3Uri.key, payload);
+    return;
+  }
+
   await mkdir(path.dirname(summaryPath), { recursive: true });
   await writeFile(summaryPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 async function readDeltaState(deltaStatePath: string): Promise<DeltaState | null> {
+  const s3Uri = parseS3Uri(deltaStatePath);
+  if (s3Uri) {
+    return readJsonFromS3<DeltaState>(s3Uri.bucket, s3Uri.key);
+  }
+
   try {
     const raw = await readFile(deltaStatePath, "utf8");
     return JSON.parse(raw) as DeltaState;
@@ -1900,11 +1939,22 @@ async function readDeltaState(deltaStatePath: string): Promise<DeltaState | null
 }
 
 async function writeDeltaState(deltaStatePath: string, state: DeltaState) {
+  const s3Uri = parseS3Uri(deltaStatePath);
+  if (s3Uri) {
+    await writeJsonToS3(s3Uri.bucket, s3Uri.key, state);
+    return;
+  }
+
   await mkdir(path.dirname(deltaStatePath), { recursive: true });
   await writeFile(deltaStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
 async function readBackfillState(backfillStatePath: string): Promise<BackfillState | null> {
+  const s3Uri = parseS3Uri(backfillStatePath);
+  if (s3Uri) {
+    return readJsonFromS3<BackfillState>(s3Uri.bucket, s3Uri.key);
+  }
+
   try {
     const raw = await readFile(backfillStatePath, "utf8");
     return JSON.parse(raw.replace(/^\uFEFF/, "")) as BackfillState;
@@ -1914,8 +1964,43 @@ async function readBackfillState(backfillStatePath: string): Promise<BackfillSta
 }
 
 async function writeBackfillState(backfillStatePath: string, state: BackfillState) {
+  const s3Uri = parseS3Uri(backfillStatePath);
+  if (s3Uri) {
+    await writeJsonToS3(s3Uri.bucket, s3Uri.key, state);
+    return;
+  }
+
   await mkdir(path.dirname(backfillStatePath), { recursive: true });
   await writeFile(backfillStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+async function readJsonFromS3<T>(bucket: string, key: string): Promise<T | null> {
+  try {
+    const response = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const raw = await response.Body?.transformToString();
+    if (!raw) {
+      return null;
+    }
+
+    return JSON.parse(raw.replace(/^\uFEFF/, "")) as T;
+  } catch (error) {
+    if (error instanceof NoSuchKey || (error instanceof Error && error.name === "NoSuchKey")) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function writeJsonToS3(bucket: string, key: string, payload: unknown) {
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: `${JSON.stringify(payload, null, 2)}\n`,
+      ContentType: "application/json",
+    }),
+  );
 }
 
 async function clearBackfillState(backfillStatePath: string) {
@@ -2251,10 +2336,12 @@ async function main() {
   const matcher = new FixedAssetMatcher(fixedAssetRows);
   const existingState = await bcClient.listExistingDocuments();
   const existingFolderStateCache = await bcClient.listFolderStates();
+  const deltaOnly = options.delta && !options.folders?.size;
+  const shouldRunBackfill = !options.delta && !options.folders?.size;
 
   let foldersToProcess: FolderRef[] = [];
   let nextDeltaLink: string | null = null;
-  let mode = options.folders ? "targeted" : "hybrid";
+  let mode = options.folders ? "targeted" : deltaOnly ? "delta" : "hybrid";
   let deltaPagesRead = 0;
   let deltaStateInitialized = false;
   let skippedExistingFolders = 0;
@@ -2285,7 +2372,7 @@ async function main() {
     (savedSiteId === "" || savedSiteId === site.id) &&
     (savedDriveId === "" || savedDriveId === drive.id) &&
     (savedBaseFolderPath === "" || savedBaseFolderPath === normalizeFolderPath(baseFolderPath));
-  const baseChildren = options.folders?.size
+  const baseChildren = !shouldRunBackfill
     ? []
     : (await graphClient.listChildrenByPath(drive.id, baseFolderPath))
         .filter((item) => Boolean(item.folder))
@@ -2324,42 +2411,46 @@ async function main() {
     }
   }
 
-  bootstrapStage = "documents";
-  bootstrapLastMessage = "starting folder-state bootstrap";
-  await writeBootstrapSummary("bootstrap-start");
+  if (shouldRunBackfill) {
+    bootstrapStage = "documents";
+    bootstrapLastMessage = "starting folder-state bootstrap";
+    await writeBootstrapSummary("bootstrap-start");
 
-  const bootstrap = await bootstrapFolderStates({
-    bcClient,
-    matcher,
-    existingDocumentState: existingState,
-    existingFolderStateCache,
-    siteId: site.id,
-    driveId: drive.id,
-    baseChildren,
-    savedBackfillState,
-    backfillStateMatches: Boolean(backfillStateMatches),
-    onProgress: async (snapshot) => {
-      bootstrapStage = snapshot.stage;
-      bootstrapScannedFolders = snapshot.scanned;
-      bootstrapWritesCompleted = snapshot.writes;
-      bootstrapLastFolderName = snapshot.lastFolderName;
-      bootstrapLastMessage = snapshot.lastMessage;
-      bootstrapCounts.documentBackedSeeded = snapshot.counts.documentBackedSeeded;
-      bootstrapCounts.emptySeeded = snapshot.counts.emptySeeded;
-      bootstrapCounts.logSeeded = snapshot.counts.logSeeded;
-      bootstrapCounts.skippedExisting = snapshot.counts.skippedExisting;
-      bootstrapCounts.failed = snapshot.counts.failed;
-      await writeBootstrapSummary(`bootstrap-${snapshot.stage}`);
-    },
-  });
-  bootstrapCounts.documentBackedSeeded = bootstrap.documentBackedSeeded;
-  bootstrapCounts.emptySeeded = bootstrap.emptySeeded;
-  bootstrapCounts.logSeeded = bootstrap.logSeeded;
-  bootstrapCounts.skippedExisting = bootstrap.skippedExisting;
-  bootstrapCounts.failed = bootstrap.failed;
-  bootstrapStage = "complete";
-  bootstrapLastMessage = "folder-state bootstrap complete";
-  await writeBootstrapSummary("bootstrap-complete");
+    const bootstrap = await bootstrapFolderStates({
+      bcClient,
+      matcher,
+      existingDocumentState: existingState,
+      existingFolderStateCache,
+      siteId: site.id,
+      driveId: drive.id,
+      baseChildren,
+      savedBackfillState,
+      backfillStateMatches: Boolean(backfillStateMatches),
+      onProgress: async (snapshot) => {
+        bootstrapStage = snapshot.stage;
+        bootstrapScannedFolders = snapshot.scanned;
+        bootstrapWritesCompleted = snapshot.writes;
+        bootstrapLastFolderName = snapshot.lastFolderName;
+        bootstrapLastMessage = snapshot.lastMessage;
+        bootstrapCounts.documentBackedSeeded = snapshot.counts.documentBackedSeeded;
+        bootstrapCounts.emptySeeded = snapshot.counts.emptySeeded;
+        bootstrapCounts.logSeeded = snapshot.counts.logSeeded;
+        bootstrapCounts.skippedExisting = snapshot.counts.skippedExisting;
+        bootstrapCounts.failed = snapshot.counts.failed;
+        await writeBootstrapSummary(`bootstrap-${snapshot.stage}`);
+      },
+    });
+    bootstrapCounts.documentBackedSeeded = bootstrap.documentBackedSeeded;
+    bootstrapCounts.emptySeeded = bootstrap.emptySeeded;
+    bootstrapCounts.logSeeded = bootstrap.logSeeded;
+    bootstrapCounts.skippedExisting = bootstrap.skippedExisting;
+    bootstrapCounts.failed = bootstrap.failed;
+    bootstrapStage = "complete";
+    bootstrapLastMessage = "folder-state bootstrap complete";
+    await writeBootstrapSummary("bootstrap-complete");
+  } else {
+    bootstrapLastMessage = "folder-state bootstrap skipped";
+  }
 
   const refreshedFolderStateCache = await bcClient.listFolderStates();
   const successFolderNames = new Set(
@@ -2380,13 +2471,16 @@ async function main() {
     deltaPagesRead = deltaResult.pagesRead;
     nextDeltaLink = deltaResult.latestDeltaLink;
     deltaFolders = deltaResult.folders
-      .filter((folder) => successFolderNames.has(folder.name.toUpperCase()))
+      .filter((folder) => deltaOnly || successFolderNames.has(folder.name.toUpperCase()))
       .map((folder) => ({
         ...folder,
         queueType: "delta" as const,
       }));
   } else {
     deltaStateInitialized = true;
+    if (deltaOnly) {
+      nextDeltaLink = await graphClient.getLatestRootDeltaLink(drive.id);
+    }
   }
   deltaQueueSize = deltaFolders.length;
 
@@ -2402,6 +2496,8 @@ async function main() {
       })),
     ]);
     foldersToProcess = targetedFolders;
+  } else if (deltaOnly) {
+    foldersToProcess = deltaFolders;
   } else {
     const unseenFolders = baseChildren
       .filter((folder) => !successFolderNames.has(folder.name.toUpperCase()))

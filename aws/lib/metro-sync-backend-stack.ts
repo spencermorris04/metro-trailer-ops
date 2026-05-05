@@ -223,6 +223,7 @@ export class MetroSyncBackendStack extends Stack {
         AWS_REGION: Stack.of(this).region,
         SYNC_REQUEST_QUEUE_URL: requestQueue.queueUrl,
         SYNC_REQUEST_TABLE_NAME: requestTable.tableName,
+        SHAREPOINT_SYNC_STATE_BUCKET: sourceBucket.bucketName,
       },
       secrets: {
         METRO_GRAPH_TENANT_ID: ecs.Secret.fromSecretsManager(bcSecret, "METRO_GRAPH_TENANT_ID"),
@@ -248,6 +249,7 @@ export class MetroSyncBackendStack extends Stack {
 
     requestQueue.grantConsumeMessages(taskDefinition.taskRole);
     requestTable.grantReadWriteData(taskDefinition.taskRole);
+    sourceBucket.grantReadWrite(taskDefinition.taskRole, "state/*");
     for (const secret of [bcSecret, skybitzSecret, record360Secret, sharePointSecret]) {
       secret.grantRead(taskDefinition.executionRole!);
     }
