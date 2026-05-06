@@ -842,19 +842,34 @@ function getSkyBitzApiRoot(companyId: string) {
 
 async function bcRequest(url: string, accessToken: string, init?: RequestInit) {
   let currentAccessToken = cachedBcAccessToken ?? accessToken;
+  let refreshedAccessToken = false;
 
   for (let attempt = 0; attempt <= MAX_BC_RETRIES; attempt += 1) {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${currentAccessToken}`,
-        Accept: "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
+    let response: Response;
+    let bodyText = "";
 
-    const bodyText = await response.text();
-    if (response.status === 401 && attempt === 0) {
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${currentAccessToken}`,
+          Accept: "application/json",
+          ...(init?.headers ?? {}),
+        },
+      });
+      bodyText = await response.text();
+    } catch (error) {
+      if (attempt >= MAX_BC_RETRIES) {
+        throw error;
+      }
+
+      const delayMs = Math.min(2000 * 2 ** attempt, 30000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
+    }
+
+    if (response.status === 401 && !refreshedAccessToken) {
+      refreshedAccessToken = true;
       currentAccessToken = await getBcAccessToken(true);
       continue;
     }
@@ -1299,7 +1314,9 @@ function buildTrackerPayload(
 
 async function fetchExistingTrackers(accessToken: string, companyId: string, allowMissingApi: boolean) {
   const existing = new Map<string, ExistingSkyBitzTracker>();
-  let url = `${getSkyBitzApiRoot(companyId)}/skybitzTrackers?$top=5000`;
+  const pageSize = 5000;
+  let skip = 0;
+  let url = `${getSkyBitzApiRoot(companyId)}/skybitzTrackers?$top=${pageSize}&$skip=${skip}&$orderby=mtsn`;
 
   while (url) {
     const { response, bodyText } = await bcRequest(url, accessToken);
@@ -1315,13 +1332,21 @@ async function fetchExistingTrackers(accessToken: string, companyId: string, all
     }
 
     const payload = JSON.parse(bodyText) as { value?: ExistingSkyBitzTracker[]; "@odata.nextLink"?: string };
-    for (const row of payload.value ?? []) {
+    const rows = payload.value ?? [];
+    for (const row of rows) {
       if (row?.mtsn) {
         existing.set(row.mtsn, row);
       }
     }
 
-    url = payload["@odata.nextLink"] ?? "";
+    if (payload["@odata.nextLink"]) {
+      url = payload["@odata.nextLink"];
+    } else if (rows.length >= pageSize) {
+      skip += pageSize;
+      url = `${getSkyBitzApiRoot(companyId)}/skybitzTrackers?$top=${pageSize}&$skip=${skip}&$orderby=mtsn`;
+    } else {
+      url = "";
+    }
   }
 
   return {
