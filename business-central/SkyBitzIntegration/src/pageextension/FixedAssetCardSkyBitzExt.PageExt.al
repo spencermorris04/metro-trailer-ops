@@ -53,22 +53,6 @@ pageextension 50180 "Fixed Asset Card SkyBitz Ext" extends "Fixed Asset Card"
                     Hyperlink(StrSubstNo('https://www.google.com/maps?q=%1,%2', Format(Tracker.Latitude), Format(Tracker.Longitude)));
                 end;
             }
-            action(RequestSkyBitzSync)
-            {
-                Caption = 'Request SkyBitz Sync';
-                ApplicationArea = All;
-                Image = Refresh;
-                Promoted = true;
-                PromotedCategory = Process;
-
-                trigger OnAction()
-                var
-                    SyncRequest: Codeunit "SkyBitz Sync Request";
-                begin
-                    SyncRequest.RequestOnDemandSync(Rec."No.");
-                    Message('SkyBitz sync request queued for fixed asset %1.', Rec."No.");
-                end;
-            }
         }
     }
 

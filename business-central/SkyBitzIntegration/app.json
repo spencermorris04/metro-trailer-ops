@@ -2,7 +2,7 @@
   "id": "bc639434-32ec-4be1-8701-3f2ab3d42ff9",
   "name": "SkyBitz Integration",
   "publisher": "Metro Trailer",
-  "version": "1.0.0.3",
+  "version": "1.0.0.4",
   "brief": "SkyBitz tracker data model, APIs, and Fixed Asset UI integration for Business Central.",
   "description": "Creates SkyBitz tracker, sync run, and sync error data structures, API pages for integration workloads, and Fixed Asset user experience pages and FactBoxes.",
   "platform": "27.0.0.0",

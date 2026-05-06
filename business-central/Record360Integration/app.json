@@ -2,7 +2,7 @@
   "id": "9271ddc7-75c8-47db-bcc7-9ae29e0532d6",
   "name": "Record360 Integration",
   "publisher": "Metro Trailer",
-  "version": "1.0.0.6",
+  "version": "1.0.0.7",
   "brief": "Record360 inspection data model, APIs, and Fixed Asset UI integration for Business Central.",
   "description": "Creates Record360 inspection, sync run, and sync error data structures, API pages for integration workloads, and Fixed Asset user experience pages and FactBoxes.",
   "platform": "27.0.0.0",

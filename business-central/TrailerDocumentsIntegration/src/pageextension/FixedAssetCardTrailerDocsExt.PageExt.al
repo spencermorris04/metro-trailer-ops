@@ -90,22 +90,6 @@ pageextension 50230 "Fixed Asset Card Trailer Docs" extends "Fixed Asset Card"
                     Hyperlink(Document."Folder URL");
                 end;
             }
-            action(RequestTrailerDocumentSync)
-            {
-                Caption = 'Request Trailer Document Sync';
-                ApplicationArea = All;
-                Image = Refresh;
-                Promoted = true;
-                PromotedCategory = Process;
-
-                trigger OnAction()
-                var
-                    SyncRequest: Codeunit "Trailer Document Sync Request";
-                begin
-                    SyncRequest.RequestOnDemandSync(Rec."No.");
-                    Message('Trailer document sync request queued for fixed asset %1.', Rec."No.");
-                end;
-            }
         }
     }
 

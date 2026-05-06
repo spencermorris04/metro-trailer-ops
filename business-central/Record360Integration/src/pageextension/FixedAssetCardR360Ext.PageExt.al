@@ -73,22 +73,6 @@ pageextension 50120 "Fixed Asset Card R360 Ext" extends "Fixed Asset Card"
                     Hyperlink(Inspection."Dashboard URL");
                 end;
             }
-            action(RequestRecord360Sync)
-            {
-                Caption = 'Request Record360 Sync';
-                ApplicationArea = All;
-                Image = Refresh;
-                Promoted = true;
-                PromotedCategory = Process;
-
-                trigger OnAction()
-                var
-                    SyncRequest: Codeunit "Record360 Sync Request";
-                begin
-                    SyncRequest.RequestOnDemandSync(Rec."No.");
-                    Message('Record360 sync request queued for fixed asset %1.', Rec."No.");
-                end;
-            }
         }
     }
 
