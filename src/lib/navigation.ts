@@ -18,8 +18,8 @@ export const navigationGroups: NavGroup[] = [
     items: [
       {
         href: "/",
-        label: "Overview",
-        description: "Platform blueprint, readiness posture, and cutover map",
+        label: "Dashboard",
+        description: "Configurable Metro operating dashboard and saved workspace presets",
         icon: "home",
       },
     ],
@@ -111,8 +111,8 @@ export const navigationGroups: NavGroup[] = [
       },
       {
         href: "/ap/bills",
-        label: "AP Bills",
-        description: "Vendor bills, due dates, balances, and source lineage",
+        label: "Purchase Orders",
+        description: "Vendor bills, due dates, procurement review, and source lineage",
         icon: "clipboard",
       },
       {
