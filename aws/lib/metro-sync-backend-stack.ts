@@ -240,6 +240,9 @@ export class MetroSyncBackendStack extends Stack {
         SYNC_REQUEST_TABLE_NAME: requestTable.tableName,
         SHAREPOINT_SYNC_STATE_BUCKET: sourceBucket.bucketName,
         ORBCOMM_SECRET_ID: orbcommSecret.secretName,
+        ORBCOMM_REQUEST_TIMEOUT_SECONDS: "600",
+        ORBCOMM_CONCURRENT_REQUEST_MAX_RETRIES: "10",
+        ORBCOMM_CONCURRENT_REQUEST_RETRY_SECONDS: "90",
       },
       secrets: {
         METRO_GRAPH_TENANT_ID: ecs.Secret.fromSecretsManager(bcSecret, "METRO_GRAPH_TENANT_ID"),

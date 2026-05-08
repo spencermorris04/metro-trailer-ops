@@ -91,7 +91,7 @@ export async function orbcommRequest(path: string, init?: RequestInit) {
   const rateLimitRetrySeconds = Number(optionalEnv("ORBCOMM_RATE_LIMIT_RETRY_SECONDS", "305"));
   const maxConcurrentRequestRetries = Number(optionalEnv("ORBCOMM_CONCURRENT_REQUEST_MAX_RETRIES", "5"));
   const concurrentRequestRetrySeconds = Number(optionalEnv("ORBCOMM_CONCURRENT_REQUEST_RETRY_SECONDS", "60"));
-  const requestTimeoutSeconds = Number(optionalEnv("ORBCOMM_REQUEST_TIMEOUT_SECONDS", "120"));
+  const requestTimeoutSeconds = Number(optionalEnv("ORBCOMM_REQUEST_TIMEOUT_SECONDS", "600"));
   const maxAttempts = Math.max(4, maxRateLimitRetries + maxConcurrentRequestRetries + 4);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let response: Response;
@@ -109,8 +109,12 @@ export async function orbcommRequest(path: string, init?: RequestInit) {
       bodyText = await response.text();
     } catch (error) {
       if (attempt < maxAttempts - 1) {
-        console.warn(`[orbcomm] request failed before response; retrying after 5s: ${error instanceof Error ? error.message : String(error)}`);
-        await sleep(5000);
+        const message = error instanceof Error ? error.message : String(error);
+        const retrySeconds = message.toLowerCase().includes("timeout") || message.toLowerCase().includes("aborted")
+          ? concurrentRequestRetrySeconds
+          : 5;
+        console.warn(`[orbcomm] request failed before response; retrying after ${retrySeconds}s: ${message}`);
+        await sleep(retrySeconds * 1000);
         continue;
       }
       throw error;
