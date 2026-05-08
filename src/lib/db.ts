@@ -16,7 +16,20 @@ function createPool() {
 
   return new Pool({
     connectionString: normalizePostgresConnectionString(connectionString),
+    max: getDatabasePoolMax(),
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+    allowExitOnIdle: true,
   });
+}
+
+function getDatabasePoolMax() {
+  const configured = Number(process.env.DATABASE_POOL_MAX ?? "");
+  if (Number.isInteger(configured) && configured > 0) {
+    return configured;
+  }
+
+  return process.env.VERCEL || process.env.NODE_ENV === "production" ? 1 : 5;
 }
 
 function normalizePostgresConnectionString(connectionString: string) {

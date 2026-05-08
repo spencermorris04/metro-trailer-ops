@@ -31,6 +31,25 @@ function normalizeConnectionString(connectionString: string | null) {
   }
 }
 
+function normalizePostgresConnectionString(connectionString: string) {
+  const url = new URL(connectionString);
+
+  if (url.searchParams.get("sslrootcert") === "system") {
+    url.searchParams.delete("sslrootcert");
+  }
+
+  return url.toString();
+}
+
+function getDatabasePoolMax() {
+  const configured = Number(process.env.DATABASE_POOL_MAX ?? "");
+  if (Number.isInteger(configured) && configured > 0) {
+    return configured;
+  }
+
+  return process.env.VERCEL || process.env.NODE_ENV === "production" ? 1 : 5;
+}
+
 export function getAuditStoreReadiness() {
   const auditUrl = process.env.AUDIT_DATABASE_URL?.trim() || null;
   const primaryUrl = process.env.DATABASE_URL?.trim() || null;
@@ -57,7 +76,11 @@ function createAuditPool() {
   }
 
   return new Pool({
-    connectionString,
+    connectionString: normalizePostgresConnectionString(connectionString),
+    max: getDatabasePoolMax(),
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+    allowExitOnIdle: true,
   });
 }
 
