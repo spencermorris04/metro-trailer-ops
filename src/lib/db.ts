@@ -15,8 +15,21 @@ function createPool() {
   }
 
   return new Pool({
-    connectionString,
+    connectionString: normalizePostgresConnectionString(connectionString),
   });
+}
+
+function normalizePostgresConnectionString(connectionString: string) {
+  const url = new URL(connectionString);
+
+  // PlanetScale supplies sslrootcert=system for libpq-style clients. node-postgres
+  // treats sslrootcert as a filesystem path, so keep verify-full TLS but drop the
+  // pseudo-root value before creating the pool.
+  if (url.searchParams.get("sslrootcert") === "system") {
+    url.searchParams.delete("sslrootcert");
+  }
+
+  return url.toString();
 }
 
 export const pool = globalThis.__metroTrailerPool ?? createPool();

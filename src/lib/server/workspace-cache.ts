@@ -49,6 +49,126 @@ const memoryAdapter: CacheAdapter = {
 };
 
 let redisAdapterPromise: Promise<CacheAdapter | null> | null = null;
+let upstashAdapterPromise: Promise<CacheAdapter | null> | null = null;
+
+type UpstashResponse<T = unknown> = {
+  result?: T;
+  error?: string;
+};
+
+function getUpstashConfig() {
+  const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+
+  if (!url || !token) {
+    return null;
+  }
+
+  return {
+    url: url.replace(/\/+$/, ""),
+    token,
+  };
+}
+
+async function upstashCommand<T>(
+  config: { url: string; token: string },
+  command: Array<string | number>,
+) {
+  const response = await fetch(`${config.url}/pipeline`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify([command]),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upstash cache request failed with status ${response.status}.`);
+  }
+
+  const [result] = (await response.json()) as Array<UpstashResponse<T>>;
+  if (result?.error) {
+    throw new Error(result.error);
+  }
+
+  return result?.result ?? null;
+}
+
+async function upstashPipeline(
+  config: { url: string; token: string },
+  commands: Array<Array<string | number>>,
+) {
+  if (commands.length === 0) {
+    return [];
+  }
+
+  const response = await fetch(`${config.url}/pipeline`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(commands),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upstash cache pipeline failed with status ${response.status}.`);
+  }
+
+  const results = (await response.json()) as Array<UpstashResponse>;
+  const failed = results.find((result) => result.error);
+  if (failed?.error) {
+    throw new Error(failed.error);
+  }
+
+  return results;
+}
+
+async function getUpstashAdapter(): Promise<CacheAdapter | null> {
+  const config = getUpstashConfig();
+  if (!config) {
+    return null;
+  }
+
+  if (!upstashAdapterPromise) {
+    upstashAdapterPromise = Promise.resolve({
+      async get<T>(key: string) {
+        const raw = await upstashCommand<string>(config, ["GET", key]);
+        return raw ? (JSON.parse(raw) as T) : null;
+      },
+      async set<T>(key: string, value: T, ttlSeconds: number, tags: string[]) {
+        const commands: Array<Array<string | number>> = [
+          ["SET", key, JSON.stringify(value), "EX", ttlSeconds],
+        ];
+
+        for (const tag of tags) {
+          commands.push(["SADD", `tag:${tag}`, key]);
+          commands.push(["EXPIRE", `tag:${tag}`, Math.max(ttlSeconds, 60 * 60)]);
+        }
+
+        await upstashPipeline(config, commands);
+      },
+      async delete(key: string) {
+        await upstashCommand(config, ["DEL", key]);
+      },
+      async deleteByTags(tags: string[]) {
+        for (const tag of tags) {
+          const tagKey = `tag:${tag}`;
+          const keys = await upstashCommand<string[]>(config, ["SMEMBERS", tagKey]);
+          await upstashPipeline(config, [
+            ...(keys && keys.length > 0 ? [["DEL", ...keys] as Array<string | number>] : []),
+            ["DEL", tagKey],
+          ]);
+        }
+      },
+    } satisfies CacheAdapter);
+  }
+
+  return upstashAdapterPromise;
+}
 
 async function getRedisAdapter(): Promise<CacheAdapter | null> {
   if (process.env.CACHE_DRIVER !== "redis" && !process.env.REDIS_URL) {
@@ -97,7 +217,7 @@ async function getRedisAdapter(): Promise<CacheAdapter | null> {
 }
 
 async function getAdapter() {
-  return (await getRedisAdapter()) ?? memoryAdapter;
+  return (await getUpstashAdapter()) ?? (await getRedisAdapter()) ?? memoryAdapter;
 }
 
 export async function getOrSetWorkspaceCache<T>(
@@ -121,6 +241,17 @@ export async function invalidateWorkspaceCache(tags: string[]) {
   const uniqueTags = [...new Set(tags)];
   await (await getAdapter()).deleteByTags(uniqueTags);
   for (const tag of uniqueTags) {
-    revalidateTag(tag, { expire: 0 });
+    try {
+      revalidateTag(tag, { expire: 0 });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("static generation store missing")
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
   }
 }

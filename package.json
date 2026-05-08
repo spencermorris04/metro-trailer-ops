@@ -15,6 +15,7 @@
     "local:db:stop": "tsx scripts/local-db-stop.ts",
     "local:bootstrap:admin": "tsx scripts/bootstrap-local-admin.ts",
     "local:setup": "tsx scripts/local-setup.ts",
+    "db:copy": "tsx scripts/copy-postgres-db.ts",
     "legacy:import": "tsx scripts/legacy-import.ts",
     "legacy:reconcile": "tsx scripts/legacy-reconcile.ts",
     "search:index:rebuild": "tsx scripts/search-index-rebuild.ts",
