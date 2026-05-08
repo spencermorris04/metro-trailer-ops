@@ -488,12 +488,12 @@ async function run() {
         ["rmi-permission-probe-2", "rentals", "posted-rental-line.json"],
       ]),
       loadFirstExport<PostedRentalInvoiceRow>([
-        ["rmi-permission-probe-2", "rentals", "posted-rental-invoice.json"],
         ["commercial-live", "rentals", "posted-rental-invoice.json"],
+        ["rmi-permission-probe-2", "rentals", "posted-rental-invoice.json"],
       ]),
       loadFirstExport<RentalLedgerEntryRow>([
-        ["rmi-permission-probe-2", "rentals", "rental-ledger-entries.json"],
         ["commercial-live", "rentals", "rental-ledger-entries.json"],
+        ["rmi-permission-probe-2", "rentals", "rental-ledger-entries.json"],
       ]),
       loadFirstExport<RentalLedgerEntryRow>([
         ["rmi-permission-probe-2", "rentals", "ws-rental-ledger-entries.json"],

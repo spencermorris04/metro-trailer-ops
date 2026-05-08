@@ -162,6 +162,12 @@ export class MetroSyncBackendStack extends Stack {
       ),
     });
 
+    const databaseSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "DatabaseSecret",
+      "metro-trailer/app-database",
+    );
+
     const skybitzSecret = new secretsmanager.Secret(this, "SkyBitzSecret", {
       secretName: "metro-trailer/skybitz",
       secretStringValue: cdk.SecretValue.unsafePlainText(
@@ -243,8 +249,11 @@ export class MetroSyncBackendStack extends Stack {
         ORBCOMM_REQUEST_TIMEOUT_SECONDS: "300",
         ORBCOMM_CONCURRENT_REQUEST_MAX_RETRIES: "10",
         ORBCOMM_CONCURRENT_REQUEST_RETRY_SECONDS: "90",
+        BC_RAW_HISTORY_DATASETS: "all",
+        BC_RAW_HISTORY_PAGE_SIZE: "1000",
       },
       secrets: {
+        DATABASE_URL: ecs.Secret.fromSecretsManager(databaseSecret, "DATABASE_URL"),
         METRO_GRAPH_TENANT_ID: ecs.Secret.fromSecretsManager(bcSecret, "METRO_GRAPH_TENANT_ID"),
         METRO_GRAPH_CLIENT_ID: ecs.Secret.fromSecretsManager(bcSecret, "METRO_GRAPH_CLIENT_ID"),
         METRO_GRAPH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(bcSecret, "METRO_GRAPH_CLIENT_SECRET"),
@@ -283,7 +292,7 @@ export class MetroSyncBackendStack extends Stack {
         resources: [orbcommSecret.secretArn],
       }),
     );
-    for (const secret of [bcSecret, skybitzSecret, orbcommSecret, record360Secret, sharePointSecret]) {
+    for (const secret of [databaseSecret, bcSecret, skybitzSecret, orbcommSecret, record360Secret, sharePointSecret]) {
       secret.grantRead(taskDefinition.executionRole!);
     }
 
@@ -367,6 +376,13 @@ export class MetroSyncBackendStack extends Stack {
       ruleName: "metro-trailer-daily-trailer-documents-sync",
       schedule: events.Schedule.cron({ minute: "15", hour: "7" }),
       targets: [runTaskTarget("daily:trailer-documents")],
+    });
+
+    new events.Rule(this, "BusinessCentralRawHistorySchedule", {
+      ruleName: "metro-trailer-bc-raw-history-sync",
+      enabled: false,
+      schedule: events.Schedule.cron({ minute: "0", hour: "3" }),
+      targets: [runTaskTarget("daily:bc-raw-history")],
     });
 
     const handler = new lambdaNode.NodejsFunction(this, "ApiHandler", {

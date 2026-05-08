@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 import { config as loadEnv } from "dotenv";
@@ -37,6 +37,8 @@ type ExportOptions = {
   pageSize: number;
   maxPages: number | null;
   datasetKeys: Set<string> | null;
+  streamPages: boolean;
+  resume: boolean;
 };
 
 type HttpResponse = {
@@ -391,6 +393,8 @@ function parseArgs(argv: string[]): ExportOptions {
   let pageSize = DEFAULT_PAGE_SIZE;
   let maxPages: number | null = null;
   let datasetKeys: Set<string> | null = null;
+  let streamPages = false;
+  let resume = false;
 
   for (const arg of argv) {
     if (arg.startsWith("--out-dir=")) {
@@ -419,10 +423,21 @@ function parseArgs(argv: string[]): ExportOptions {
       continue;
     }
 
+    if (arg === "--stream-pages") {
+      streamPages = true;
+      continue;
+    }
+
+    if (arg === "--resume") {
+      streamPages = true;
+      resume = true;
+      continue;
+    }
+
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { outDir, pageSize, maxPages, datasetKeys };
+  return { outDir, pageSize, maxPages, datasetKeys, streamPages, resume };
 }
 
 function createCsv(rows: Array<Record<string, unknown>>) {
@@ -629,6 +644,223 @@ function normalizeRows(value: unknown) {
   return [] as Array<Record<string, unknown>>;
 }
 
+type ODataCheckpoint = {
+  exportedAt: string;
+  updatedAt: string;
+  serviceName: string;
+  company: string;
+  pageSize: number;
+  pages: number;
+  records: number;
+  nextUrl: string | null;
+  done: boolean;
+  sampleFields: string[];
+};
+
+async function readJsonFile<T>(filePath: string) {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+function datasetBaseName(dataset: DatasetConfig) {
+  return dataset.key;
+}
+
+async function exportODataDatasetStreaming(
+  tokenState: AccessTokenState,
+  dataset: DatasetConfig,
+  options: ExportOptions,
+): Promise<DatasetResult> {
+  const company = requireEnv("METRO_BC_COMPANY");
+  const serviceName = dataset.serviceName ?? "";
+  const datasetDir = path.join(options.outDir, dataset.group);
+  const pagesDir = path.join(datasetDir, `${datasetBaseName(dataset)}.pages`);
+  await ensureDir(pagesDir);
+
+  const jsonlPath = path.join(pagesDir, "rows.jsonl");
+  const checkpointPath = path.join(pagesDir, "checkpoint.json");
+  const finalJsonPath = path.join(datasetDir, `${datasetBaseName(dataset)}.json`);
+  const finalCsvPath = path.join(datasetDir, `${datasetBaseName(dataset)}.csv`);
+
+  let checkpoint = options.resume
+    ? await readJsonFile<ODataCheckpoint>(checkpointPath)
+    : null;
+
+  if (checkpoint?.done) {
+    return {
+      key: dataset.key,
+      kind: dataset.kind,
+      label: dataset.label,
+      group: dataset.group,
+      description: dataset.description,
+      status: "exported",
+      httpStatus: 200,
+      records: checkpoint.records,
+      pages: checkpoint.pages,
+      jsonPath: finalJsonPath,
+      csvPath: finalCsvPath,
+      error: "",
+      sampleFields: checkpoint.sampleFields,
+    };
+  }
+
+  if (!checkpoint || checkpoint.serviceName !== serviceName || checkpoint.pageSize !== options.pageSize) {
+    checkpoint = {
+      exportedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      serviceName,
+      company,
+      pageSize: options.pageSize,
+      pages: 0,
+      records: 0,
+      nextUrl: buildODataCollectionUrl(serviceName, options.pageSize, company, 0),
+      done: false,
+      sampleFields: [],
+    };
+    await writeFile(jsonlPath, "", "utf8");
+    await writeFile(checkpointPath, JSON.stringify(checkpoint, null, 2), "utf8");
+  }
+
+  const startPageNumber = checkpoint.pages;
+  let nextUrl = checkpoint.nextUrl;
+  let httpStatus = 200;
+
+  while (nextUrl) {
+    const pageResult = await fetchJsonWithRefresh(nextUrl, tokenState);
+    httpStatus = pageResult.status;
+    if (!pageResult.ok || !pageResult.payload) {
+      return {
+        key: dataset.key,
+        kind: dataset.kind,
+        label: dataset.label,
+        group: dataset.group,
+        description: dataset.description,
+        status:
+          pageResult.status === 403 ? "blocked" : pageResult.status === 404 ? "missing" : "failed",
+        httpStatus: pageResult.status,
+        records: checkpoint.records,
+        pages: checkpoint.pages,
+        jsonPath: null,
+        csvPath: null,
+        error: pageResult.error,
+        sampleFields: checkpoint.sampleFields,
+      };
+    }
+
+    const pageRows = normalizeRows(pageResult.payload.value);
+    if (checkpoint.sampleFields.length === 0 && pageRows[0]) {
+      checkpoint.sampleFields = Object.keys(pageRows[0]).sort((a, b) => a.localeCompare(b));
+    }
+
+    if (pageRows.length > 0) {
+      await appendFile(
+        jsonlPath,
+        `${pageRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+        "utf8",
+      );
+    }
+
+    checkpoint.pages += 1;
+    checkpoint.records += pageRows.length;
+
+    const odataNext = pageResult.payload["@odata.nextLink"];
+    if (typeof odataNext === "string" && odataNext.trim()) {
+      checkpoint.nextUrl = odataNext;
+    } else if (pageRows.length === options.pageSize) {
+      checkpoint.nextUrl = buildODataCollectionUrl(
+        serviceName,
+        options.pageSize,
+        company,
+        checkpoint.pages * options.pageSize,
+      );
+    } else {
+      checkpoint.nextUrl = null;
+      checkpoint.done = true;
+    }
+
+    if (
+      options.maxPages !== null &&
+      checkpoint.pages - startPageNumber >= options.maxPages &&
+      checkpoint.nextUrl
+    ) {
+      checkpoint.nextUrl = null;
+      checkpoint.done = false;
+    }
+
+    checkpoint.updatedAt = new Date().toISOString();
+    await writeFile(checkpointPath, JSON.stringify(checkpoint, null, 2), "utf8");
+    console.log(
+      `[${dataset.key}] page ${checkpoint.pages}, total rows ${checkpoint.records}`,
+    );
+    nextUrl = checkpoint.nextUrl;
+  }
+
+  await compactJsonlExport({
+    jsonlPath,
+    jsonPath: finalJsonPath,
+    csvPath: finalCsvPath,
+    exportedAt: checkpoint.exportedAt,
+    serviceName,
+    company,
+    pages: checkpoint.pages,
+    records: checkpoint.records,
+  });
+
+  return {
+    key: dataset.key,
+    kind: dataset.kind,
+    label: dataset.label,
+    group: dataset.group,
+    description: dataset.description,
+    status: "exported",
+    httpStatus,
+    records: checkpoint.records,
+    pages: checkpoint.pages,
+    jsonPath: finalJsonPath,
+    csvPath: finalCsvPath,
+    error: "",
+    sampleFields: checkpoint.sampleFields,
+  };
+}
+
+async function compactJsonlExport(input: {
+  jsonlPath: string;
+  jsonPath: string;
+  csvPath: string;
+  exportedAt: string;
+  serviceName: string;
+  company: string;
+  pages: number;
+  records: number;
+}) {
+  const raw = await readFile(input.jsonlPath, "utf8");
+  const rows = raw
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+  await writeFile(
+    input.jsonPath,
+    JSON.stringify(
+      {
+        exportedAt: input.exportedAt,
+        serviceName: input.serviceName,
+        company: input.company,
+        pages: input.pages,
+        records: input.records,
+        items: rows,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  await writeFile(input.csvPath, createCsv(rows), "utf8");
+}
+
 async function exportApiRoot(tokenState: AccessTokenState, outDir: string): Promise<DatasetResult> {
   const jsonResult = await fetchJsonWithRefresh(getStandardApiRootUrl(), tokenState);
   if (!jsonResult.ok || !jsonResult.payload) {
@@ -725,6 +957,10 @@ async function exportODataDataset(
       error: "",
       sampleFields: rows[0] ? Object.keys(rows[0]).sort((a, b) => a.localeCompare(b)) : [],
     };
+  }
+
+  if (options.streamPages) {
+    return exportODataDatasetStreaming(tokenState, dataset, options);
   }
 
   const rows: Array<Record<string, unknown>> = [];

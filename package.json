@@ -26,6 +26,7 @@
     "bc:permission-checklist": "tsx business-central/scripts/bc-generate-permission-checklist.ts",
     "bc:seed:db": "tsx business-central/scripts/bc-seed-db.ts",
     "bc:seed:commercial": "tsx business-central/scripts/bc-seed-commercial-db.ts",
+    "bc:seed:raw-history": "tsx business-central/scripts/bc-seed-raw-history.ts",
     "record360:test-fetch": "tsx record360/scripts/test-record360-fetch.ts",
     "record360:sync:bc": "tsx record360/scripts/record360-sync-bc.ts",
     "sharepoint:sync:bc": "tsx sharepoint/scripts/sharepoint-sync-bc.ts",

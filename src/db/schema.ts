@@ -1318,6 +1318,49 @@ export const bcRmiRentalLedgerEntries = pgTable(
   }),
 );
 
+export const bcRmiWsRentalLedgerEntries = pgTable(
+  "bc_rmi_ws_rental_ledger_entries",
+  {
+    id: text().primaryKey(),
+    runId: text().references(() => bcImportRuns.id, { onDelete: "set null" }),
+    externalEntryNo: text().notNull(),
+    documentType: text(),
+    documentNo: text(),
+    orderNo: text(),
+    postingDate: timestamp({ withTimezone: true }),
+    billToCustomerNo: text(),
+    typeOrdered: text(),
+    noOrdered: text(),
+    typeShipped: text(),
+    noShipped: text(),
+    serialNoShipped: text(),
+    quantity: numeric({ precision: 14, scale: 4 }),
+    fromDate: timestamp({ withTimezone: true }),
+    thruDate: timestamp({ withTimezone: true }),
+    rentalDays: numeric({ precision: 14, scale: 4 }),
+    unitPrice: numeric({ precision: 14, scale: 2 }),
+    grossAmount: numeric({ precision: 14, scale: 2 }),
+    grossAmountLcy: numeric({ precision: 14, scale: 2 }),
+    lineDiscountAmount: numeric({ precision: 14, scale: 2 }),
+    invoiceDiscountAmount: numeric({ precision: 14, scale: 2 }),
+    dealCode: text(),
+    shortcutDimension1Code: text(),
+    shortcutDimension2Code: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex("bc_rmi_ws_rle_entry_unique").on(
+      table.externalEntryNo,
+    ),
+    documentIdx: index("bc_rmi_ws_rle_document_idx").on(
+      table.documentType,
+      table.documentNo,
+    ),
+    orderIdx: index("bc_rmi_ws_rle_order_idx").on(table.orderNo),
+  }),
+);
+
 export const bcRmiPostedRentalInvoiceHeaders = pgTable(
   "bc_rmi_posted_rental_invoice_headers",
   {

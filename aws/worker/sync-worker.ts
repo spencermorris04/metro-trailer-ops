@@ -4,7 +4,14 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
-type Integration = "skybitz" | "skybitzReconcile" | "record360" | "trailerDocuments" | "orbcomm" | "telematics";
+type Integration =
+  | "skybitz"
+  | "skybitzReconcile"
+  | "record360"
+  | "trailerDocuments"
+  | "orbcomm"
+  | "telematics"
+  | "bcRawHistory";
 type Mode = "daily" | "ondemand";
 
 type SyncRequest = {
@@ -119,6 +126,9 @@ function normalizeIntegration(value: string): Integration {
   if (value === "telematics") {
     return "telematics";
   }
+  if (value === "business-central-raw-history" || value === "bc-raw-history" || value === "bcRawHistory") {
+    return "bcRawHistory";
+  }
 
   throw new Error(`Unsupported integration: ${value}`);
 }
@@ -185,6 +195,18 @@ function buildCommands(request: SyncRequest): string[][] {
           "--window-chunk-minutes=75",
           "--sleep-between-windows-seconds=305",
           "--concurrency=3",
+        ],
+      ];
+    }
+    if (request.integration === "bcRawHistory") {
+      return [
+        [
+          "npm",
+          "run",
+          "bc:seed:raw-history",
+          "--",
+          `--datasets=${process.env.BC_RAW_HISTORY_DATASETS ?? "all"}`,
+          `--page-size=${process.env.BC_RAW_HISTORY_PAGE_SIZE ?? "1000"}`,
         ],
       ];
     }
