@@ -6,7 +6,7 @@ import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
-type Integration = "skybitz" | "record360" | "trailerDocuments";
+type Integration = "skybitz" | "record360" | "trailerDocuments" | "orbcomm" | "telematics";
 type RequestedBy = "bc" | "wordpress" | "scheduler" | "manual";
 
 type RequestBody = {
@@ -251,6 +251,12 @@ function parseIntegration(path: string): Integration {
   }
   if (path.endsWith("/sync/trailer-documents")) {
     return "trailerDocuments";
+  }
+  if (path.endsWith("/sync/orbcomm")) {
+    return "orbcomm";
+  }
+  if (path.endsWith("/sync/telematics")) {
+    return "telematics";
   }
   throw new Error(`Unsupported sync path: ${path}`);
 }

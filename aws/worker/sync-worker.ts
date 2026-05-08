@@ -4,7 +4,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
-type Integration = "skybitz" | "skybitzReconcile" | "record360" | "trailerDocuments";
+type Integration = "skybitz" | "skybitzReconcile" | "record360" | "trailerDocuments" | "orbcomm" | "telematics";
 type Mode = "daily" | "ondemand";
 
 type SyncRequest = {
@@ -113,50 +113,82 @@ function normalizeIntegration(value: string): Integration {
   if (value === "trailer-documents" || value === "trailerDocuments") {
     return "trailerDocuments";
   }
+  if (value === "orbcomm") {
+    return "orbcomm";
+  }
+  if (value === "telematics") {
+    return "telematics";
+  }
 
   throw new Error(`Unsupported integration: ${value}`);
 }
 
 async function runJob(request: SyncRequest) {
-  const command = buildCommand(request);
-  console.log(`Running ${request.mode}:${request.integration}: ${command.join(" ")}`);
-  await run(command[0], command.slice(1));
+  const commands = buildCommands(request);
+  for (const command of commands) {
+    console.log(`Running ${request.mode}:${request.integration}: ${command.join(" ")}`);
+    await run(command[0], command.slice(1));
+  }
 }
 
-function buildCommand(request: SyncRequest) {
+function buildCommands(request: SyncRequest): string[][] {
   if (request.mode === "daily") {
     if (request.integration === "skybitz") {
       return [
-        "npm",
-        "run",
-        "skybitz:sync:bc:history",
-        "--",
-        "--write",
-        "--since-last-successful-run",
-        "--window-chunk-minutes=60",
-        "--overlap-minutes=15",
-        "--safety-lag-minutes=5",
-        "--max-lookback-hours=24",
-        "--stale-after-hours=24",
-        "--concurrency=3",
+        [
+          "npm",
+          "run",
+          "skybitz:sync:bc:history",
+          "--",
+          "--write",
+          "--since-last-successful-run",
+          "--window-chunk-minutes=60",
+          "--overlap-minutes=15",
+          "--safety-lag-minutes=5",
+          "--max-lookback-hours=24",
+          "--stale-after-hours=24",
+          "--concurrency=3",
+        ],
+        ["npm", "run", "telematics:backfill-skybitz", "--", "--write", "--concurrency=4"],
       ];
     }
     if (request.integration === "skybitzReconcile") {
-      return ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", "--concurrency=3"];
+      return [
+        ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", "--concurrency=3"],
+        ["npm", "run", "telematics:backfill-skybitz", "--", "--write", "--concurrency=4"],
+      ];
     }
     if (request.integration === "record360") {
-      return ["npm", "run", "record360:sync:bc", "--", "--write", "--concurrency=3"];
+      return [["npm", "run", "record360:sync:bc", "--", "--write", "--concurrency=3"]];
     }
     if (request.integration === "trailerDocuments") {
       return [
-        "npm",
-        "run",
-        "sharepoint:sync:bc",
-        "--",
-        "--write",
-        "--delta",
-        ...buildSharePointStateArgs(),
-        "--concurrency=6",
+        [
+          "npm",
+          "run",
+          "sharepoint:sync:bc",
+          "--",
+          "--write",
+          "--delta",
+          ...buildSharePointStateArgs(),
+          "--concurrency=6",
+        ],
+      ];
+    }
+    if (request.integration === "orbcomm" || request.integration === "telematics") {
+      return [
+        [
+          "npm",
+          "run",
+          "orbcomm:sync:bc",
+          "--",
+          "--write",
+          "--since-last-successful-run",
+          "--max-lookback-hours=24",
+          "--window-chunk-minutes=60",
+          "--sleep-between-windows-seconds=305",
+          "--concurrency=3",
+        ],
       ];
     }
   }
@@ -167,13 +199,26 @@ function buildCommand(request: SyncRequest) {
   }
 
   if (request.integration === "skybitz") {
-    return ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", `--assetid=${fixedAssetNo}`, "--concurrency=1"];
+    return [
+      ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", `--assetid=${fixedAssetNo}`, "--concurrency=1"],
+      ["npm", "run", "telematics:backfill-skybitz", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
+    ];
   }
   if (request.integration === "record360") {
-    return ["npm", "run", "record360:sync:bc", "--", "--write", `--trailer-no=${fixedAssetNo}`, "--concurrency=2"];
+    return [["npm", "run", "record360:sync:bc", "--", "--write", `--trailer-no=${fixedAssetNo}`, "--concurrency=2"]];
   }
   if (request.integration === "trailerDocuments") {
-    return ["npm", "run", "sharepoint:sync:bc", "--", "--write", `--folders=${fixedAssetNo}`, "--concurrency=1"];
+    return [["npm", "run", "sharepoint:sync:bc", "--", "--write", `--folders=${fixedAssetNo}`, "--concurrency=1"]];
+  }
+  if (request.integration === "orbcomm") {
+    return [["npm", "run", "orbcomm:sync:bc", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"]];
+  }
+  if (request.integration === "telematics") {
+    return [
+      ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", `--assetid=${fixedAssetNo}`, "--concurrency=1"],
+      ["npm", "run", "telematics:backfill-skybitz", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
+      ["npm", "run", "orbcomm:sync:bc", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
+    ];
   }
 
   throw new Error(`Unsupported sync request: ${request.mode}:${request.integration}`);

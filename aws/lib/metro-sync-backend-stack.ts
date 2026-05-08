@@ -174,6 +174,21 @@ export class MetroSyncBackendStack extends Stack {
       ),
     });
 
+    const orbcommSecret = new secretsmanager.Secret(this, "OrbcommSecret", {
+      secretName: "metro-trailer/orbcomm",
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        JSON.stringify({
+          ORBCOMM_USER_ID: "",
+          ORBCOMM_PASSWORD: "",
+          ORBCOMM_BASE_URL: "https://platform.orbcomm.com/SynB2BGatewayService/api/",
+          ORBCOMM_ACCESS_TOKEN: "",
+          ORBCOMM_REFRESH_TOKEN: "",
+          ORBCOMM_ACCESS_TOKEN_EXPIRES_AT: "",
+          ORBCOMM_REFRESH_TOKEN_EXPIRES_AT: "",
+        }),
+      ),
+    });
+
     const record360Secret = new secretsmanager.Secret(this, "Record360Secret", {
       secretName: "metro-trailer/record360",
       secretStringValue: cdk.SecretValue.unsafePlainText(
@@ -224,6 +239,7 @@ export class MetroSyncBackendStack extends Stack {
         SYNC_REQUEST_QUEUE_URL: requestQueue.queueUrl,
         SYNC_REQUEST_TABLE_NAME: requestTable.tableName,
         SHAREPOINT_SYNC_STATE_BUCKET: sourceBucket.bucketName,
+        ORBCOMM_SECRET_ID: orbcommSecret.secretName,
       },
       secrets: {
         METRO_GRAPH_TENANT_ID: ecs.Secret.fromSecretsManager(bcSecret, "METRO_GRAPH_TENANT_ID"),
@@ -235,6 +251,13 @@ export class MetroSyncBackendStack extends Stack {
         SKYBITZ_CLIENT_SECRET: ecs.Secret.fromSecretsManager(skybitzSecret, "SKYBITZ_CLIENT_SECRET"),
         SKYBITZ_TOKEN_URL: ecs.Secret.fromSecretsManager(skybitzSecret, "SKYBITZ_TOKEN_URL"),
         SKYBITZ_SERVICE_URL: ecs.Secret.fromSecretsManager(skybitzSecret, "SKYBITZ_SERVICE_URL"),
+        ORBCOMM_USER_ID: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_USER_ID"),
+        ORBCOMM_PASSWORD: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_PASSWORD"),
+        ORBCOMM_BASE_URL: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_BASE_URL"),
+        ORBCOMM_ACCESS_TOKEN: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_ACCESS_TOKEN"),
+        ORBCOMM_REFRESH_TOKEN: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_REFRESH_TOKEN"),
+        ORBCOMM_ACCESS_TOKEN_EXPIRES_AT: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_ACCESS_TOKEN_EXPIRES_AT"),
+        ORBCOMM_REFRESH_TOKEN_EXPIRES_AT: ecs.Secret.fromSecretsManager(orbcommSecret, "ORBCOMM_REFRESH_TOKEN_EXPIRES_AT"),
         RECORD360_API_KEY_ID: ecs.Secret.fromSecretsManager(record360Secret, "RECORD360_API_KEY_ID"),
         RECORD360_API_KEY_SECRET: ecs.Secret.fromSecretsManager(record360Secret, "RECORD360_API_KEY_SECRET"),
         RECORD360_API_BASE_URL: ecs.Secret.fromSecretsManager(record360Secret, "RECORD360_API_BASE_URL"),
@@ -250,7 +273,14 @@ export class MetroSyncBackendStack extends Stack {
     requestQueue.grantConsumeMessages(taskDefinition.taskRole);
     requestTable.grantReadWriteData(taskDefinition.taskRole);
     sourceBucket.grantReadWrite(taskDefinition.taskRole, "state/*");
-    for (const secret of [bcSecret, skybitzSecret, record360Secret, sharePointSecret]) {
+    orbcommSecret.grantRead(taskDefinition.taskRole);
+    taskDefinition.addToTaskRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["secretsmanager:PutSecretValue"],
+        resources: [orbcommSecret.secretArn],
+      }),
+    );
+    for (const secret of [bcSecret, skybitzSecret, orbcommSecret, record360Secret, sharePointSecret]) {
       secret.grantRead(taskDefinition.executionRole!);
     }
 
@@ -324,6 +354,12 @@ export class MetroSyncBackendStack extends Stack {
       targets: [runTaskTarget("daily:record360")],
     });
 
+    new events.Rule(this, "DailyOrbcommSchedule", {
+      ruleName: "metro-trailer-daily-orbcomm-sync",
+      schedule: events.Schedule.cron({ minute: "30", hour: "6" }),
+      targets: [runTaskTarget("daily:orbcomm")],
+    });
+
     new events.Rule(this, "DailyTrailerDocumentsSchedule", {
       ruleName: "metro-trailer-daily-trailer-documents-sync",
       schedule: events.Schedule.cron({ minute: "15", hour: "7" }),
@@ -393,6 +429,8 @@ export class MetroSyncBackendStack extends Stack {
     sync.addResource("skybitz").addMethod("POST", lambdaIntegration);
     sync.addResource("record360").addMethod("POST", lambdaIntegration);
     sync.addResource("trailer-documents").addMethod("POST", lambdaIntegration);
+    sync.addResource("orbcomm").addMethod("POST", lambdaIntegration);
+    sync.addResource("telematics").addMethod("POST", lambdaIntegration);
     const status = sync.addResource("status").addResource("{requestId}");
     status.addMethod("GET", lambdaIntegration);
 
