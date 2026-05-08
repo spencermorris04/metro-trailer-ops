@@ -1,7 +1,9 @@
 import { assetTransferSchema } from "@/lib/domain/validators";
 import { errorResponse, getIdempotencyKey, ok, readJson } from "@/lib/server/api";
 import { requireApiPermission, resolveAssetScope } from "@/lib/server/authorization";
+import { assetInvalidationTags } from "@/lib/server/cache-tags";
 import { transferAsset } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 type AssetTransferRouteParams = {
   params: Promise<{
@@ -30,6 +32,7 @@ export async function POST(
       idempotencyKey: payload?.idempotencyKey ?? getIdempotencyKey(request),
     });
     const data = await transferAsset(assetId, parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(assetInvalidationTags(data.id));
     return ok({ message: "Asset transferred.", data });
   } catch (error) {
     return errorResponse(error);

@@ -1,7 +1,9 @@
 import { customerSchema } from "@/lib/domain/validators";
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
 import { requireApiPermission, requireStaffApiPermission } from "@/lib/server/authorization";
+import { customerInvalidationTags } from "@/lib/server/cache-tags";
 import { createCustomer, listCustomers } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 export async function GET(request: Request) {
   await requireStaffApiPermission(request, "customers.view");
@@ -25,6 +27,7 @@ export async function POST(request: Request) {
     const payload = await readJson(request);
     const parsed = customerSchema.parse(payload);
     const data = await createCustomer(parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(customerInvalidationTags(data.id));
 
     return created({
       message: "Customer created.",

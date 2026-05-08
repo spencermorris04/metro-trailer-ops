@@ -15,20 +15,16 @@ export function SectionCard({
 }) {
   return (
     <section className={`panel overflow-hidden ${className}`}>
-      <div className="border-b border-[var(--line)] px-5 py-4">
-        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
-        <div className="mt-1 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-          <h2 className="text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
-            {title}
-          </h2>
-          {description ? (
-            <p className="max-w-3xl text-[0.8125rem] leading-6 text-slate-500">
-              {description}
-            </p>
-          ) : null}
+      <div className="flex items-baseline justify-between gap-4 border-b border-[var(--line)] px-3 py-2">
+        <div className="flex items-baseline gap-3">
+          {eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}
+          <h2 className="text-[0.85rem] font-semibold text-slate-900">{title}</h2>
         </div>
+        {description ? (
+          <p className="hidden text-[0.75rem] text-slate-400 lg:block">{description}</p>
+        ) : null}
       </div>
-      <div className="px-5 py-4">{children}</div>
+      <div className="p-3">{children}</div>
     </section>
   );
 }

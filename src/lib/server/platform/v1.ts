@@ -115,6 +115,14 @@ export async function getAssetListView(filters?: AssetListFilters) {
     availability: filters?.availability,
     maintenanceStatus: filters?.maintenanceStatus,
     type: filters?.type,
+    faClassCode: filters?.faClassCode,
+    faSubclassCode: filters?.faSubclassCode,
+    blocked: filters?.blocked,
+    inactive: filters?.inactive,
+    disposed: filters?.disposed,
+    onRent: filters?.onRent,
+    inService: filters?.inService,
+    underMaintenance: filters?.underMaintenance,
     page,
     pageSize,
   });
@@ -996,6 +1004,28 @@ export async function getSourceDocumentsView() {
     dueDate: toIso(doc.dueDate),
     importedAt: toIso(doc.importedAt),
     lineCount: lineCountByDocument.get(doc.id) ?? 0,
+    customerName:
+      (doc.payload &&
+      typeof doc.payload === "object" &&
+      (typeof doc.payload.customerName === "string"
+        ? doc.payload.customerName
+        : typeof doc.payload.sellToCustomerName === "string"
+          ? doc.payload.sellToCustomerName
+          : typeof doc.payload.name === "string"
+            ? doc.payload.name
+            : null)) ??
+      null,
+    totalAmount:
+      (doc.payload &&
+      typeof doc.payload === "object" &&
+      (typeof doc.payload.totalAmount === "number"
+        ? doc.payload.totalAmount
+        : typeof doc.payload.amountIncludingVat === "number"
+          ? doc.payload.amountIncludingVat
+          : typeof doc.payload.amount === "number"
+            ? doc.payload.amount
+            : null)) ??
+      null,
     linkedContracts: linkedContracts.filter(
       (contract) =>
         contract.sourceDocumentNo === doc.documentNo &&

@@ -1,7 +1,9 @@
 import { assetSchema } from "@/lib/domain/validators";
+import { assetInvalidationTags } from "@/lib/server/cache-tags";
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
 import { requireApiPermission, requireStaffApiPermission } from "@/lib/server/authorization";
 import { createAsset, listAssetsPage } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 export async function GET(request: Request) {
   await requireStaffApiPermission(request, "assets.view");
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
     const payload = await readJson(request);
     const parsed = assetSchema.parse(payload);
     const data = await createAsset(parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(assetInvalidationTags(data.id));
 
     return created({
       message: "Asset created.",

@@ -1,13 +1,15 @@
-import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { DetailPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getAssetDetailView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 type AssetDetailPageProps = {
   params: Promise<{
@@ -15,7 +17,15 @@ type AssetDetailPageProps = {
   }>;
 };
 
-export default async function AssetDetailPage({ params }: AssetDetailPageProps) {
+export default function AssetDetailPage({ params }: AssetDetailPageProps) {
+  return (
+    <Suspense fallback={<DetailPageSkeleton />}>
+      <AssetDetailContent params={params} />
+    </Suspense>
+  );
+}
+
+async function AssetDetailContent({ params }: AssetDetailPageProps) {
   const { assetId } = await params;
   const detail = await getAssetDetailView(assetId);
 
@@ -33,12 +43,12 @@ export default async function AssetDetailPage({ params }: AssetDetailPageProps) 
         description="Asset detail with operational ownership, contract history, inspections, work orders, and BC lineage."
         actions={
           <>
-            <Link href="/assets" className="btn-secondary">
+            <WorkspaceLink href="/assets" className="btn-secondary">
               Back to assets
-            </Link>
-            <Link href="/contracts" className="btn-secondary">
+            </WorkspaceLink>
+            <WorkspaceLink href="/contracts" className="btn-secondary">
               Contracts
-            </Link>
+            </WorkspaceLink>
           </>
         }
       />
@@ -152,9 +162,9 @@ export default async function AssetDetailPage({ params }: AssetDetailPageProps) 
               {detail.contractHistory.map((contract) => (
                 <tr key={contract.contractId}>
                   <td>
-                    <Link href={`/contracts/${contract.contractId}`} className="font-semibold text-[var(--brand)]">
+                    <WorkspaceLink href={`/contracts/${contract.contractId}`} className="font-semibold text-[var(--brand)]">
                       {contract.contractNumber}
-                    </Link>
+                    </WorkspaceLink>
                   </td>
                   <td>{contract.customerName}</td>
                   <td><StatusPill label={titleize(contract.status)} /></td>

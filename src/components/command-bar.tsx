@@ -122,27 +122,25 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-10 w-full items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-left text-sm text-slate-500 transition hover:border-[var(--line-strong)] hover:bg-white"
+        className="flex h-7 w-full items-center gap-2 border border-[var(--line)] bg-[var(--surface-soft)] px-2 text-left text-[0.75rem] text-slate-400 transition hover:border-[var(--line-strong)]"
       >
-        <IconSearch size={16} className="text-slate-400" />
-        <span className="min-w-0 flex-1 truncate">Run command, jump, or open a workspace</span>
-        <kbd className="rounded border border-[var(--line)] bg-white px-1.5 py-0.5 font-mono text-[0.625rem] font-medium text-slate-400">
-          Ctrl K
-        </kbd>
+        <IconSearch size={13} className="text-slate-300" />
+        <span className="min-w-0 flex-1 truncate">Search or jump...</span>
+        <kbd className="workspace-kbd">Ctrl K</kbd>
       </button>
 
       {open ? (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center bg-slate-950/50 px-4 pb-8 pt-[12vh] backdrop-blur-sm">
-          <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-2xl">
-            <div className="flex items-center gap-3 border-b border-slate-800 px-4 py-4">
-              <IconSearch size={17} className="text-slate-500" />
+        <div className="fixed inset-0 z-[100] flex items-start justify-center bg-slate-950/50 px-4 pb-8 pt-[10vh]">
+          <div className="w-full max-w-2xl overflow-hidden border border-slate-700 bg-slate-900 text-slate-100 shadow-2xl">
+            <div className="flex items-center gap-2 border-b border-slate-700 px-3 py-2.5">
+              <IconSearch size={14} className="text-slate-500" />
               <input
                 autoFocus
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Type a route, queue, or command"
-                className="flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                className="flex-1 bg-transparent text-[0.8rem] text-slate-100 outline-none placeholder:text-slate-500"
               />
               <button
                 type="button"
@@ -150,15 +148,15 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
                   setOpen(false);
                   setQuery("");
                 }}
-                className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-900 hover:text-slate-300"
+                className="p-1 text-slate-500 transition hover:text-slate-300"
               >
-                <IconX size={16} />
+                <IconX size={14} />
               </button>
             </div>
 
-            <div className="max-h-[60vh] overflow-y-auto">
+            <div className="max-h-[50vh] overflow-y-auto">
               {filtered.length === 0 ? (
-                <div className="px-5 py-10 text-center text-sm text-slate-500">
+                <div className="px-4 py-8 text-center text-[0.8rem] text-slate-500">
                   No commands match the current query.
                 </div>
               ) : (
@@ -174,35 +172,31 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
                       type="button"
                       onMouseEnter={() => setSelectedIndex(index)}
                       onClick={() => command.run()}
-                      className={`flex w-full items-start gap-4 border-b border-slate-900 px-5 py-4 text-left transition ${
-                        selected ? "bg-slate-900" : "bg-transparent hover:bg-slate-900/70"
+                      className={`flex w-full items-center gap-3 border-b border-slate-800 px-3 py-2 text-left transition ${
+                        selected ? "bg-slate-800" : "bg-transparent hover:bg-slate-800/60"
                       }`}
                     >
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-slate-300">
-                        <Icon name={command.icon} size={17} />
-                      </div>
+                      <Icon name={command.icon} size={15} className="text-slate-400" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-sm font-medium text-slate-100">
+                          <span className="truncate text-[0.8rem] font-medium text-slate-200">
                             {command.label}
-                          </p>
+                          </span>
                           {active ? (
-                            <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[0.625rem] font-semibold uppercase tracking-[0.08em] text-emerald-300">
+                            <span className="border border-emerald-500/30 bg-emerald-500/10 px-1 py-0.5 text-[0.55rem] font-semibold uppercase tracking-[0.06em] text-emerald-400">
                               Open
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {command.description}
-                        </p>
                       </div>
+                      <span className="text-[0.7rem] text-slate-500">{command.description}</span>
                     </button>
                   );
                 })
               )}
             </div>
 
-            <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-[0.68rem] uppercase tracking-[0.08em] text-slate-500">
+            <div className="flex items-center justify-between border-t border-slate-700 px-3 py-2 text-[0.625rem] uppercase tracking-[0.06em] text-slate-500">
               <span>Enter to run</span>
               <span>Esc to close</span>
             </div>

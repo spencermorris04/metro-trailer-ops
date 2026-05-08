@@ -4,7 +4,6 @@ import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getCommercialEventsView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function CommercialEventsPage() {
   const events = await getCommercialEventsView();

@@ -6,7 +6,9 @@ import {
   requireStaffApiPermission,
   resolveContractScope,
 } from "@/lib/server/authorization";
+import { contractInvalidationTags } from "@/lib/server/cache-tags";
 import { listContracts, transitionContract } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 type TransitionRouteParams = {
   params: Promise<{
@@ -105,6 +107,7 @@ export async function POST(
         idempotencyKey: parsed.idempotencyKey,
       },
     );
+    await invalidateWorkspaceCache(contractInvalidationTags(data.id));
 
     return ok({
       message: "Contract transitioned.",

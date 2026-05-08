@@ -1,7 +1,9 @@
 import { assetTransitionSchema } from "@/lib/domain/validators";
 import { errorResponse, getIdempotencyKey, ok, readJson } from "@/lib/server/api";
 import { requireApiPermission, resolveAssetScope } from "@/lib/server/authorization";
+import { assetInvalidationTags } from "@/lib/server/cache-tags";
 import { transitionAsset } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 type AssetTransitionRouteParams = {
   params: Promise<{
@@ -38,6 +40,7 @@ export async function POST(
         idempotencyKey: parsed.idempotencyKey,
       },
     );
+    await invalidateWorkspaceCache(assetInvalidationTags(data.id));
     return ok({ message: "Asset transitioned.", data });
   } catch (error) {
     return errorResponse(error);

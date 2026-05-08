@@ -10,7 +10,6 @@ import {
   listWorkOrders,
 } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 const operationalLinks = [
   {

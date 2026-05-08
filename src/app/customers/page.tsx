@@ -1,11 +1,14 @@
-import Link from "next/link";
+import { Suspense } from "react";
 
+import { InstantForm } from "@/components/instant-form";
 import { PageHeader } from "@/components/page-header";
 import { StatusPill } from "@/components/status-pill";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { ListPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCompactNumber, formatCurrency, titleize } from "@/lib/format";
 import { getCustomerListView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 type CustomersPageProps = {
   searchParams: Promise<{
@@ -35,7 +38,15 @@ function buildHref(
   return query ? `/customers?${query}` : "/customers";
 }
 
-export default async function CustomersPage({ searchParams }: CustomersPageProps) {
+export default function CustomersPage({ searchParams }: CustomersPageProps) {
+  return (
+    <Suspense fallback={<ListPageSkeleton filters={4} columns={6} />}>
+      <CustomersContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function CustomersContent({ searchParams }: CustomersPageProps) {
   const resolved = await searchParams;
   const filters = {
     q: getParam(resolved.q),
@@ -58,18 +69,18 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
         description="Accounts, locations, BC lineage, contract counts, and AR exposure."
         actions={
           <>
-            <Link href="/contracts" className="btn-secondary">
+            <WorkspaceLink href="/contracts" className="btn-secondary">
               Contracts
-            </Link>
-            <Link href="/ar/invoices" className="btn-secondary">
+            </WorkspaceLink>
+            <WorkspaceLink href="/ar/invoices" className="btn-secondary">
               AR invoices
-            </Link>
+            </WorkspaceLink>
           </>
         }
       />
 
       <div className="panel px-3 py-2">
-        <form className="flex flex-wrap items-end gap-2" action="/customers">
+        <InstantForm className="flex flex-wrap items-end gap-2" action="/customers">
           <input
             type="text"
             name="q"
@@ -107,10 +118,10 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
           <button type="submit" className="btn-primary">
             Apply
           </button>
-          <Link href="/customers" className="btn-secondary">
+          <WorkspaceLink href="/customers" className="btn-secondary">
             Reset
-          </Link>
-        </form>
+          </WorkspaceLink>
+        </InstantForm>
       </div>
 
       <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
@@ -201,12 +212,12 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
                 view.data.map((customer) => (
                   <tr key={customer.id}>
                     <td>
-                      <Link
+                      <WorkspaceLink
                         href={`/customers/${customer.id}`}
                         className="font-semibold text-[var(--brand)]"
                       >
                         {customer.name}
-                      </Link>
+                      </WorkspaceLink>
                       <br />
                       <span className="mono text-[0.65rem] text-slate-400">
                         {customer.customerNumber}
@@ -271,22 +282,22 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
             {filtersActive ? "Filtered account list" : "All account records"}
           </span>
           <div className="flex gap-1.5">
-            <Link
+            <WorkspaceLink
               href={buildHref(filters, {
                 page: page > 1 ? String(page - 1) : undefined,
               })}
               className="btn-secondary"
             >
               Prev
-            </Link>
-            <Link
+            </WorkspaceLink>
+            <WorkspaceLink
               href={buildHref(filters, {
                 page: page < totalPages ? String(page + 1) : String(totalPages),
               })}
               className="btn-secondary"
             >
               Next
-            </Link>
+            </WorkspaceLink>
           </div>
         </div>
       </div>

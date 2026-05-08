@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { Fragment, type ReactNode } from "react";
-import { count, desc, eq, isNull } from "drizzle-orm";
+import { Fragment, Suspense, type ReactNode } from "react";
+import { count, desc, eq, isNull, sql } from "drizzle-orm";
 
 import { DashboardCustomizer } from "@/components/dashboard-customizer";
 import { Icon } from "@/components/icons";
 import { StatusPill } from "@/components/status-pill";
+import { DashboardSkeleton } from "@/components/workspace-skeletons";
 import {
   formatCompactNumber,
   formatCurrency,
@@ -23,14 +24,13 @@ import {
   getFinancialOverview,
   getInventoryOverview,
   listBranches,
-  listCustomers,
   listDispatchTasks,
   listInspections,
   listWorkOrders,
 } from "@/lib/server/platform";
 import { getWorkspaceLayout } from "@/lib/server/workspace-layouts";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 const defaultShellLayout = {
   left: 108,
@@ -253,7 +253,50 @@ async function getBusinessCentralDashboardData() {
   };
 }
 
-export default async function HomePage() {
+async function getDashboardTopCustomers() {
+  const locationCount = sql<number>`count(${schema.customerLocations.id})`;
+  const branchCoverageCount = sql<number>`coalesce(jsonb_array_length(${schema.customers.branchCoverage}), 0)`;
+
+  const rows = await db
+    .select({
+      id: schema.customers.id,
+      customerNumber: schema.customers.customerNumber,
+      name: schema.customers.name,
+      customerType: schema.customers.customerType,
+      locationCount,
+      branchCoverageCount,
+    })
+    .from(schema.customers)
+    .leftJoin(
+      schema.customerLocations,
+      eq(schema.customerLocations.customerId, schema.customers.id),
+    )
+    .groupBy(
+      schema.customers.id,
+      schema.customers.customerNumber,
+      schema.customers.name,
+      schema.customers.customerType,
+      schema.customers.branchCoverage,
+    )
+    .orderBy(desc(locationCount), desc(branchCoverageCount), schema.customers.name)
+    .limit(8);
+
+  return rows.map((row) => ({
+    ...row,
+    locationCount: Number(row.locationCount),
+    branchCoverageCount: Number(row.branchCoverageCount),
+  }));
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<DashboardSkeleton />}>
+      <HomeDashboard />
+    </Suspense>
+  );
+}
+
+async function HomeDashboard() {
   const requestHeaders = new Headers(await headers());
   const [
     shellLayoutResult,
@@ -261,7 +304,7 @@ export default async function HomePage() {
     summary,
     inventory,
     financial,
-    customers,
+    topCustomers,
     branches,
     dispatchTasks,
     inspections,
@@ -273,7 +316,7 @@ export default async function HomePage() {
     getDashboardSummary(),
     getInventoryOverview(),
     getFinancialOverview(),
-    listCustomers(),
+    getDashboardTopCustomers(),
     listBranches(),
     listDispatchTasks(),
     listInspections(),
@@ -310,17 +353,6 @@ export default async function HomePage() {
   const branchWorkOrders = openWorkOrders.filter((order) =>
     storeMatches(shellLayout.activeStore, activeBranch, order.branch),
   );
-  const topCustomers = [...customers]
-    .sort((left, right) => {
-      if (right.locations.length !== left.locations.length) {
-        return right.locations.length - left.locations.length;
-      }
-      if (right.branchCoverage.length !== left.branchCoverage.length) {
-        return right.branchCoverage.length - left.branchCoverage.length;
-      }
-      return left.name.localeCompare(right.name);
-    })
-    .slice(0, 8);
   const totalSourceDocuments = bcData.sourceDocumentCounts.reduce(
     (sum, item) => sum + Number(item.total),
     0,
@@ -705,7 +737,7 @@ export default async function HomePage() {
                 <StatusPill label={titleize(customer.customerType)} />
               </div>
               <p className="mt-1 text-[0.68rem] text-slate-500">
-                {customer.locations.length} sites / {customer.branchCoverage.length} branches /{" "}
+                {customer.locationCount} sites / {customer.branchCoverageCount} branches /{" "}
                 {customer.customerNumber}
               </p>
             </div>

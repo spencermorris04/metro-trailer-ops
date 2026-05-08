@@ -10,7 +10,6 @@ import { getSourceDocumentsView } from "@/lib/server/platform";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { listDocuments, listSignatureRequests } from "@/lib/server/esign";
 
-export const dynamic = "force-dynamic";
 
 export default async function DocumentsPage() {
   const [contracts, documents, signatures, sourceDocuments] = await Promise.all([

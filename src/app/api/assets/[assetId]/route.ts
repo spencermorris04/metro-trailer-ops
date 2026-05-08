@@ -10,6 +10,8 @@ import {
   requireStaffApiPermission,
   resolveAssetScope,
 } from "@/lib/server/authorization";
+import { assetInvalidationTags } from "@/lib/server/cache-tags";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 type AssetRouteParams = {
   params: Promise<{
@@ -50,6 +52,7 @@ export async function PATCH(request: Request, { params }: AssetRouteParams) {
     const payload = await readJson(request);
     const parsed = assetUpdateSchema.parse(payload);
     const data = await updateAsset(assetId, parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(assetInvalidationTags(data.id));
     return ok({ message: "Asset updated.", data });
   } catch (error) {
     return errorResponse(error);
@@ -69,6 +72,7 @@ export async function DELETE(request: Request, { params }: AssetRouteParams) {
       branchId: scope.branchId ?? undefined,
     });
     await deleteAsset(assetId, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(assetInvalidationTags(assetId));
     return noContent();
   } catch (error) {
     return errorResponse(error);

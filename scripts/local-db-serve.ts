@@ -60,6 +60,7 @@ async function main() {
   const config = getDatabaseConfig();
 
   await fs.mkdir(runtimeDir, { recursive: true });
+  const pgVersionFile = path.join(dataDir, "PG_VERSION");
 
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
@@ -88,7 +89,11 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-  await pg.initialise();
+  try {
+    await fs.access(pgVersionFile);
+  } catch {
+    await pg.initialise();
+  }
   await pg.start();
   await ensureDatabaseExists(pg, config.database, config.host);
 

@@ -1,13 +1,15 @@
-import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { DetailPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getCustomerDetailView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -15,7 +17,15 @@ type CustomerDetailPageProps = {
   }>;
 };
 
-export default async function CustomerDetailPage({ params }: CustomerDetailPageProps) {
+export default function CustomerDetailPage({ params }: CustomerDetailPageProps) {
+  return (
+    <Suspense fallback={<DetailPageSkeleton />}>
+      <CustomerDetailContent params={params} />
+    </Suspense>
+  );
+}
+
+async function CustomerDetailContent({ params }: CustomerDetailPageProps) {
   const { customerId } = await params;
   const detail = await getCustomerDetailView(customerId);
 
@@ -33,12 +43,12 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
         description="Customer summary with sites, contracts, invoices, receipts, and BC lineage."
         actions={
           <>
-            <Link href="/customers" className="btn-secondary">
+            <WorkspaceLink href="/customers" className="btn-secondary">
               Back to customers
-            </Link>
-            <Link href="/ar/invoices" className="btn-secondary">
+            </WorkspaceLink>
+            <WorkspaceLink href="/ar/invoices" className="btn-secondary">
               AR invoices
-            </Link>
+            </WorkspaceLink>
           </>
         }
       />
@@ -133,9 +143,9 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
               {detail.contracts.map((contract) => (
                 <tr key={contract.id}>
                   <td>
-                    <Link href={`/contracts/${contract.id}`} className="font-semibold text-[var(--brand)]">
+                    <WorkspaceLink href={`/contracts/${contract.id}`} className="font-semibold text-[var(--brand)]">
                       {contract.contractNumber}
-                    </Link>
+                    </WorkspaceLink>
                   </td>
                   <td>{contract.branch}</td>
                   <td>

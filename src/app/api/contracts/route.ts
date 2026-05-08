@@ -1,11 +1,13 @@
 import { contractSchema } from "@/lib/domain/validators";
 import { created, errorResponse, getIdempotencyKey, ok, readJson } from "@/lib/server/api";
 import { requireApiPermission, requireStaffApiPermission } from "@/lib/server/authorization";
+import { contractInvalidationTags } from "@/lib/server/cache-tags";
 import {
   createContract,
   listContracts,
   listFinancialEvents,
 } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 export async function GET(request: Request) {
   const actor = await requireStaffApiPermission(request, "contracts.view");
@@ -47,6 +49,7 @@ export async function POST(request: Request) {
         getIdempotencyKey(request),
     });
     const data = await createContract(parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(contractInvalidationTags(data.id));
 
     return created({
       message: "Contract created.",

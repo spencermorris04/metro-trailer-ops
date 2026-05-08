@@ -1,7 +1,10 @@
-import Link from "next/link";
+import { Suspense } from "react";
 
+import { InstantForm } from "@/components/instant-form";
 import { PageHeader } from "@/components/page-header";
 import { StatusPill } from "@/components/status-pill";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { ListPageSkeleton } from "@/components/workspace-skeletons";
 import {
   assetAvailabilities,
   assetStatuses,
@@ -11,7 +14,7 @@ import {
 import { formatCompactNumber, formatCurrency, titleize } from "@/lib/format";
 import { getAssetListView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 type AssetsPageProps = {
   searchParams: Promise<{
@@ -55,7 +58,15 @@ function booleanLabel(value: boolean) {
   return value ? "Yes" : "No";
 }
 
-export default async function AssetsPage({ searchParams }: AssetsPageProps) {
+export default function AssetsPage({ searchParams }: AssetsPageProps) {
+  return (
+    <Suspense fallback={<ListPageSkeleton filters={13} columns={7} />}>
+      <AssetsContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function AssetsContent({ searchParams }: AssetsPageProps) {
   const resolved = await searchParams;
   const filters = {
     q: getParam(resolved.q),
@@ -95,18 +106,18 @@ export default async function AssetsPage({ searchParams }: AssetsPageProps) {
         description="BC-enriched trailer and equipment records with lifecycle flags, location codes, and source lineage."
         actions={
           <>
-            <Link href="/contracts" className="btn-secondary">
+            <WorkspaceLink href="/contracts" className="btn-secondary">
               Contracts
-            </Link>
-            <Link href="/integrations/business-central" className="btn-secondary">
+            </WorkspaceLink>
+            <WorkspaceLink href="/integrations/business-central" className="btn-secondary">
               BC import
-            </Link>
+            </WorkspaceLink>
           </>
         }
       />
 
       <div className="panel px-3 py-2">
-        <form className="flex flex-wrap items-end gap-2" action="/assets">
+        <InstantForm className="flex flex-wrap items-end gap-2" action="/assets">
           <input
             type="text"
             name="q"
@@ -205,10 +216,10 @@ export default async function AssetsPage({ searchParams }: AssetsPageProps) {
           <button type="submit" className="btn-primary">
             Apply
           </button>
-          <Link href="/assets" className="btn-secondary">
+          <WorkspaceLink href="/assets" className="btn-secondary">
             Reset
-          </Link>
-        </form>
+          </WorkspaceLink>
+        </InstantForm>
       </div>
 
       <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
@@ -275,12 +286,12 @@ export default async function AssetsPage({ searchParams }: AssetsPageProps) {
                 view.data.map((asset) => (
                   <tr key={asset.id}>
                     <td>
-                      <Link
+                      <WorkspaceLink
                         href={`/assets/${asset.id}`}
                         className="font-semibold text-[var(--brand)]"
                       >
                         {asset.assetNumber}
-                      </Link>
+                      </WorkspaceLink>
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
                         {asset.branch} / {asset.branchCode}
@@ -359,22 +370,22 @@ export default async function AssetsPage({ searchParams }: AssetsPageProps) {
             {filtersActive ? "BC-aware filtered view" : "All asset master records"}
           </span>
           <div className="flex gap-1.5">
-            <Link
+            <WorkspaceLink
               href={buildHref(filters, {
                 page: page > 1 ? String(page - 1) : undefined,
               })}
               className="btn-secondary"
             >
               Prev
-            </Link>
-            <Link
+            </WorkspaceLink>
+            <WorkspaceLink
               href={buildHref(filters, {
                 page: page < totalPages ? String(page + 1) : String(totalPages),
               })}
               className="btn-secondary"
             >
               Next
-            </Link>
+            </WorkspaceLink>
           </div>
         </div>
       </div>

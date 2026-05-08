@@ -1,13 +1,15 @@
-import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { DetailPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getContractDetailView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 type ContractDetailPageProps = {
   params: Promise<{
@@ -15,7 +17,15 @@ type ContractDetailPageProps = {
   }>;
 };
 
-export default async function ContractDetailPage({ params }: ContractDetailPageProps) {
+export default function ContractDetailPage({ params }: ContractDetailPageProps) {
+  return (
+    <Suspense fallback={<DetailPageSkeleton />}>
+      <ContractDetailContent params={params} />
+    </Suspense>
+  );
+}
+
+async function ContractDetailContent({ params }: ContractDetailPageProps) {
   const { contractId } = await params;
   const detail = await getContractDetailView(contractId);
 
@@ -33,12 +43,12 @@ export default async function ContractDetailPage({ params }: ContractDetailPageP
         description="Contract detail with lines, assets, commercial events, invoices, BC source documents, and audit trail."
         actions={
           <>
-            <Link href="/contracts" className="btn-secondary">
+            <WorkspaceLink href="/contracts" className="btn-secondary">
               Back to contracts
-            </Link>
-            <Link href="/source-documents" className="btn-secondary">
+            </WorkspaceLink>
+            <WorkspaceLink href="/source-documents" className="btn-secondary">
               Source documents
-            </Link>
+            </WorkspaceLink>
           </>
         }
       />

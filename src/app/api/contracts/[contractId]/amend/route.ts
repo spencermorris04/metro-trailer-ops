@@ -1,7 +1,9 @@
 import { contractAmendmentSchema } from "@/lib/domain/validators";
 import { errorResponse, getIdempotencyKey, ok, readJson } from "@/lib/server/api";
 import { requireApiPermission, resolveContractScope } from "@/lib/server/authorization";
+import { contractInvalidationTags } from "@/lib/server/cache-tags";
 import { amendContract } from "@/lib/server/platform";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 type ContractAmendRouteParams = {
   params: Promise<{
@@ -31,6 +33,7 @@ export async function POST(
       idempotencyKey: payload?.idempotencyKey ?? getIdempotencyKey(request),
     });
     const data = await amendContract(contractId, parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(contractInvalidationTags(data.id));
     return ok({ message: "Contract amended.", data });
   } catch (error) {
     return errorResponse(error);

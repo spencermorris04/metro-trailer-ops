@@ -5,7 +5,6 @@ import { SectionCard } from "@/components/section-card";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getSourceDocumentsView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function SourceDocumentsPage() {
   const docs = await getSourceDocumentsView();

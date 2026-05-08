@@ -4,7 +4,6 @@ import { StatusPill } from "@/components/status-pill";
 import { formatDate } from "@/lib/format";
 import { getGlPeriodsView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function GlPeriodsPage() {
   const periods = await getGlPeriodsView();
@@ -30,7 +29,7 @@ export default async function GlPeriodsPage() {
             <tbody>
               {periods.map((period) => (
                 <tr key={period.id}>
-                  <td>{period.periodCode}</td>
+                  <td>{period.name}</td>
                   <td>
                     {formatDate(period.startsAt)}
                     <br />
@@ -38,7 +37,7 @@ export default async function GlPeriodsPage() {
                       {formatDate(period.endsAt)}
                     </span>
                   </td>
-                  <td><StatusPill label={period.isClosed ? "Closed" : "Open"} /></td>
+                  <td><StatusPill label={period.status === "closed" ? "Closed" : "Open"} /></td>
                   <td>{period.closedAt ? formatDate(period.closedAt) : "Open"}</td>
                 </tr>
               ))}

@@ -23,14 +23,14 @@ export function JsonActionButton({
   const classes =
     variant === "dark"
       ? "border border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
-      : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50";
+      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex items-center gap-2">
       <button
         type="button"
         disabled={pending}
-        className={`rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] transition disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
+        className={`rounded-none px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.06em] transition disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
         onClick={() =>
           startTransition(async () => {
             setMessage(null);
@@ -53,7 +53,7 @@ export function JsonActionButton({
       >
         {pending ? "Working..." : label}
       </button>
-      {message ? <p className="text-xs text-slate-500">{message}</p> : null}
+      {message ? <span className="text-[0.65rem] text-slate-400">{message}</span> : null}
     </div>
   );
 }

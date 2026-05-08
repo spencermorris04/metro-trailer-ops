@@ -6,7 +6,6 @@ import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { listDispatchTasks } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function DispatchPage() {
   const tasks = await listDispatchTasks();

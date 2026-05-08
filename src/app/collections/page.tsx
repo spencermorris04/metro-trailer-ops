@@ -5,66 +5,62 @@ import { StatusPill } from "@/components/status-pill";
 import { formatCurrency } from "@/lib/format";
 import { listCollectionCases } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function CollectionsPage() {
   const collectionCases = await listCollectionCases();
 
   return (
-    <>
+    <div className="space-y-2">
       <PageHeader
-        eyebrow="Phase 7.2"
-        title="Collections workflow with reminders, promises, and recovery context"
-        description="Collections stays connected to contract, invoice, and telematics data so the team can act on both payment risk and asset recovery with full operational context."
+        eyebrow="Collections"
+        title="Reminders, promises, and recovery context"
+        description="Connected to contract, invoice, and telematics data for full operational context."
       />
 
-      <SectionCard
-        eyebrow="Collections Queue"
-        title="Open collection cases"
-        description="Reminder actions are available directly from the case view, and recovery context can be refreshed from telematics when a unit is tied to a collection issue."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {collectionCases.map((caseRecord) => (
-            <div key={caseRecord.id} className="soft-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                    {caseRecord.invoiceNumber}
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    {caseRecord.customerName}
-                  </h3>
-                </div>
-                <StatusPill label={caseRecord.status} />
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-slate-600">
-                <p>Owner: {caseRecord.owner}</p>
-                <p>Balance: {formatCurrency(caseRecord.balanceAmount)}</p>
-                <p>
-                  Promise to pay: {caseRecord.promisedPaymentDate ?? "Not recorded"}
-                </p>
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <JsonActionButton
-                  endpoint={`/api/collections/${caseRecord.id}/remind`}
-                  label="Send reminder"
-                  body={{}}
-                />
-              </div>
-              <div className="mt-5 space-y-2 text-sm text-slate-600">
-                {caseRecord.notes.map((note) => (
-                  <p
-                    key={note}
-                    className="rounded-md border border-[var(--line)] bg-white px-3 py-2"
-                  >
-                    {note}
-                  </p>
-                ))}
-              </div>
-            </div>
-          ))}
+      <SectionCard eyebrow="Queue" title="Open collection cases">
+        <div className="data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice</th>
+                <th>Customer</th>
+                <th>Owner</th>
+                <th>Balance</th>
+                <th>Promise date</th>
+                <th>Status</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {collectionCases.map((caseRecord) => (
+                <tr key={caseRecord.id}>
+                  <td className="mono font-semibold text-slate-900">{caseRecord.invoiceNumber}</td>
+                  <td className="text-slate-700">{caseRecord.customerName}</td>
+                  <td className="text-slate-600">{caseRecord.owner}</td>
+                  <td className="font-semibold text-slate-900">{formatCurrency(caseRecord.balanceAmount)}</td>
+                  <td className="text-slate-600">{caseRecord.promisedPaymentDate ?? "-"}</td>
+                  <td><StatusPill label={caseRecord.status} /></td>
+                  <td>
+                    <div className="space-y-0.5">
+                      {caseRecord.notes.map((note) => (
+                        <p key={note} className="text-[0.65rem] text-slate-400">{note}</p>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <JsonActionButton
+                      endpoint={`/api/collections/${caseRecord.id}/remind`}
+                      label="Remind"
+                      body={{}}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </SectionCard>
-    </>
+    </div>
   );
 }

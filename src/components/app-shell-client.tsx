@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
@@ -15,10 +14,12 @@ import {
   IconX,
   type IconName,
 } from "@/components/icons";
+import { WorkspaceLink } from "@/components/workspace-link";
 import {
   getActiveDashboardPreset,
   type DashboardPreferences,
 } from "@/lib/dashboard-preferences";
+import { useNavigationStore } from "@/lib/client/navigation-store";
 import type { GlobalSearchGroup } from "@/lib/search-core";
 import type { WorkspaceActorSummary } from "@/lib/server/workspace-layouts";
 
@@ -104,7 +105,7 @@ function ModalBackdrop({
   );
 }
 
-  function StoreSelector({
+function StoreSelector({
   branches,
   shellLayout,
   updateShellLayout,
@@ -239,7 +240,9 @@ function GlobalSearch({
   activeStore: string;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const open = useNavigationStore((state) => state.searchOpen);
+  const setOpen = useNavigationStore((state) => state.setSearchOpen);
+  const setPendingRoute = useNavigationStore((state) => state.setPendingRoute);
   const [query, setQuery] = useState("");
   const [groups, setGroups] = useState<GlobalSearchGroup[]>([]);
   const [loading, setLoading] = useState(false);
@@ -258,7 +261,7 @@ function GlobalSearch({
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, []);
+  }, [setOpen]);
 
   useEffect(() => {
     if (!open) {
@@ -307,6 +310,7 @@ function GlobalSearch({
   }, [activeStore, open, query]);
 
   function openResult(href: string) {
+    setPendingRoute(href);
     router.push(href);
     setOpen(false);
     setQuery("");
@@ -458,9 +462,9 @@ function NotificationsButton({
                 {summary.critical} critical / {summary.warning} warnings
               </div>
             </div>
-            <Link href="/integrations" className="text-[0.72rem] font-semibold text-[var(--brand)]">
+            <WorkspaceLink href="/integrations" className="text-[0.72rem] font-semibold text-[var(--brand)]">
               Open integrations
-            </Link>
+            </WorkspaceLink>
           </div>
           <div className="max-h-96 overflow-y-auto">
             {items.length === 0 ? (
@@ -472,9 +476,9 @@ function NotificationsButton({
                 <div key={item.id} className="border-b border-slate-100 px-3 py-2 last:border-b-0">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <Link href={item.href} className="text-[0.8rem] font-semibold text-slate-900">
+                      <WorkspaceLink href={item.href} className="text-[0.8rem] font-semibold text-slate-900">
                         {item.title}
-                      </Link>
+                      </WorkspaceLink>
                       <p className="mt-1 text-[0.72rem] leading-5 text-slate-500">{item.body}</p>
                     </div>
                     <button
@@ -615,12 +619,12 @@ function UserMenu({
             <div className="text-[0.72rem] text-slate-500">{actor.ownerKey}</div>
           </div>
           <div className="grid gap-1 py-2">
-            <Link href="/reports" className="px-3 py-2 text-[0.8rem] hover:bg-slate-50">
+            <WorkspaceLink href="/reports" className="px-3 py-2 text-[0.8rem] hover:bg-slate-50">
               Reporting workspace
-            </Link>
-            <Link href="/integrations" className="px-3 py-2 text-[0.8rem] hover:bg-slate-50">
+            </WorkspaceLink>
+            <WorkspaceLink href="/integrations" className="px-3 py-2 text-[0.8rem] hover:bg-slate-50">
               Integration status
-            </Link>
+            </WorkspaceLink>
             <button
               type="button"
               onClick={() => router.refresh()}
@@ -652,15 +656,17 @@ function AppRail({
   setDashboardPreferences: (next: DashboardPreferences) => void;
 }) {
   const pathname = usePathname();
+  const optimisticPath = useNavigationStore((state) => state.optimisticPath);
+  const activePath = optimisticPath ?? pathname;
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-[#151922] text-slate-100">
-      <Link href="/" className="flex h-20 items-center justify-center border-b border-slate-800">
+      <WorkspaceLink href="/" className="flex h-20 items-center justify-center border-b border-slate-800">
         <span className="text-[1.45rem] font-black">
           <span className="text-white">M</span>
           <span className="text-[#ff6b35]">T</span>
         </span>
-      </Link>
+      </WorkspaceLink>
       <div className="grid gap-1 px-2 py-3">
         <StoreSelector
           branches={branches}
@@ -674,9 +680,9 @@ function AppRail({
           compact
         />
         {railItems.map((item) => {
-          const active = activeFor(pathname, item.href);
+          const active = activeFor(activePath, item.href);
           return (
-            <Link
+            <WorkspaceLink
               key={item.href}
               href={item.href}
               className={`metro-rail-button ${active ? "metro-rail-button-active" : ""}`}
@@ -684,7 +690,7 @@ function AppRail({
             >
               <Icon name={item.icon} size={20} className="metro-rail-icon" />
               <span className="metro-rail-label">{item.label}</span>
-            </Link>
+            </WorkspaceLink>
           );
         })}
       </div>
@@ -694,6 +700,8 @@ function AppRail({
 
 function CategoryRail({ hidden }: { hidden: boolean }) {
   const pathname = usePathname();
+  const optimisticPath = useNavigationStore((state) => state.optimisticPath);
+  const activePath = optimisticPath ?? pathname;
   if (hidden) {
     return null;
   }
@@ -702,20 +710,20 @@ function CategoryRail({ hidden }: { hidden: boolean }) {
     <nav className="flex h-11 shrink-0 items-center overflow-x-auto border-b border-[var(--line)] bg-[#e8e8ea] px-3">
       <div className="flex min-w-max items-center gap-7">
         {categoryItems.map((item) => (
-          <Link
+          <WorkspaceLink
             key={item.href}
             href={item.href}
             className={`flex items-center gap-2 text-[0.78rem] font-semibold ${
-              activeFor(pathname, item.href) ? "text-slate-950" : "text-slate-600 hover:text-slate-950"
+              activeFor(activePath, item.href) ? "text-slate-950" : "text-slate-600 hover:text-slate-950"
             }`}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-sky-600" />
             {item.label}
-          </Link>
+          </WorkspaceLink>
         ))}
-        <Link href="/reports" className="text-slate-500 hover:text-slate-900" title="Add dashboard">
+        <WorkspaceLink href="/reports" className="text-slate-500 hover:text-slate-900" title="Add dashboard">
           +
-        </Link>
+        </WorkspaceLink>
       </div>
     </nav>
   );
@@ -828,6 +836,9 @@ export function AppShellClient({
   const [currentNotificationLayout, setCurrentNotificationLayout] =
     useState(notificationLayout);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const pathname = usePathname();
+  const pendingRoute = useNavigationStore((state) => state.pendingRoute);
+  const clearPendingRoute = useNavigationStore((state) => state.clearPendingRoute);
 
   useEffect(() => {
     setCurrentShellLayout(shellLayout);
@@ -849,6 +860,18 @@ export function AppShellClient({
     window.addEventListener("metro-workspace-refresh", refreshWorkspace);
     return () => window.removeEventListener("metro-workspace-refresh", refreshWorkspace);
   }, [router]);
+
+  useEffect(() => {
+    clearPendingRoute();
+  }, [clearPendingRoute, pathname]);
+
+  useEffect(() => {
+    if (!pendingRoute) {
+      return;
+    }
+    const timer = window.setTimeout(() => clearPendingRoute(), 4500);
+    return () => window.clearTimeout(timer);
+  }, [clearPendingRoute, pendingRoute]);
 
   const railWidth = Math.min(132, Math.max(92, currentShellLayout.left || 108));
   const mainPadding = currentShellLayout.density === "compact" ? "p-2" : "p-3";
@@ -884,6 +907,7 @@ export function AppShellClient({
 
   return (
     <div className={rootClassName}>
+      {pendingRoute ? <div className="workspace-route-progress" aria-hidden="true" /> : null}
       <div
         className="hidden h-screen overflow-hidden xl:grid"
         style={{

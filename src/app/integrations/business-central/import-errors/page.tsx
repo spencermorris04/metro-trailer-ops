@@ -3,7 +3,6 @@ import { SectionCard } from "@/components/section-card";
 import { formatDate } from "@/lib/format";
 import { getBusinessCentralImportErrorsView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function BusinessCentralImportErrorsPage() {
   const errors = await getBusinessCentralImportErrorsView();

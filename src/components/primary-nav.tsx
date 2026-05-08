@@ -10,16 +10,18 @@ export function PrimaryNav({ collapsed }: { collapsed: boolean }) {
   const pathname = usePathname();
 
   return (
-    <nav className="flex flex-col gap-6">
+    <nav className="flex flex-col">
       {navigationGroups.map((group) => (
         <section key={group.label}>
           {!collapsed ? (
-            <p className="mb-2 px-3 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
+            <p className="px-3 pb-1 pt-3 text-[0.6rem] font-semibold uppercase tracking-[0.1em] text-slate-400">
               {group.label}
             </p>
-          ) : null}
+          ) : (
+            <div className="my-1 border-t border-[var(--line)]" />
+          )}
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col">
             {group.items.map((item) => {
               const active =
                 item.href === "/"
@@ -31,30 +33,23 @@ export function PrimaryNav({ collapsed }: { collapsed: boolean }) {
                   key={item.href}
                   href={item.href}
                   title={collapsed ? item.label : undefined}
-                  className={`group relative flex items-center gap-3 rounded-xl border px-3 py-2.5 transition ${
-                    collapsed ? "justify-center px-2.5" : ""
+                  className={`group relative flex items-center gap-2.5 px-3 py-1.5 text-[0.8rem] transition ${
+                    collapsed ? "justify-center px-2" : ""
                   } ${
                     active
-                      ? "border-[var(--line-strong)] bg-[var(--surface-soft)] text-slate-950"
-                      : "border-transparent text-slate-500 hover:border-[var(--line)] hover:bg-[var(--surface-soft)] hover:text-slate-900"
+                      ? "bg-[var(--surface-soft)] font-medium text-slate-900"
+                      : "text-slate-500 hover:bg-[var(--surface-soft)] hover:text-slate-800"
                   }`}
                 >
+                  {active ? <span className="workspace-nav-active" /> : null}
                   <Icon
                     name={item.icon}
-                    size={18}
-                    className={active ? "text-slate-950" : "text-slate-400"}
+                    size={16}
+                    className={active ? "text-slate-700" : "text-slate-400"}
                   />
-
                   {!collapsed ? (
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{item.label}</p>
-                      <p className="truncate text-[0.68rem] text-slate-500">
-                        {item.description}
-                      </p>
-                    </div>
+                    <span className="truncate">{item.label}</span>
                   ) : null}
-
-                  {active ? <span className="workspace-nav-active" /> : null}
                 </Link>
               );
             })}

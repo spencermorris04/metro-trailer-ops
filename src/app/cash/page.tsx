@@ -3,7 +3,6 @@ import { SectionCard } from "@/components/section-card";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getCashView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function CashPage() {
   const cash = await getCashView();

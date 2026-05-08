@@ -80,10 +80,6 @@ import {
   inferManualAllocationTypeForAssetStatus,
   type InventoryAllocationType,
 } from "@/lib/server/inventory-state";
-import {
-  listInspections,
-  listWorkOrders,
-} from "@/lib/server/platform-operations.production";
 import { getTelematicsFreshness } from "@/lib/server/skybitz-jobs";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -1062,6 +1058,10 @@ async function contractRecords() {
       status: schema.contracts.status,
       startDate: schema.contracts.startDate,
       endDate: schema.contracts.endDate,
+      sourceProvider: schema.contracts.sourceProvider,
+      sourceDocumentType: schema.contracts.sourceDocumentType,
+      sourceDocumentNo: schema.contracts.sourceDocumentNo,
+      sourceStatus: schema.contracts.sourceStatus,
     })
     .from(schema.contracts)
     .innerJoin(schema.customers, eq(schema.contracts.customerId, schema.customers.id))
@@ -1129,6 +1129,10 @@ async function contractRecords() {
       locationName: contract.locationName,
       branch: contract.branchName,
       status: contract.status,
+      sourceProvider: contract.sourceProvider,
+      sourceDocumentType: contract.sourceDocumentType,
+      sourceDocumentNo: contract.sourceDocumentNo,
+      sourceStatus: contract.sourceStatus,
       startDate: toIso(contract.startDate) ?? new Date(0).toISOString(),
       endDate: toIso(contract.endDate),
       assets: contractLines
@@ -1501,28 +1505,42 @@ async function maybeAutoCloseContract(contractId: string, userId?: string) {
 }
 
 export async function getDashboardSummary() {
-  const [assets, customers, contracts, invoices, workOrders, inspections] = await Promise.all([
-    listAssets(),
-    listCustomers(),
-    listContracts(),
-    listInvoices(),
-    listWorkOrders(),
-    listInspections(),
+  const [assetRows, customerRows, contractRows, invoiceRows, workOrderRows, inspectionRows] =
+    await Promise.all([
+      db.select({ total: sql<number>`count(*)` }).from(schema.assets),
+      db.select({ total: sql<number>`count(*)` }).from(schema.customers),
+      db
+        .select({
+          total: sql<number>`count(*)`,
+          active: sql<number>`count(*) filter (where ${schema.contracts.status} = 'active')`,
+        })
+        .from(schema.contracts),
+      db
+        .select({
+          overdue: sql<number>`count(*) filter (where ${schema.invoices.status} = 'overdue')`,
+        })
+        .from(schema.invoices),
+      db
+        .select({
+          open: sql<number>`count(*) filter (where ${schema.workOrders.status} not in ('verified', 'closed', 'cancelled'))`,
+        })
+        .from(schema.workOrders),
+      db
+        .select({
+          pending: sql<number>`count(*) filter (where ${schema.inspections.status} in ('requested', 'in_progress', 'needs_review'))`,
+        })
+        .from(schema.inspections),
   ]);
 
   return {
     runtimeMode: "production",
-    assets: assets.length,
-    customers: customers.length,
-    contracts: contracts.length,
-    activeContracts: contracts.filter((contract) => contract.status === "active").length,
-    overdueInvoices: invoices.filter((invoice) => invoice.status === "overdue").length,
-    openWorkOrders: workOrders.filter(
-      (order) => !["verified", "closed", "cancelled"].includes(order.status),
-    ).length,
-    pendingInspections: inspections.filter((inspection) =>
-      ["requested", "in_progress", "needs_review"].includes(inspection.status),
-    ).length,
+    assets: Number(assetRows[0]?.total ?? 0),
+    customers: Number(customerRows[0]?.total ?? 0),
+    contracts: Number(contractRows[0]?.total ?? 0),
+    activeContracts: Number(contractRows[0]?.active ?? 0),
+    overdueInvoices: Number(invoiceRows[0]?.overdue ?? 0),
+    openWorkOrders: Number(workOrderRows[0]?.open ?? 0),
+    pendingInspections: Number(inspectionRows[0]?.pending ?? 0),
   };
 }
 
@@ -1931,18 +1949,235 @@ export async function listAssets(filters?: {
 
 export async function listAssetsPage(
   filters?: Parameters<typeof listAssets>[0] & {
+    faClassCode?: string;
+    faSubclassCode?: string;
+    blocked?: string;
+    inactive?: string;
+    disposed?: string;
+    onRent?: string;
+    inService?: string;
+    underMaintenance?: string;
     page?: number;
     pageSize?: number;
   },
 ) {
   const page = Math.max(1, filters?.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, filters?.pageSize ?? 25));
-  const data = await listAssets(filters);
-  const start = (page - 1) * pageSize;
+  const offset = (page - 1) * pageSize;
+  const clauses = [];
+
+  if (filters?.q) {
+    const pattern = `%${filters.q}%`;
+    clauses.push(
+      or(
+        ilike(schema.assets.assetNumber, pattern),
+        ilike(schema.assets.type, pattern),
+        ilike(sql`coalesce(${schema.assets.subtype}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.serialNumber}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.registrationNumber}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.bcProductNo}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.bcServiceItemNo}, '')`, pattern),
+        ilike(schema.branches.name, pattern),
+        ilike(schema.branches.code, pattern),
+        ilike(sql`coalesce(${schema.assets.yardZone}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.yardRow}, '')`, pattern),
+        ilike(sql`coalesce(${schema.assets.yardSlot}, '')`, pattern),
+      ),
+    );
+  }
+  if (filters?.branch) {
+    const pattern = `%${filters.branch}%`;
+    clauses.push(
+      or(
+        eq(schema.branches.id, filters.branch),
+        eq(schema.branches.code, filters.branch),
+        eq(schema.branches.name, filters.branch),
+        ilike(schema.branches.code, pattern),
+        ilike(schema.branches.name, pattern),
+      ),
+    );
+  }
+  if (filters?.status) {
+    clauses.push(eq(schema.assets.status, filters.status as AssetStatusKey));
+  }
+  if (filters?.availability) {
+    clauses.push(
+      eq(
+        schema.assets.availability,
+        filters.availability as AssetRecord["availability"],
+      ),
+    );
+  }
+  if (filters?.maintenanceStatus) {
+    clauses.push(
+      eq(
+        schema.assets.maintenanceStatus,
+        filters.maintenanceStatus as AssetRecord["maintenanceStatus"],
+      ),
+    );
+  }
+  if (filters?.type) {
+    clauses.push(eq(schema.assets.type, filters.type as AssetRecord["type"]));
+  }
+  if (filters?.faClassCode) {
+    clauses.push(eq(schema.assets.faClassCode, filters.faClassCode));
+  }
+  if (filters?.faSubclassCode) {
+    clauses.push(eq(schema.assets.faSubclassCode, filters.faSubclassCode));
+  }
+
+  if (filters?.blocked === "true" || filters?.blocked === "false") {
+    clauses.push(eq(schema.assets.isBlocked, filters.blocked === "true"));
+  }
+  if (filters?.inactive === "true" || filters?.inactive === "false") {
+    clauses.push(eq(schema.assets.isInactive, filters.inactive === "true"));
+  }
+  if (filters?.disposed === "true" || filters?.disposed === "false") {
+    clauses.push(eq(schema.assets.isDisposed, filters.disposed === "true"));
+  }
+  if (filters?.onRent === "true" || filters?.onRent === "false") {
+    clauses.push(eq(schema.assets.isOnRent, filters.onRent === "true"));
+  }
+  if (filters?.inService === "true" || filters?.inService === "false") {
+    clauses.push(eq(schema.assets.isInService, filters.inService === "true"));
+  }
+  if (
+    filters?.underMaintenance === "true" ||
+    filters?.underMaintenance === "false"
+  ) {
+    clauses.push(
+      eq(schema.assets.underMaintenance, filters.underMaintenance === "true"),
+    );
+  }
+
+  const whereClause = clauses.length > 0 ? and(...clauses) : undefined;
+  const [countRows, rows] = await Promise.all([
+    db
+      .select({ total: sql<number>`count(*)` })
+      .from(schema.assets)
+      .innerJoin(schema.branches, eq(schema.assets.branchId, schema.branches.id))
+      .where(whereClause),
+    db
+      .select({
+        id: schema.assets.id,
+        assetNumber: schema.assets.assetNumber,
+        type: schema.assets.type,
+        subtype: schema.assets.subtype,
+        dimensions: schema.assets.dimensions,
+        status: schema.assets.status,
+        availability: schema.assets.availability,
+        maintenanceStatus: schema.assets.maintenanceStatus,
+        gpsDeviceId: schema.assets.gpsDeviceId,
+        ageInMonths: schema.assets.ageInMonths,
+        features: schema.assets.features,
+        serialNumber: schema.assets.serialNumber,
+        manufacturer: schema.assets.manufacturer,
+        modelYear: schema.assets.modelYear,
+        registrationNumber: schema.assets.registrationNumber,
+        faClassCode: schema.assets.faClassCode,
+        faSubclassCode: schema.assets.faSubclassCode,
+        bcLocationCode: schema.assets.bcLocationCode,
+        bcDimension1Code: schema.assets.bcDimension1Code,
+        bcProductNo: schema.assets.bcProductNo,
+        bcServiceItemNo: schema.assets.bcServiceItemNo,
+        isBlocked: schema.assets.isBlocked,
+        isInactive: schema.assets.isInactive,
+        isDisposed: schema.assets.isDisposed,
+        isOnRent: schema.assets.isOnRent,
+        isInService: schema.assets.isInService,
+        underMaintenance: schema.assets.underMaintenance,
+        bookValue: schema.assets.bookValue,
+        sourcePayload: schema.assets.sourcePayload,
+        yardZone: schema.assets.yardZone,
+        yardRow: schema.assets.yardRow,
+        yardSlot: schema.assets.yardSlot,
+        record360UnitId: schema.assets.record360UnitId,
+        skybitzAssetId: schema.assets.skybitzAssetId,
+        branchName: schema.branches.name,
+        branchCode: schema.branches.code,
+        updatedAt: schema.assets.updatedAt,
+      })
+      .from(schema.assets)
+      .innerJoin(schema.branches, eq(schema.assets.branchId, schema.branches.id))
+      .where(whereClause)
+      .orderBy(schema.assets.assetNumber)
+      .limit(pageSize)
+      .offset(offset),
+  ]);
+
+  const data = rows.map((asset) => {
+    const custodyLocation = yardLocationLabel({
+      branchName: asset.branchName,
+      yardZone: asset.yardZone,
+      yardRow: asset.yardRow,
+      yardSlot: asset.yardSlot,
+    });
+
+    return {
+      id: asset.id,
+      assetNumber: asset.assetNumber,
+      type: asset.type,
+      subtype: asset.subtype,
+      dimensions:
+        typeof asset.dimensions?.summary === "string"
+          ? asset.dimensions.summary
+          : JSON.stringify(asset.dimensions ?? "Unspecified dimensions"),
+      branch: asset.branchName,
+      status: asset.status,
+      availability: asset.availability,
+      maintenanceStatus: asset.maintenanceStatus,
+      gpsDeviceId: asset.gpsDeviceId ?? undefined,
+      serialNumber: asset.serialNumber,
+      manufacturer: asset.manufacturer,
+      modelYear: asset.modelYear,
+      registrationNumber: asset.registrationNumber,
+      faClassCode: asset.faClassCode,
+      faSubclassCode: asset.faSubclassCode,
+      bcLocationCode: asset.bcLocationCode,
+      bcDimension1Code: asset.bcDimension1Code,
+      bcProductNo: asset.bcProductNo,
+      bcServiceItemNo: asset.bcServiceItemNo,
+      isBlocked: asset.isBlocked,
+      isInactive: asset.isInactive,
+      isDisposed: asset.isDisposed,
+      isOnRent: asset.isOnRent,
+      isInService: asset.isInService,
+      underMaintenance: asset.underMaintenance,
+      bookValue: numericToNumber(asset.bookValue, 0),
+      yardZone: asset.yardZone,
+      yardRow: asset.yardRow,
+      yardSlot: asset.yardSlot,
+      age:
+        asset.ageInMonths !== null && asset.ageInMonths !== undefined
+          ? `${asset.ageInMonths} months`
+          : "Unknown",
+      features: asset.features ?? [],
+      custodyLocation,
+      locationSource: custodyLocation ? "yard" : null,
+      blockingReason:
+        asset.status === "retired"
+          ? "Retired from active inventory."
+          : asset.maintenanceStatus !== "clear"
+            ? "Blocked by maintenance workflow."
+            : null,
+      allocationTypes: [],
+      activeContractNumber: null,
+      activeCustomerName: null,
+      nextContractNumber: null,
+      nextReservationStart: null,
+      activeDispatchTaskId: null,
+      activeDispatchTaskStatus: null,
+      activeWorkOrderId: null,
+      activeWorkOrderStatus: null,
+      record360UnitId: asset.record360UnitId,
+      skybitzAssetId: asset.skybitzAssetId,
+      sourcePayload: asset.sourcePayload,
+    } satisfies AssetRecord;
+  });
 
   return {
-    data: data.slice(start, start + pageSize),
-    total: data.length,
+    data,
+    total: Number(countRows[0]?.total ?? 0),
     page,
     pageSize,
   };

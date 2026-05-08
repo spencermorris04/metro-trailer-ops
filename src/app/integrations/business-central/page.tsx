@@ -6,7 +6,6 @@ import { StatusPill } from "@/components/status-pill";
 import { formatDate } from "@/lib/format";
 import { getBusinessCentralOverviewView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function BusinessCentralPage() {
   const overview = await getBusinessCentralOverviewView();

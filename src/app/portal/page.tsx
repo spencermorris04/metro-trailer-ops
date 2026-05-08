@@ -9,7 +9,6 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import type { PaymentTransactionRecord } from "@/lib/platform-types";
 import { getCurrentPortalOverview } from "@/lib/server/portal-service";
 
-export const dynamic = "force-dynamic";
 
 export default async function PortalPage() {
   const portalContext = await getCurrentPortalOverview(
@@ -18,13 +17,13 @@ export default async function PortalPage() {
 
   if (!portalContext) {
     return (
-      <>
+      <div className="space-y-2">
         <PageHeader
           eyebrow="Portal"
-          title="Customer account access is required"
-          description="Sign in with a customer portal account to view contracts, invoices, inspections, payments, and signed documents."
+          title="Customer account access required"
+          description="Sign in with a customer portal account to view contracts, invoices, payments, and documents."
         />
-      </>
+      </div>
     );
   }
 
@@ -35,271 +34,188 @@ export default async function PortalPage() {
       : [];
 
   return (
-    <>
+    <div className="space-y-2">
       <PageHeader
         eyebrow="Portal"
-        title="Customer portal for invoices, contracts, payments, and damage history"
-        description="Customer-scoped access to rental status, invoices, payment activity, inspections, documents, and signature records."
+        title="Customer portal"
+        description="Invoices, contracts, payments, inspections, and signature records."
         actions={
-          <Link
-            href={portal.portalSession.url}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-800"
-          >
-            Open billing portal
-          </Link>
+          <Link href={portal.portalSession.url} className="btn-secondary">Open billing portal</Link>
         }
       />
 
-      <SectionCard
-        eyebrow="Portal Account"
-        title={portal.customer.name}
-        description="The portal account is scoped to its customer record and only exposes contracts, invoices, inspections, documents, and payments tied to that account."
-      >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="soft-panel p-4">
-            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Customer</p>
-            <p className="mt-3 text-xl font-semibold text-slate-900">
-              {portal.customer.customerNumber}
-            </p>
+      {/* KPI strip */}
+      <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
+        {[
+          { label: "Customer", value: portal.customer.customerNumber },
+          { label: "Contracts", value: portal.contracts.length },
+          { label: "Invoices", value: portal.invoices.length },
+          { label: "Payment methods", value: portal.paymentMethods.length },
+        ].map((kpi) => (
+          <div key={kpi.label} className="bg-white px-3 py-2">
+            <p className="workspace-metric-label">{kpi.label}</p>
+            <p className="text-lg font-semibold text-slate-900">{kpi.value}</p>
           </div>
-          <div className="soft-panel p-4">
-            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Contracts</p>
-            <p className="mt-3 text-xl font-semibold text-slate-900">
-              {portal.contracts.length}
-            </p>
+        ))}
+      </div>
+
+      {/* Contracts table */}
+      <SectionCard eyebrow="Contracts" title="Rental status by site">
+        <div className="data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Contract</th>
+                <th>Location</th>
+                <th>Branch</th>
+                <th>Assets</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portal.contracts.map((contract) => (
+                <tr key={contract.id}>
+                  <td className="mono font-semibold text-slate-900">{contract.contractNumber}</td>
+                  <td className="text-slate-700">{contract.locationName}</td>
+                  <td className="text-slate-600">{contract.branch}</td>
+                  <td className="text-slate-600">{contract.assets.join(", ") || "-"}</td>
+                  <td className="text-slate-600">{formatDate(contract.startDate)}</td>
+                  <td className="text-slate-500">{contract.endDate ? formatDate(contract.endDate) : "Open"}</td>
+                  <td><StatusPill label={contract.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      {/* Invoices table */}
+      <SectionCard eyebrow="Invoices" title="Self-service payment">
+        <div className="data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice</th>
+                <th>Contract</th>
+                <th>Total</th>
+                <th>Balance</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portal.invoices.map((invoice) => (
+                <tr key={invoice.id}>
+                  <td className="mono font-semibold text-slate-900">{invoice.invoiceNumber}</td>
+                  <td className="text-slate-600">{invoice.contractNumber}</td>
+                  <td className="text-slate-600">{formatCurrency(invoice.totalAmount)}</td>
+                  <td className="font-semibold text-slate-900">{formatCurrency(invoice.balanceAmount)}</td>
+                  <td className="text-slate-600">{formatDate(invoice.dueDate)}</td>
+                  <td><StatusPill label={invoice.status} /></td>
+                  <td>
+                    <JsonActionButton
+                      endpoint="/api/payments/intents"
+                      label="Pay"
+                      body={{ invoiceId: invoice.id }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      {/* Payment methods + history */}
+      <div className="grid gap-2 xl:grid-cols-2">
+        <SectionCard eyebrow="Methods" title="Saved billing methods">
+          <div className="divide-y divide-[var(--line)]">
+            {portal.paymentMethods.map((method) => (
+              <div key={method.id} className="flex items-center justify-between gap-3 py-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[0.8rem] font-medium text-slate-800">{method.label}</span>
+                  <span className="text-[0.7rem] text-slate-400">{method.methodType} / {method.last4}</span>
+                  <StatusPill label={method.isDefault ? "default" : method.methodType} />
+                </div>
+                {!method.isDefault ? (
+                  <JsonActionButton endpoint={`/api/payment-methods/${method.id}/default`} label="Set default" body={{}} variant="light" />
+                ) : null}
+              </div>
+            ))}
           </div>
-          <div className="soft-panel p-4">
-            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Invoices</p>
-            <p className="mt-3 text-xl font-semibold text-slate-900">
-              {portal.invoices.length}
-            </p>
-          </div>
-          <div className="soft-panel p-4">
-            <p className="text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">Payment methods</p>
-            <p className="mt-3 text-xl font-semibold text-slate-900">
-              {portal.paymentMethods.length}
-            </p>
-          </div>
-        </div>
-      </SectionCard>
+        </SectionCard>
 
-      <SectionCard
-        eyebrow="Contracts"
-        title="Rental status by site"
-        description="Contract visibility is limited to the locations and contracts assigned to this portal account."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {portal.contracts.map((contract) => (
-            <div key={contract.id} className="soft-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                    {contract.contractNumber}
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    {contract.locationName}
-                  </h3>
+        <SectionCard eyebrow="History" title="Payment activity">
+          <div className="divide-y divide-[var(--line)]">
+            {paymentHistory.map((payment) => (
+              <div key={payment.id} className="flex items-center justify-between gap-3 py-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="mono text-[0.65rem] text-slate-400">{payment.invoiceNumber ?? "-"}</span>
+                  <span className="text-[0.75rem] text-slate-700">{payment.transactionType}</span>
                 </div>
-                <StatusPill label={contract.status} />
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-slate-600">
-                <p>Branch: {contract.branch}</p>
-                <p>Assets: {contract.assets.join(", ") || "None assigned"}</p>
-                <p>Start: {formatDate(contract.startDate)}</p>
-                <p>End: {contract.endDate ? formatDate(contract.endDate) : "Open ended"}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Open Invoices"
-        title="Self-service payment activity"
-        description="Review open balances and trigger the portal payment flow for invoices assigned to this customer."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {portal.invoices.map((invoice) => (
-            <div key={invoice.id} className="soft-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                    {invoice.invoiceNumber}
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    {invoice.contractNumber}
-                  </h3>
-                </div>
-                <StatusPill label={invoice.status} />
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-slate-600">
-                <p>Total: {formatCurrency(invoice.totalAmount)}</p>
-                <p>Balance: {formatCurrency(invoice.balanceAmount)}</p>
-                <p>Due: {formatDate(invoice.dueDate)}</p>
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <JsonActionButton
-                  endpoint="/api/payments/intents"
-                  label="Create payment intent"
-                  body={{ invoiceId: invoice.id }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Payment Methods"
-        title="Saved billing methods"
-        description="Default payment methods are customer-scoped and used by the Stripe-backed payment flow."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {portal.paymentMethods.map((method) => (
-            <div key={method.id} className="soft-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                    {method.provider}
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    {method.label}
-                  </h3>
-                </div>
-                <StatusPill label={method.isDefault ? "default" : method.methodType} />
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-slate-600">
-                <p>Type: {method.methodType}</p>
-                <p>Last four: {method.last4}</p>
-              </div>
-              {!method.isDefault ? (
-                <div className="mt-5">
-                  <JsonActionButton
-                    endpoint={`/api/payment-methods/${method.id}/default`}
-                    label="Set as default"
-                    body={{}}
-                    variant="light"
-                  />
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Payment History"
-        title="Recorded customer payment activity"
-        description="Stripe-backed payment attempts, applications, and refunds appear here as they are persisted to the platform ledger."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {paymentHistory.map((payment) => (
-            <div key={payment.id} className="soft-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                    {payment.invoiceNumber ?? "Unassigned"}
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    {payment.transactionType}
-                  </h3>
-                </div>
-                <StatusPill label={payment.status} />
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-slate-600">
-                <p>Amount: {formatCurrency(payment.amount)}</p>
-                <p>Method: {payment.paymentMethodLabel ?? "Unspecified"}</p>
-                <p>Created: {formatDate(payment.createdAt)}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Inspection History"
-        title="Damage and condition visibility"
-        description="Inspection history stays customer-visible so disputes and damage conversations are grounded in the same evidence seen by operations."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          {portal.inspections.map((inspection) => (
-            <div key={inspection.id} className="soft-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                    {inspection.assetNumber}
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                    {inspection.inspectionType}
-                  </h3>
-                </div>
-                <StatusPill label={inspection.status} />
-              </div>
-              <p className="mt-4 text-sm leading-6 text-slate-600">
-                {inspection.damageSummary}
-              </p>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="Documents and Signatures"
-        title="Downloadable records and signature status"
-        description="Customers can retrieve packet copies, signed agreements, and signature certificates from the same portal workspace."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          <div className="space-y-4">
-            {portal.documents.map((document) => (
-              <div key={document.id} className="soft-panel p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                      {document.documentType}
-                    </p>
-                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                      {document.filename}
-                    </h3>
-                  </div>
-                  <StatusPill label={document.status} />
-                </div>
-                <div className="mt-4">
-                  <Link
-                    href={`/api/documents/${document.id}/download`}
-                    className="text-sm font-semibold text-slate-900 underline"
-                  >
-                    Download document
-                  </Link>
+                <div className="flex items-center gap-2">
+                  <span className="mono text-[0.7rem] text-slate-800">{formatCurrency(payment.amount)}</span>
+                  <StatusPill label={payment.status} />
                 </div>
               </div>
             ))}
           </div>
-          <div className="space-y-4">
+        </SectionCard>
+      </div>
+
+      {/* Inspections + documents */}
+      <div className="grid gap-2 xl:grid-cols-2">
+        <SectionCard eyebrow="Inspections" title="Damage and condition">
+          <div className="divide-y divide-[var(--line)]">
+            {portal.inspections.map((inspection) => (
+              <div key={inspection.id} className="py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="mono text-[0.65rem] text-slate-400">{inspection.assetNumber}</span>
+                    <span className="text-[0.75rem] font-medium text-slate-800">{inspection.inspectionType}</span>
+                  </div>
+                  <StatusPill label={inspection.status} />
+                </div>
+                <p className="text-[0.7rem] text-slate-400">{inspection.damageSummary}</p>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+
+        <SectionCard eyebrow="Documents" title="Records and signatures">
+          <div className="divide-y divide-[var(--line)]">
+            {portal.documents.map((document) => (
+              <div key={document.id} className="flex items-center justify-between gap-2 py-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[0.65rem] text-slate-400">{document.documentType}</span>
+                  <span className="text-[0.75rem] font-medium text-slate-800">{document.filename}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusPill label={document.status} />
+                  <Link href={`/api/documents/${document.id}/download`} className="text-[0.65rem] font-semibold text-[var(--brand)]">Download</Link>
+                </div>
+              </div>
+            ))}
             {portal.signatureRequests.map((signature) => (
-              <div key={signature.id} className="soft-panel p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="mono text-[0.68rem] uppercase tracking-[0.12em] text-slate-500">
-                      {signature.contractNumber}
-                    </p>
-                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                      {signature.title}
-                    </h3>
+              <div key={signature.id} className="py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="mono text-[0.65rem] text-slate-400">{signature.contractNumber}</span>
+                    <span className="text-[0.75rem] font-medium text-slate-800">{signature.title}</span>
                   </div>
                   <StatusPill label={signature.status} />
                 </div>
-                <div className="mt-4 space-y-2 text-sm text-slate-600">
-                  {signature.signers.map((signer) => (
-                    <p key={signer.id}>
-                      {signer.name}: {signer.status}
-                    </p>
-                  ))}
+                <div className="flex gap-3 text-[0.65rem] text-slate-400">
+                  {signature.signers.map((s) => <span key={s.id}>{s.name}: {s.status}</span>)}
                 </div>
               </div>
             ))}
           </div>
-        </div>
-      </SectionCard>
-    </>
+        </SectionCard>
+      </div>
+    </div>
   );
 }

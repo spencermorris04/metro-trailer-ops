@@ -1,11 +1,14 @@
-import Link from "next/link";
+import { Suspense } from "react";
 
+import { InstantForm } from "@/components/instant-form";
 import { PageHeader } from "@/components/page-header";
 import { StatusPill } from "@/components/status-pill";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { ListPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getContractListView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
+export const unstable_instant = { prefetch: "static" };
 
 type ContractsPageProps = {
   searchParams: Promise<{
@@ -21,7 +24,15 @@ function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-export default async function ContractsPage({ searchParams }: ContractsPageProps) {
+export default function ContractsPage({ searchParams }: ContractsPageProps) {
+  return (
+    <Suspense fallback={<ListPageSkeleton filters={5} metrics={4} columns={6} />}>
+      <ContractsContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function ContractsContent({ searchParams }: ContractsPageProps) {
   const resolved = await searchParams;
   const filters = {
     q: getParam(resolved.q),
@@ -41,18 +52,18 @@ export default async function ContractsPage({ searchParams }: ContractsPageProps
         description="Operational rental agreements with source-aware BC document lineage, invoice exposure, and asset allocation context."
         actions={
           <>
-            <Link href="/commercial-events" className="btn-secondary">
+            <WorkspaceLink href="/commercial-events" className="btn-secondary">
               Commercial events
-            </Link>
-            <Link href="/source-documents" className="btn-secondary">
+            </WorkspaceLink>
+            <WorkspaceLink href="/source-documents" className="btn-secondary">
               Source documents
-            </Link>
+            </WorkspaceLink>
           </>
         }
       />
 
       <div className="panel px-3 py-2">
-        <form className="flex flex-wrap items-end gap-2" action="/contracts">
+        <InstantForm className="flex flex-wrap items-end gap-2" action="/contracts">
           <input
             type="text"
             name="q"
@@ -93,10 +104,10 @@ export default async function ContractsPage({ searchParams }: ContractsPageProps
           <button type="submit" className="btn-primary">
             Apply
           </button>
-          <Link href="/contracts" className="btn-secondary">
+          <WorkspaceLink href="/contracts" className="btn-secondary">
             Reset
-          </Link>
-        </form>
+          </WorkspaceLink>
+        </InstantForm>
       </div>
 
       <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
@@ -159,12 +170,12 @@ export default async function ContractsPage({ searchParams }: ContractsPageProps
                 contracts.map((contract) => (
                   <tr key={contract.id}>
                     <td>
-                      <Link
+                      <WorkspaceLink
                         href={`/contracts/${contract.id}`}
                         className="font-semibold text-[var(--brand)]"
                       >
                         {contract.contractNumber}
-                      </Link>
+                      </WorkspaceLink>
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
                         {titleize(contract.status)}

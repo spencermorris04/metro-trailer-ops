@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Suspense } from "react";
 
 import { AppShell } from "@/components/app-shell";
 
@@ -34,7 +35,22 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
       <body className="min-h-screen">
-        <AppShell>{children}</AppShell>
+        <Suspense
+          fallback={
+            <div className="min-h-screen bg-[var(--background)] p-3">
+              <div className="workspace-skeleton h-14 w-full" />
+              <div className="mt-3 grid gap-2 lg:grid-cols-[108px_1fr]">
+                <div className="workspace-skeleton hidden h-[calc(100vh-88px)] lg:block" />
+                <div className="grid gap-2">
+                  <div className="workspace-skeleton h-24 w-full" />
+                  <div className="workspace-skeleton h-80 w-full" />
+                </div>
+              </div>
+            </div>
+          }
+        >
+          <AppShell>{children}</AppShell>
+        </Suspense>
       </body>
     </html>
   );

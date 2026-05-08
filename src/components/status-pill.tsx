@@ -1,15 +1,15 @@
 type StatusTone = "slate" | "amber" | "emerald" | "sky" | "rose";
 
 const toneClasses: Record<StatusTone, string> = {
-  slate: "border-slate-300 bg-slate-100 text-slate-700",
-  amber: "border-amber-300 bg-amber-50 text-amber-800",
-  emerald: "border-emerald-300 bg-emerald-50 text-emerald-800",
-  sky: "border-sky-300 bg-sky-50 text-sky-800",
-  rose: "border-rose-300 bg-rose-50 text-rose-800",
+  slate: "border-slate-200 bg-slate-50 text-slate-600",
+  amber: "border-amber-200 bg-amber-50 text-amber-700",
+  emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  sky: "border-sky-200 bg-sky-50 text-sky-700",
+  rose: "border-rose-200 bg-rose-50 text-rose-700",
 };
 
-export function statusToneFromValue(value: string): StatusTone {
-  const normalized = value.toLowerCase();
+export function statusToneFromValue(value: string | null | undefined): StatusTone {
+  const normalized = (value ?? "").toLowerCase();
 
   if (
     [
@@ -75,16 +75,17 @@ export function StatusPill({
   label,
   tone,
 }: {
-  label: string;
+  label: string | null | undefined;
   tone?: StatusTone;
 }) {
-  const resolvedTone = tone ?? statusToneFromValue(label);
+  const safeLabel = label?.trim() ? label : "unknown";
+  const resolvedTone = tone ?? statusToneFromValue(safeLabel);
 
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] ${toneClasses[resolvedTone]}`}
+      className={`inline-flex items-center border px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.08em] ${toneClasses[resolvedTone]}`}
     >
-      {label}
+      {safeLabel}
     </span>
   );
 }

@@ -4,7 +4,6 @@ import { StatusPill } from "@/components/status-pill";
 import { formatDate } from "@/lib/format";
 import { getBusinessCentralImportRunsView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function BusinessCentralImportRunsPage() {
   const runs = await getBusinessCentralImportRunsView();

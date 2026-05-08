@@ -10,6 +10,8 @@ import {
   requireStaffApiPermission,
   resolveCustomerScope,
 } from "@/lib/server/authorization";
+import { customerInvalidationTags } from "@/lib/server/cache-tags";
+import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
 type CustomerRouteParams = {
   params: Promise<{
@@ -55,6 +57,7 @@ export async function PATCH(request: Request, { params }: CustomerRouteParams) {
     const payload = await readJson(request);
     const parsed = customerUpdateSchema.parse(payload);
     const data = await updateCustomer(customerId, parsed, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(customerInvalidationTags(data.id));
     return ok({ message: "Customer updated.", data });
   } catch (error) {
     return errorResponse(error);
@@ -74,6 +77,7 @@ export async function DELETE(request: Request, { params }: CustomerRouteParams) 
       customerId: scope.customerId ?? undefined,
     });
     await deleteCustomer(customerId, actor.userId ?? undefined);
+    await invalidateWorkspaceCache(customerInvalidationTags(customerId));
     return noContent();
   } catch (error) {
     return errorResponse(error);

@@ -11,7 +11,6 @@ import {
   listWorkOrders,
 } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function MaintenancePage() {
   const [workOrders, technicianQueue, vendorQueue, verificationQueue] = await Promise.all([

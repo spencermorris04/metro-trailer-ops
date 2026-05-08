@@ -4,7 +4,6 @@ import { StatusPill } from "@/components/status-pill";
 import { titleize } from "@/lib/format";
 import { getGlAccountsView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function GlAccountsPage() {
   const accounts = await getGlAccountsView();
@@ -34,9 +33,9 @@ export default async function GlAccountsPage() {
                 <tr key={account.id}>
                   <td>{account.accountNumber}</td>
                   <td>{account.name}</td>
-                  <td>{titleize(account.accountType)}</td>
+                  <td>{titleize(account.normalSide)}</td>
                   <td>{titleize(account.category)}</td>
-                  <td><StatusPill label={account.isActive ? "Active" : "Inactive"} /></td>
+                  <td><StatusPill label={account.active ? "Active" : "Inactive"} /></td>
                   <td>{account.sourceProvider}</td>
                 </tr>
               ))}

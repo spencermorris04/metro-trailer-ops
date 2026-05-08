@@ -5,7 +5,6 @@ import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { getBusinessCentralOverviewView, listIntegrationJobs } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 const providers = [
   {

@@ -6,7 +6,6 @@ import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getFinancialDashboardView } from "@/lib/server/platform";
 
-export const dynamic = "force-dynamic";
 
 export default async function FinancialPage() {
   const dashboard = await getFinancialDashboardView();
