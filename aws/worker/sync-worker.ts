@@ -184,7 +184,7 @@ function buildCommands(request: SyncRequest): string[][] {
           "--since-last-successful-run",
           "--max-lookback-hours=24",
           "--window-chunk-minutes=60",
-          "--sleep-between-windows-seconds=0",
+          "--sleep-between-windows-seconds=305",
           "--concurrency=3",
         ],
       ];
