@@ -78,6 +78,7 @@ type NormalizedOrbcommStatus = {
 
 const JOB_VERSION = "orbcomm-sync-bc-v1";
 const MAX_ERROR_SUMMARY_LENGTH = 2048;
+const MIN_ADAPTIVE_WINDOW_MINUTES = 15;
 
 function parseArgs(): Options {
   const args = process.argv.slice(2);
@@ -213,33 +214,19 @@ async function fetchSourceStatuses(
 
   for (let windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
     const window = windows[windowIndex];
-    let watermark: unknown = null;
-    do {
-      const body: Record<string, unknown> = {
-        assetNames,
-        assetGroupNames: [],
-        watermark,
-      };
-      if (window.from && window.to) {
-        body.fromDate = window.from;
-        body.toDate = window.to;
-      }
-
-      const response = await fetchOrbcommAssetStatus(body);
-      const normalized = (response.data ?? []).map(normalizeOrbcommStatus).filter((record) => record.providerTrackerId || record.providerAssetId);
-      records.push(...normalized);
-      watermark = response.watermark ?? null;
-      console.log(
-        JSON.stringify({
-          provider: "ORBCOMM",
-          windowFrom: window.from,
-          windowTo: window.to,
-          pageRecords: normalized.length,
-          recordsFetched: records.length,
-          hasMore: Boolean(watermark),
-        }),
-      );
-    } while (watermark);
+    const windowRecords = await fetchWindowRecords(window, assetNames);
+    records.push(...windowRecords);
+    console.log(
+      JSON.stringify({
+        provider: "ORBCOMM",
+        windowIndex: windowIndex + 1,
+        windowCount: windows.length,
+        windowFrom: window.from,
+        windowTo: window.to,
+        windowRecords: windowRecords.length,
+        recordsFetched: records.length,
+      }),
+    );
 
     if (options.sleepBetweenWindowsSeconds > 0 && windowIndex < windows.length - 1) {
       console.log(JSON.stringify({ provider: "ORBCOMM", sleepingSeconds: options.sleepBetweenWindowsSeconds, nextWindowIndex: windowIndex + 1 }));
@@ -248,6 +235,94 @@ async function fetchSourceStatuses(
   }
 
   return records;
+}
+
+async function fetchWindowRecords(window: { from: string | null; to: string | null }, assetNames: string[]): Promise<NormalizedOrbcommStatus[]> {
+  try {
+    return await fetchWindowRecordsPageByPage(window, assetNames);
+  } catch (error) {
+    if (!shouldSplitWindow(window, error)) {
+      throw error;
+    }
+
+    const [left, right] = splitWindow(window);
+    console.warn(
+      JSON.stringify({
+        provider: "ORBCOMM",
+        event: "split-window-after-failure",
+        windowFrom: window.from,
+        windowTo: window.to,
+        leftFrom: left.from,
+        leftTo: left.to,
+        rightFrom: right.from,
+        rightTo: right.to,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    return [...(await fetchWindowRecords(left, assetNames)), ...(await fetchWindowRecords(right, assetNames))];
+  }
+}
+
+async function fetchWindowRecordsPageByPage(window: { from: string | null; to: string | null }, assetNames: string[]) {
+  const records: NormalizedOrbcommStatus[] = [];
+  let watermark: unknown = null;
+  do {
+    const body: Record<string, unknown> = {
+      assetNames,
+      assetGroupNames: [],
+      watermark,
+    };
+    if (window.from && window.to) {
+      body.fromDate = window.from;
+      body.toDate = window.to;
+    }
+
+    const response = await fetchOrbcommAssetStatus(body);
+    const normalized = (response.data ?? []).map(normalizeOrbcommStatus).filter((record) => record.providerTrackerId || record.providerAssetId);
+    records.push(...normalized);
+    watermark = response.watermark ?? null;
+    console.log(
+      JSON.stringify({
+        provider: "ORBCOMM",
+        windowFrom: window.from,
+        windowTo: window.to,
+        pageRecords: normalized.length,
+        windowRecords: records.length,
+        hasMore: Boolean(watermark),
+      }),
+    );
+  } while (watermark);
+  return records;
+}
+
+function shouldSplitWindow(window: { from: string | null; to: string | null }, error: unknown) {
+  const minutes = windowDurationMinutes(window);
+  if (minutes <= MIN_ADAPTIVE_WINDOW_MINUTES) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("504") || message.includes("timeout") || message.includes("timed out") || message.includes("aborted");
+}
+
+function splitWindow(window: { from: string | null; to: string | null }) {
+  if (!window.from || !window.to) {
+    throw new Error("Cannot split an open-ended ORBCOMM window.");
+  }
+  const from = new Date(window.from);
+  const to = new Date(window.to);
+  const middle = new Date(from.getTime() + Math.floor((to.getTime() - from.getTime()) / 2));
+  return [
+    { from: from.toISOString(), to: middle.toISOString() },
+    { from: middle.toISOString(), to: to.toISOString() },
+  ];
+}
+
+function windowDurationMinutes(window: { from: string | null; to: string | null }) {
+  if (!window.from || !window.to) {
+    return 0;
+  }
+  return (new Date(window.to).getTime() - new Date(window.from).getTime()) / 60_000;
 }
 
 function buildSourceWindows(sourceWindow: { from: string | null; to: string | null }, windowChunkMinutes: number) {

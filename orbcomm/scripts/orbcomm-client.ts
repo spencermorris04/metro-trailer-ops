@@ -91,7 +91,7 @@ export async function orbcommRequest(path: string, init?: RequestInit) {
   const rateLimitRetrySeconds = Number(optionalEnv("ORBCOMM_RATE_LIMIT_RETRY_SECONDS", "305"));
   const maxConcurrentRequestRetries = Number(optionalEnv("ORBCOMM_CONCURRENT_REQUEST_MAX_RETRIES", "5"));
   const concurrentRequestRetrySeconds = Number(optionalEnv("ORBCOMM_CONCURRENT_REQUEST_RETRY_SECONDS", "60"));
-  const requestTimeoutSeconds = Number(optionalEnv("ORBCOMM_REQUEST_TIMEOUT_SECONDS", "600"));
+  const requestTimeoutSeconds = Number(optionalEnv("ORBCOMM_REQUEST_TIMEOUT_SECONDS", "300"));
   const maxAttempts = Math.max(4, maxRateLimitRetries + maxConcurrentRequestRetries + 4);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let response: Response;
