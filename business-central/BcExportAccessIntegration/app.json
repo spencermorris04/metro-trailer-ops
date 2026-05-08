@@ -1,0 +1,23 @@
+{
+  "id": "ce6f5f1b-6fca-4e74-9354-cf0b63cf2a1d",
+  "name": "BC Export Access",
+  "publisher": "Metro Trailer",
+  "version": "1.0.0.0",
+  "brief": "Read-only export permissions for Business Central migration and seeding workloads.",
+  "description": "Adds assignable permission sets for the Business Central app-only export principal so BC assets, customers, orders, ledgers, and related history can be exported for migration and ERP seeding.",
+  "platform": "27.0.0.0",
+  "application": "27.5.0.0",
+  "target": "Cloud",
+  "runtime": "11.0",
+  "idRanges": [
+    {
+      "from": 50350,
+      "to": 50369
+    }
+  ],
+  "resourceExposurePolicy": {
+    "allowDebugging": true,
+    "allowDownloadingSource": true,
+    "includeSourceInSymbolFile": true
+  }
+}

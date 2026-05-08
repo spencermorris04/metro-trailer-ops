@@ -7,7 +7,7 @@ pageextension 50230 "Fixed Asset Card Trailer Docs" extends "Fixed Asset Card"
             part(TrailerDocumentSummary; "Trailer Doc Summary FB")
             {
                 ApplicationArea = All;
-                SubPageLink = "Fixed Asset No." = field("No.");
+                SubPageLink = "No." = field("No.");
             }
         }
     }

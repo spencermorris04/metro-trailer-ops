@@ -1,8 +1,7 @@
 page 50225 "Trailer Doc Summary FB"
 {
     PageType = CardPart;
-    SourceTable = "Trailer Document";
-    SourceTableView = where(Active = const(true));
+    SourceTable = "Fixed Asset";
     ApplicationArea = All;
     Caption = 'Trailer Documents';
     Editable = false;
@@ -22,7 +21,7 @@ page 50225 "Trailer Doc Summary FB"
 
                     trigger OnDrillDown()
                     begin
-                        OpenLatestDocumentByType(Rec."Document Type"::Registration, 'No registration PDF was found for this fixed asset.');
+                        OpenLatestRegistrationDocument();
                     end;
                 }
                 field(RegistrationModifiedAt; RegistrationModifiedAt)
@@ -37,7 +36,7 @@ page 50225 "Trailer Doc Summary FB"
 
                     trigger OnDrillDown()
                     begin
-                        OpenLatestDocumentByType(Rec."Document Type"::"FHWA Inspection", 'No FHWA inspection PDF was found for this fixed asset.');
+                        OpenLatestFhwaDocument();
                     end;
                 }
                 field(FhwaModifiedAt; FhwaModifiedAt)
@@ -49,6 +48,17 @@ page 50225 "Trailer Doc Summary FB"
                 {
                     ApplicationArea = All;
                     Caption = 'Sync';
+                }
+                field(RequestSyncText; RequestSyncText)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Refresh';
+                    ToolTip = 'Queue a trailer document refresh for this fixed asset.';
+
+                    trigger OnDrillDown()
+                    begin
+                        RequestSyncForCurrentAsset();
+                    end;
                 }
             }
         }
@@ -117,23 +127,12 @@ page 50225 "Trailer Doc Summary FB"
 
                 trigger OnAction()
                 var
-                    SyncRequest: Codeunit "Trailer Document Sync Request";
-                    FixedAssetNo: Code[20];
                 begin
-                    FixedAssetNo := GetCurrentFixedAssetNo();
-                    SyncRequest.RequestOnDemandSync(FixedAssetNo);
-                    Message('Trailer document sync request queued for fixed asset %1.', FixedAssetNo);
+                    RequestSyncForCurrentAsset();
                 end;
             }
         }
     }
-
-    trigger OnOpenPage()
-    begin
-        Rec.SetCurrentKey("Fixed Asset No.", "Last Modified At");
-        Rec.Ascending(false);
-        RefreshSummary();
-    end;
 
     trigger OnAfterGetCurrRecord()
     begin
@@ -149,6 +148,7 @@ page 50225 "Trailer Doc Summary FB"
         Clear(OpenFhwaTxt);
         Clear(FhwaModifiedAt);
         Clear(SyncStatusTxt);
+        RequestSyncText := 'Request Sync';
 
         if FindLatestByType(Document, Document."Document Type"::Registration) then begin
             OpenRegistrationTxt := 'Open';
@@ -178,10 +178,24 @@ page 50225 "Trailer Doc Summary FB"
         Hyperlink(Document."Web URL");
     end;
 
+    local procedure OpenLatestRegistrationDocument()
+    var
+        Document: Record "Trailer Document";
+    begin
+        OpenLatestDocumentByType(Document."Document Type"::Registration, 'No registration PDF was found for this fixed asset.');
+    end;
+
+    local procedure OpenLatestFhwaDocument()
+    var
+        Document: Record "Trailer Document";
+    begin
+        OpenLatestDocumentByType(Document."Document Type"::"FHWA Inspection", 'No FHWA inspection PDF was found for this fixed asset.');
+    end;
+
     local procedure FindLatestByType(var Document: Record "Trailer Document"; DocumentType: Enum "Trailer Document Type"): Boolean
     begin
         Document.Reset();
-        Document.CopyFilters(Rec);
+        Document.SetRange("Fixed Asset No.", Rec."No.");
         Document.SetRange(Active, true);
         Document.SetRange("Document Type", DocumentType);
         Document.SetFilter("Web URL", '<>%1', '');
@@ -194,7 +208,7 @@ page 50225 "Trailer Doc Summary FB"
     local procedure FindAnyActiveDocument(var Document: Record "Trailer Document"): Boolean
     begin
         Document.Reset();
-        Document.CopyFilters(Rec);
+        Document.SetRange("Fixed Asset No.", Rec."No.");
         Document.SetRange(Active, true);
         Document.SetCurrentKey("Fixed Asset No.", "Last Modified At");
         Document.Ascending(false);
@@ -202,19 +216,15 @@ page 50225 "Trailer Doc Summary FB"
         exit(Document.FindFirst());
     end;
 
-    local procedure GetCurrentFixedAssetNo(): Code[20]
+    local procedure RequestSyncForCurrentAsset()
     var
-        FixedAssetFilter: Text;
+        SyncRequest: Codeunit "Trailer Document Sync Request";
     begin
-        if Rec."Fixed Asset No." <> '' then
-            exit(CopyStr(Rec."Fixed Asset No.", 1, 20));
+        if Rec."No." = '' then
+            Error('No fixed asset number is available for this Trailer Documents FactBox.');
 
-        FixedAssetFilter := Rec.GetFilter("Fixed Asset No.");
-        FixedAssetFilter := DelChr(FixedAssetFilter, '=', '''');
-        if FixedAssetFilter <> '' then
-            exit(CopyStr(FixedAssetFilter, 1, 20));
-
-        Error('No fixed asset number is available for this Trailer Documents FactBox.');
+        SyncRequest.RequestOnDemandSync(Rec."No.");
+        Message('Trailer document sync request queued for fixed asset %1.', Rec."No.");
     end;
 
     var
@@ -223,4 +233,5 @@ page 50225 "Trailer Doc Summary FB"
         OpenFhwaTxt: Text[10];
         FhwaModifiedAt: DateTime;
         SyncStatusTxt: Text[50];
+        RequestSyncText: Text[30];
 }

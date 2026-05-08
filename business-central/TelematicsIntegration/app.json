@@ -1,0 +1,23 @@
+{
+  "id": "2f42a28b-ea51-48b7-9a7e-91f2cd56e0c8",
+  "name": "Telematics Integration",
+  "publisher": "Metro Trailer",
+  "version": "1.0.0.1",
+  "brief": "Unified telematics data model, APIs, and Fixed Asset UI integration for Business Central.",
+  "description": "Creates normalized telematics tracker, sync run, and sync error data structures, API pages for integration workloads, and a unified Fixed Asset telematics FactBox.",
+  "platform": "27.0.0.0",
+  "application": "27.5.0.0",
+  "target": "Cloud",
+  "runtime": "11.0",
+  "idRanges": [
+    {
+      "from": 50250,
+      "to": 50349
+    }
+  ],
+  "resourceExposurePolicy": {
+    "allowDebugging": true,
+    "allowDownloadingSource": true,
+    "includeSourceInSymbolFile": true
+  }
+}

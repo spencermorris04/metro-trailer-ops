@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Metro Trailer METR01 Cloud",
+      "type": "al",
+      "request": "launch",
+      "environmentType": "Production",
+      "environmentName": "METR01",
+      "tenant": "8417a242-0313-412c-a062-453303f8f4fd",
+      "authentication": "AAD",
+      "startupObjectType": "Page",
+      "startupObjectId": 22,
+      "breakOnError": "All",
+      "launchBrowser": false
+    }
+  ]
+}

@@ -7,7 +7,8 @@ pageextension 50180 "Fixed Asset Card SkyBitz Ext" extends "Fixed Asset Card"
             part(SkyBitzLatest; "SkyBitz Tracker FactBox")
             {
                 ApplicationArea = All;
-                SubPageLink = "Fixed Asset No." = field("No.");
+                SubPageLink = "No." = field("No.");
+                Visible = false;
             }
         }
     }
@@ -23,6 +24,7 @@ pageextension 50180 "Fixed Asset Card SkyBitz Ext" extends "Fixed Asset Card"
                 Image = List;
                 Promoted = true;
                 PromotedCategory = Process;
+                Visible = false;
 
                 trigger OnAction()
                 var
@@ -39,6 +41,7 @@ pageextension 50180 "Fixed Asset Card SkyBitz Ext" extends "Fixed Asset Card"
                 Image = Map;
                 Promoted = true;
                 PromotedCategory = Process;
+                Visible = false;
 
                 trigger OnAction()
                 var
