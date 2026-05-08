@@ -37,6 +37,7 @@
     "skybitz:sync:bc": "tsx skybitz/scripts/skybitz-sync-bc.ts",
     "skybitz:sync:bc:latest": "tsx skybitz/scripts/skybitz-sync-bc.ts --latest-snapshot",
     "skybitz:sync:bc:history": "tsx skybitz/scripts/skybitz-sync-bc.ts --history-window",
+    "skybitz:sync:telematics": "tsx skybitz/scripts/skybitz-sync-telematics.ts",
     "orbcomm:test-auth": "tsx orbcomm/scripts/test-auth.ts",
     "orbcomm:fetch-status": "tsx orbcomm/scripts/fetch-status.ts",
     "orbcomm:sync:bc": "tsx orbcomm/scripts/orbcomm-sync-bc.ts",

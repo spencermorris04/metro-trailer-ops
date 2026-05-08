@@ -33,7 +33,7 @@ jobs:
         run: npm ci
 
       - name: Validate sync backend TypeScript
-        run: npx tsc --noEmit --skipLibCheck --module nodenext --moduleResolution nodenext --target es2022 aws/worker/sync-worker.ts skybitz/scripts/skybitz-sync-bc.ts aws/lib/metro-sync-backend-stack.ts
+        run: npx tsc --noEmit --skipLibCheck --module nodenext --moduleResolution nodenext --target es2022 aws/worker/sync-worker.ts aws/lib/metro-sync-backend-stack.ts skybitz/scripts/skybitz-sync-bc.ts skybitz/scripts/skybitz-sync-telematics.ts orbcomm/scripts/orbcomm-sync-bc.ts
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

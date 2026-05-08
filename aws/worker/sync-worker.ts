@@ -138,24 +138,22 @@ function buildCommands(request: SyncRequest): string[][] {
         [
           "npm",
           "run",
-          "skybitz:sync:bc:history",
+          "skybitz:sync:telematics",
           "--",
           "--write",
+          "--history-window",
           "--since-last-successful-run",
           "--window-chunk-minutes=60",
           "--overlap-minutes=15",
           "--safety-lag-minutes=5",
           "--max-lookback-hours=24",
-          "--stale-after-hours=24",
           "--concurrency=3",
         ],
-        ["npm", "run", "telematics:backfill-skybitz", "--", "--write", "--concurrency=4"],
       ];
     }
     if (request.integration === "skybitzReconcile") {
       return [
-        ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", "--concurrency=3"],
-        ["npm", "run", "telematics:backfill-skybitz", "--", "--write", "--concurrency=4"],
+        ["npm", "run", "skybitz:sync:telematics", "--", "--write", "--latest-snapshot", "--concurrency=3"],
       ];
     }
     if (request.integration === "record360") {
@@ -185,8 +183,8 @@ function buildCommands(request: SyncRequest): string[][] {
           "--write",
           "--since-last-successful-run",
           "--max-lookback-hours=24",
-          "--window-chunk-minutes=60",
-          "--sleep-between-windows-seconds=305",
+          "--window-chunk-minutes=1440",
+          "--sleep-between-windows-seconds=0",
           "--concurrency=3",
         ],
       ];
@@ -200,8 +198,7 @@ function buildCommands(request: SyncRequest): string[][] {
 
   if (request.integration === "skybitz") {
     return [
-      ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", `--assetid=${fixedAssetNo}`, "--concurrency=1"],
-      ["npm", "run", "telematics:backfill-skybitz", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
+      ["npm", "run", "skybitz:sync:telematics", "--", "--write", "--latest-snapshot", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
     ];
   }
   if (request.integration === "record360") {
@@ -215,8 +212,7 @@ function buildCommands(request: SyncRequest): string[][] {
   }
   if (request.integration === "telematics") {
     return [
-      ["npm", "run", "skybitz:sync:bc:latest", "--", "--write", `--assetid=${fixedAssetNo}`, "--concurrency=1"],
-      ["npm", "run", "telematics:backfill-skybitz", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
+      ["npm", "run", "skybitz:sync:telematics", "--", "--write", "--latest-snapshot", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
       ["npm", "run", "orbcomm:sync:bc", "--", "--write", `--fixed-asset-no=${fixedAssetNo}`, "--concurrency=1"],
     ];
   }
