@@ -357,9 +357,9 @@ export class MetroSyncBackendStack extends Stack {
       targets: [runTaskTarget("daily:record360")],
     });
 
-    new events.Rule(this, "DailyOrbcommSchedule", {
-      ruleName: "metro-trailer-daily-orbcomm-sync",
-      schedule: events.Schedule.cron({ minute: "30", hour: "6" }),
+    new events.Rule(this, "HourlyOrbcommSchedule", {
+      ruleName: "metro-trailer-hourly-orbcomm-sync",
+      schedule: events.Schedule.cron({ minute: "30" }),
       targets: [runTaskTarget("daily:orbcomm")],
     });
 

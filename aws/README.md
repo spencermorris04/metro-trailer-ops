@@ -7,8 +7,8 @@ This folder contains the AWS infrastructure and runtime code for the unified syn
 - API Gateway accepts on-demand sync requests from Business Central or WordPress.
 - A Lambda handler validates the API key, writes request status to DynamoDB, enqueues work to SQS, and starts one ECS queue worker task.
 - ECS Fargate runs one reusable worker image for both daily scheduled jobs and queued on-demand jobs.
-- EventBridge Scheduler starts daily ECS tasks for SkyBitz, Record360, and Trailer Documents.
-- Secrets Manager stores Business Central, SkyBitz, Record360, SharePoint, and API caller credentials.
+- EventBridge Scheduler starts daily ECS tasks for SkyBitz, Record360, and Trailer Documents, plus an hourly ORBCOMM ECS task.
+- Secrets Manager stores Business Central, SkyBitz, ORBCOMM, Record360, SharePoint, and API caller credentials.
 
 ## Deployment Notes
 
@@ -30,6 +30,7 @@ After deployment, fill the generated Secrets Manager secrets:
 
 - `metro-trailer/business-central`
 - `metro-trailer/skybitz`
+- `metro-trailer/orbcomm`
 - `metro-trailer/record360`
 - `metro-trailer/sharepoint`
 - `metro-trailer/sync-api`
@@ -43,7 +44,7 @@ Worker image build flow:
 3. Start the `WorkerImageBuildProjectName` CodeBuild project.
 4. The project builds `aws/Dockerfile` and pushes `latest` to `WorkerRepositoryUri`.
 
-The SkyBitz, Record360, and trailer-documents daily schedules are enabled. Trailer documents uses the SharePoint delta/backfill state files so the daily run does not intentionally rescan every folder.
+The SkyBitz, Record360, and trailer-documents daily schedules are enabled. ORBCOMM runs hourly with a 75-minute rolling lookback so the job stays inside the provider's practical request size and polling limits. Trailer documents uses the SharePoint delta/backfill state files so the daily run does not intentionally rescan every folder.
 
 ## GitHub Actions Deployment
 
@@ -72,14 +73,19 @@ The S3 + CodeBuild worker image flow above remains available as a local fallback
 ## Runtime Modes
 
 - `daily:skybitz`
+- `daily:orbcomm`
 - `daily:record360`
 - `daily:trailer-documents`
 - `ondemand:skybitz`
+- `ondemand:orbcomm`
+- `ondemand:telematics`
 - `ondemand:record360`
 - `ondemand:trailer-documents`
 - `queue`
 
 The queue mode receives messages from `metro-trailer-sync-requests` and dispatches to one of the on-demand modes. The queue worker is started by the intake Lambda per request instead of polling every minute, so idle Fargate cost stays at zero.
+
+ORBCOMM's scheduled mode intentionally does not use a 24-hour catch-up window. The provider throttles repeated polling requests and large history windows can time out, so production uses one hourly run at minute 30 with `--max-lookback-hours=1.25` and `--window-chunk-minutes=75`. The 15-minute overlap is safe because telematics rows are upserted by provider/tracker and unchanged source hashes are skipped. If a longer outage occurs, run a manual backfill window intentionally instead of making every hourly job try to catch up a full day.
 
 ## Current Deployment
 
@@ -99,6 +105,7 @@ Each BC extension now includes a small setup page and `Request Sync` actions on 
 - `SkyBitz Sync API Setup`
 - `Record360 Sync API Setup`
 - `Trailer Document Sync API Setup`
+- `Telematics Sync API Setup`
 
 Set `API Base URL` to the deployed API Gateway URL without a trailing slash, and set `API Key` to the `apiKey` value stored in `metro-trailer/sync-api`.
 
@@ -107,6 +114,7 @@ The actions call:
 - `POST /sync/skybitz`
 - `POST /sync/record360`
 - `POST /sync/trailer-documents`
+- `POST /sync/telematics`
 
 The action returns after the request is queued. The ECS worker processes the queue asynchronously and writes the refreshed rows back to the existing Business Central integration tables.
 
