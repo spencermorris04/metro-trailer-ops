@@ -62,11 +62,15 @@ page 50117 "R360 Unmatched Inspections"
                 Image = Print;
 
                 trigger OnAction()
+                var
+                    SyncRequest: Codeunit "Record360 Sync Request";
+                    PdfShareUrl: Text;
                 begin
-                    if Rec."PDF Share URL" = '' then
+                    PdfShareUrl := SyncRequest.GetFreshPdfShareUrl(Rec."Record360 Inspection ID", Rec."PDF Share URL");
+                    if PdfShareUrl = '' then
                         Error('No PDF Share URL is available for this inspection.');
 
-                    Hyperlink(Rec."PDF Share URL");
+                    Hyperlink(PdfShareUrl);
                 end;
             }
             action(OpenDashboard)

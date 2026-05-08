@@ -1,8 +1,7 @@
 page 50115 "Record360 Summary FactBox"
 {
     PageType = CardPart;
-    SourceTable = "Record360 Inspection";
-    SourceTableView = sorting("Trailer No.", "Inspection DateTime") order(descending);
+    SourceTable = "Fixed Asset";
     ApplicationArea = All;
     Caption = 'Latest Record360';
     Editable = false;
@@ -15,35 +14,46 @@ page 50115 "Record360 Summary FactBox"
             {
                 ShowCaption = false;
 
-                field("Inspection DateTime"; Rec."Inspection DateTime")
+                field(LatestText; LatestText)
                 {
                     ApplicationArea = All;
                     Caption = 'Latest';
                 }
-                field("Inspection Direction"; Rec."Inspection Direction")
+                field(InspectionDirectionText; InspectionDirectionText)
                 {
                     ApplicationArea = All;
                     Caption = 'Direction';
                 }
-                field("Employee Name"; Rec."Employee Name")
+                field(EmployeeName; EmployeeName)
                 {
                     ApplicationArea = All;
                     Caption = 'Employee';
                 }
-                field("Media Count"; Rec."Media Count")
+                field(MediaCountText; MediaCountText)
                 {
                     ApplicationArea = All;
                     Caption = 'Media';
                 }
-                field("Match Status"; Rec."Match Status")
+                field(MatchStatusText; MatchStatusText)
                 {
                     ApplicationArea = All;
                     Caption = 'Match';
                 }
-                field("Sync Status"; Rec."Sync Status")
+                field(SyncStatusText; SyncStatusText)
                 {
                     ApplicationArea = All;
                     Caption = 'Sync';
+                }
+                field(RequestSyncText; RequestSyncText)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Refresh';
+                    ToolTip = 'Queue a Record360 refresh for this fixed asset.';
+
+                    trigger OnDrillDown()
+                    begin
+                        RequestSyncForCurrentAsset();
+                    end;
                 }
             }
         }
@@ -85,7 +95,7 @@ page 50115 "Record360 Summary FactBox"
                 var
                     Inspection: Record "Record360 Inspection";
                 begin
-                    Inspection.Copy(Rec);
+                    Inspection.SetRange("Trailer No.", Rec."No.");
                     Page.Run(Page::"Record360 Inspection List", Inspection);
                 end;
             }
@@ -97,51 +107,97 @@ page 50115 "Record360 Summary FactBox"
 
                 trigger OnAction()
                 var
-                    SyncRequest: Codeunit "Record360 Sync Request";
-                    FixedAssetNo: Code[20];
                 begin
-                    FixedAssetNo := GetCurrentFixedAssetNo();
-                    SyncRequest.RequestOnDemandSync(FixedAssetNo);
-                    Message('Record360 sync request queued for fixed asset %1.', FixedAssetNo);
+                    RequestSyncForCurrentAsset();
                 end;
             }
         }
     }
 
-    trigger OnOpenPage()
+    trigger OnAfterGetCurrRecord()
     begin
-        Rec.SetCurrentKey("Trailer No.", "Inspection DateTime");
-        Rec.Ascending(false);
+        RefreshSummary();
     end;
 
     local procedure OpenPdfForCurrentRecord()
+    var
+        Inspection: Record "Record360 Inspection";
+        SyncRequest: Codeunit "Record360 Sync Request";
+        PdfShareUrl: Text;
     begin
-        if Rec."PDF Share URL" = '' then
+        if not FindLatestInspection(Inspection) then
+            Error('No Record360 inspection was found for fixed asset %1.', Rec."No.");
+
+        PdfShareUrl := SyncRequest.GetFreshPdfShareUrl(Inspection."Record360 Inspection ID", Inspection."PDF Share URL");
+        if PdfShareUrl = '' then
             Error('No PDF Share URL is available for this inspection.');
 
-        Hyperlink(Rec."PDF Share URL");
+        Hyperlink(PdfShareUrl);
     end;
 
     local procedure OpenDashboardForCurrentRecord()
+    var
+        Inspection: Record "Record360 Inspection";
     begin
-        if Rec."Dashboard URL" = '' then
+        if not FindLatestInspection(Inspection) then
+            Error('No Record360 inspection was found for fixed asset %1.', Rec."No.");
+
+        if Inspection."Dashboard URL" = '' then
             Error('No Record360 dashboard URL is available for this inspection.');
 
-        Hyperlink(Rec."Dashboard URL");
+        Hyperlink(Inspection."Dashboard URL");
     end;
 
-    local procedure GetCurrentFixedAssetNo(): Code[20]
+    local procedure RequestSyncForCurrentAsset()
     var
-        TrailerFilter: Text;
+        SyncRequest: Codeunit "Record360 Sync Request";
     begin
-        if Rec."Trailer No." <> '' then
-            exit(CopyStr(Rec."Trailer No.", 1, 20));
+        if Rec."No." = '' then
+            Error('No fixed asset number is available for this Record360 FactBox.');
 
-        TrailerFilter := Rec.GetFilter("Trailer No.");
-        TrailerFilter := DelChr(TrailerFilter, '=', '''');
-        if TrailerFilter <> '' then
-            exit(CopyStr(TrailerFilter, 1, 20));
-
-        Error('No fixed asset number is available for this Record360 FactBox.');
+        SyncRequest.RequestOnDemandSync(Rec."No.");
+        Message('Record360 sync request queued for fixed asset %1.', Rec."No.");
     end;
+
+    local procedure RefreshSummary()
+    var
+        Inspection: Record "Record360 Inspection";
+    begin
+        LatestText := 'No Record360 data';
+        Clear(InspectionDirectionText);
+        Clear(EmployeeName);
+        Clear(MediaCountText);
+        Clear(MatchStatusText);
+        Clear(SyncStatusText);
+        RequestSyncText := 'Request Sync';
+
+        if not FindLatestInspection(Inspection) then
+            exit;
+
+        LatestText := Format(Inspection."Inspection DateTime");
+        InspectionDirectionText := Format(Inspection."Inspection Direction");
+        EmployeeName := Inspection."Employee Name";
+        MediaCountText := Format(Inspection."Media Count");
+        MatchStatusText := Format(Inspection."Match Status");
+        SyncStatusText := Format(Inspection."Sync Status");
+    end;
+
+    local procedure FindLatestInspection(var Inspection: Record "Record360 Inspection"): Boolean
+    begin
+        Inspection.Reset();
+        Inspection.SetRange("Trailer No.", Rec."No.");
+        Inspection.SetCurrentKey("Trailer No.", "Inspection DateTime");
+        Inspection.Ascending(false);
+
+        exit(Inspection.FindFirst());
+    end;
+
+    var
+        LatestText: Text[50];
+        InspectionDirectionText: Text[30];
+        EmployeeName: Text[100];
+        MediaCountText: Text[30];
+        MatchStatusText: Text[30];
+        SyncStatusText: Text[30];
+        RequestSyncText: Text[30];
 }

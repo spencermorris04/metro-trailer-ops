@@ -7,7 +7,7 @@ pageextension 50120 "Fixed Asset Card R360 Ext" extends "Fixed Asset Card"
             part(Record360Latest; "Record360 Summary FactBox")
             {
                 ApplicationArea = All;
-                SubPageLink = "Trailer No." = field("No.");
+                SubPageLink = "No." = field("No.");
             }
             part(Record360History; "Record360 Recent FactBox")
             {
@@ -48,11 +48,17 @@ pageextension 50120 "Fixed Asset Card R360 Ext" extends "Fixed Asset Card"
                 trigger OnAction()
                 var
                     Inspection: Record "Record360 Inspection";
+                    SyncRequest: Codeunit "Record360 Sync Request";
+                    PdfShareUrl: Text;
                 begin
                     if not FindLatestInspectionWithPdf(Inspection) then
                         Error('No Record360 inspection PDF was found for fixed asset %1.', Rec."No.");
 
-                    Hyperlink(Inspection."PDF Share URL");
+                    PdfShareUrl := SyncRequest.GetFreshPdfShareUrl(Inspection."Record360 Inspection ID", Inspection."PDF Share URL");
+                    if PdfShareUrl = '' then
+                        Error('No PDF Share URL is available for this inspection.');
+
+                    Hyperlink(PdfShareUrl);
                 end;
             }
             action(OpenLatestRecord360Dashboard)

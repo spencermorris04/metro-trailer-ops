@@ -23,6 +23,7 @@ const workerTaskDefinitionArn = mustEnv("SYNC_WORKER_TASK_DEFINITION_ARN");
 const workerContainerName = mustEnv("SYNC_WORKER_CONTAINER_NAME");
 const workerSecurityGroupId = mustEnv("SYNC_WORKER_SECURITY_GROUP_ID");
 const workerSubnetIds = mustEnv("SYNC_WORKER_SUBNET_IDS").split(",").filter(Boolean);
+const record360SecretArn = mustEnv("RECORD360_SECRET_ARN");
 
 const sqs = new SQSClient({});
 const ecs = new ECSClient({});
@@ -52,6 +53,17 @@ export async function handler(event: any) {
         }),
       );
       return response(result.Item ? 200 : 404, result.Item ?? { message: "Request not found." });
+    }
+
+    if (event.httpMethod === "GET" && path.includes("/record360/pdf-url/")) {
+      await validateApiKey(event);
+      const inspectionId = event.pathParameters?.inspectionId ?? path.split("/").filter(Boolean).at(-1);
+      if (!inspectionId) {
+        return response(400, { message: "Missing inspectionId." });
+      }
+
+      const pdf = await fetchRecord360PdfUrl(String(inspectionId));
+      return response(200, pdf);
     }
 
     if (event.httpMethod !== "POST") {
@@ -101,6 +113,62 @@ export async function handler(event: any) {
     const statusCode = message === "Unauthorized" ? 401 : 500;
     return response(statusCode, { message });
   }
+}
+
+async function fetchRecord360PdfUrl(inspectionId: string) {
+  const secret = await secrets.send(new GetSecretValueCommand({ SecretId: record360SecretArn }));
+  const parsed = JSON.parse(secret.SecretString ?? "{}") as {
+    RECORD360_API_KEY_ID?: string;
+    RECORD360_API_KEY_SECRET?: string;
+    RECORD360_API_BASE_URL?: string;
+  };
+  const keyId = parsed.RECORD360_API_KEY_ID?.trim();
+  const keySecret = parsed.RECORD360_API_KEY_SECRET?.trim();
+  if (!keyId || !keySecret) {
+    throw new Error("Record360 API credentials are not configured in Secrets Manager.");
+  }
+
+  const baseUrl = normalizeRecord360BaseUrl(parsed.RECORD360_API_BASE_URL);
+  const url = new URL(`inspections/${encodeURIComponent(inspectionId)}`, baseUrl);
+  const result = await fetch(url, {
+    headers: {
+      "api-key-id": keyId,
+      "api-key-secret": keySecret,
+      Accept: "application/json",
+    },
+  });
+  const bodyText = await result.text();
+  if (!result.ok) {
+    throw new Error(`Record360 inspection lookup failed (${result.status}): ${bodyText}`);
+  }
+
+  const body = JSON.parse(bodyText) as {
+    id?: string;
+    pdf_share_url?: string;
+    dashboard_url?: string;
+    updated_at?: string;
+  };
+  if (!body.pdf_share_url) {
+    throw new Error(`Record360 inspection ${inspectionId} did not include pdf_share_url.`);
+  }
+
+  return {
+    record360InspectionId: body.id ?? inspectionId,
+    pdfShareUrl: body.pdf_share_url,
+    dashboardUrl: body.dashboard_url ?? "",
+    updatedAt: body.updated_at ?? "",
+  };
+}
+
+function normalizeRecord360BaseUrl(value: string | undefined) {
+  const raw = value?.trim() || "https://api.record360.com/v3/";
+  const url = new URL(raw);
+  if (url.pathname === "" || url.pathname === "/") {
+    url.pathname = "/v3/";
+  } else if (url.pathname === "/v3") {
+    url.pathname = "/v3/";
+  }
+  return url;
 }
 
 async function startQueueWorker() {

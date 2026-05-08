@@ -348,12 +348,14 @@ export class MetroSyncBackendStack extends Stack {
         SYNC_WORKER_CONTAINER_NAME: "worker",
         SYNC_WORKER_SECURITY_GROUP_ID: workerSecurityGroup.securityGroupId,
         SYNC_WORKER_SUBNET_IDS: vpc.publicSubnets.map((subnet) => subnet.subnetId).join(","),
+        RECORD360_SECRET_ARN: record360Secret.secretArn,
       },
     });
 
     requestQueue.grantSendMessages(handler);
     requestTable.grantReadWriteData(handler);
     apiSecret.grantRead(handler);
+    record360Secret.grantRead(handler);
     handler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["ecs:RunTask"],
@@ -385,6 +387,8 @@ export class MetroSyncBackendStack extends Stack {
     });
 
     const lambdaIntegration = new apigateway.LambdaIntegration(handler);
+    const record360 = api.root.addResource("record360");
+    record360.addResource("pdf-url").addResource("{inspectionId}").addMethod("GET", lambdaIntegration);
     const sync = api.root.addResource("sync");
     sync.addResource("skybitz").addMethod("POST", lambdaIntegration);
     sync.addResource("record360").addMethod("POST", lambdaIntegration);

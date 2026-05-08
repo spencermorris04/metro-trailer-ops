@@ -130,11 +130,15 @@ page 50116 "Record360 Recent FactBox"
     end;
 
     local procedure OpenPdfForCurrentRecord()
+    var
+        SyncRequest: Codeunit "Record360 Sync Request";
+        PdfShareUrl: Text;
     begin
-        if Rec."PDF Share URL" = '' then
+        PdfShareUrl := SyncRequest.GetFreshPdfShareUrl(Rec."Record360 Inspection ID", Rec."PDF Share URL");
+        if PdfShareUrl = '' then
             Error('No PDF Share URL is available for this inspection.');
 
-        Hyperlink(Rec."PDF Share URL");
+        Hyperlink(PdfShareUrl);
     end;
 
     local procedure OpenDashboardForCurrentRecord()

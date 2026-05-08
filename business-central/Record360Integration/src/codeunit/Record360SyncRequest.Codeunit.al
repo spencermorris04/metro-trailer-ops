@@ -12,6 +12,22 @@ codeunit 50132 "Record360 Sync Request"
         PostSyncRequest(Setup, FixedAssetNo);
     end;
 
+    procedure GetFreshPdfShareUrl(Record360InspectionId: Text[50]; FallbackPdfShareUrl: Text): Text
+    var
+        Setup: Record "Record360 Sync API Setup";
+    begin
+        if Record360InspectionId = '' then
+            exit(FallbackPdfShareUrl);
+
+        if not Setup.Get('DEFAULT') then
+            exit(FallbackPdfShareUrl);
+
+        if (Setup."API Base URL" = '') or (Setup."API Key" = '') then
+            exit(FallbackPdfShareUrl);
+
+        exit(GetFreshPdfShareUrlFromApi(Setup, Record360InspectionId, FallbackPdfShareUrl));
+    end;
+
     local procedure PostSyncRequest(Setup: Record "Record360 Sync API Setup"; FixedAssetNo: Code[20])
     var
         Client: HttpClient;
@@ -44,6 +60,34 @@ codeunit 50132 "Record360 Sync Request"
             Response.Content().ReadAs(ResponseText);
             Error('Record360 sync API returned %1 %2. %3', Response.HttpStatusCode(), Response.ReasonPhrase(), ResponseText);
         end;
+    end;
+
+    local procedure GetFreshPdfShareUrlFromApi(Setup: Record "Record360 Sync API Setup"; Record360InspectionId: Text[50]; FallbackPdfShareUrl: Text): Text
+    var
+        Client: HttpClient;
+        Response: HttpResponseMessage;
+        ResponseText: Text;
+        Url: Text;
+        Json: JsonObject;
+        Token: JsonToken;
+    begin
+        Url := TrimTrailingSlash(Setup."API Base URL") + '/record360/pdf-url/' + Record360InspectionId;
+        Client.DefaultRequestHeaders().Add('X-Metro-Sync-Key', Setup."API Key");
+
+        if not Client.Get(Url, Response) then
+            Error('Business Central could not call the Record360 PDF URL API.');
+
+        Response.Content().ReadAs(ResponseText);
+        if not Response.IsSuccessStatusCode() then
+            Error('Record360 PDF URL API returned %1 %2. %3', Response.HttpStatusCode(), Response.ReasonPhrase(), ResponseText);
+
+        if not Json.ReadFrom(ResponseText) then
+            Error('Record360 PDF URL API returned invalid JSON.');
+
+        if Json.Get('pdfShareUrl', Token) then
+            exit(Token.AsValue().AsText());
+
+        exit(FallbackPdfShareUrl);
     end;
 
     local procedure TrimTrailingSlash(Value: Text): Text
