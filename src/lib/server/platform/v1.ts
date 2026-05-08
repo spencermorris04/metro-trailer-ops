@@ -91,6 +91,57 @@ function formatContact(value: Record<string, unknown> | null | undefined) {
   return typeof value.name === "string" ? value.name : "";
 }
 
+function payloadText(
+  payload: Record<string, unknown> | null | undefined,
+  keys: string[],
+) {
+  if (!payload) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+function payloadAmount(
+  payload: Record<string, unknown> | null | undefined,
+  keys: string[],
+) {
+  if (!payload) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+function timestampForSort(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+}
+
 async function getBusinessCentralMappings(entityType: string) {
   const rows = await db
     .select()
@@ -666,7 +717,7 @@ export async function getCommercialEventsView(filters?: CommercialEventFilters) 
 
   const rowById = new Map(rows.map((row) => [row.id, row]));
 
-  return baseEvents.map((event) => {
+  const canonicalEvents = baseEvents.map((event) => {
     const row = rowById.get(event.id);
     return {
       ...event,
@@ -676,17 +727,161 @@ export async function getCommercialEventsView(filters?: CommercialEventFilters) 
       invoiceNumber: row?.invoiceNumber ?? null,
     };
   });
+
+  const rawLedgerRows = await db
+    .select({
+      id: schema.bcRmiRentalLedgerEntries.id,
+      externalEntryNo: schema.bcRmiRentalLedgerEntries.externalEntryNo,
+      documentType: schema.bcRmiRentalLedgerEntries.documentType,
+      documentNo: schema.bcRmiRentalLedgerEntries.documentNo,
+      orderNo: schema.bcRmiRentalLedgerEntries.orderNo,
+      postingDate: schema.bcRmiRentalLedgerEntries.postingDate,
+      billToCustomerNo: schema.bcRmiRentalLedgerEntries.billToCustomerNo,
+      typeOrdered: schema.bcRmiRentalLedgerEntries.typeOrdered,
+      noOrdered: schema.bcRmiRentalLedgerEntries.noOrdered,
+      typeShipped: schema.bcRmiRentalLedgerEntries.typeShipped,
+      noShipped: schema.bcRmiRentalLedgerEntries.noShipped,
+      serialNoShipped: schema.bcRmiRentalLedgerEntries.serialNoShipped,
+      quantity: schema.bcRmiRentalLedgerEntries.quantity,
+      fromDate: schema.bcRmiRentalLedgerEntries.fromDate,
+      thruDate: schema.bcRmiRentalLedgerEntries.thruDate,
+      grossAmount: schema.bcRmiRentalLedgerEntries.grossAmount,
+      grossAmountLcy: schema.bcRmiRentalLedgerEntries.grossAmountLcy,
+      dealCode: schema.bcRmiRentalLedgerEntries.dealCode,
+    })
+    .from(schema.bcRmiRentalLedgerEntries)
+    .orderBy(desc(schema.bcRmiRentalLedgerEntries.postingDate))
+    .limit(500);
+
+  const rawEvents = rawLedgerRows
+    .filter((row) => {
+      if (filters?.contractNumber && row.orderNo !== filters.contractNumber) {
+        return false;
+      }
+      if (filters?.eventType && filters.eventType !== "legacy_rental") {
+        return false;
+      }
+      if (filters?.status && filters.status !== "posted") {
+        return false;
+      }
+      return true;
+    })
+    .map((row) => {
+      const itemNo = row.noShipped ?? row.noOrdered ?? row.serialNoShipped ?? "";
+      const period = [toIso(row.fromDate)?.slice(0, 10), toIso(row.thruDate)?.slice(0, 10)]
+        .filter(Boolean)
+        .join(" to ");
+      return {
+        id: row.id,
+        contractId: null,
+        contractNumber: row.orderNo ?? row.documentNo ?? "Legacy BC",
+        contractLineId: null,
+        assetId: null,
+        eventType: "legacy_rental",
+        description: [
+          row.typeShipped ?? row.typeOrdered ?? "Rental ledger entry",
+          itemNo,
+          row.dealCode ? `deal ${row.dealCode}` : "",
+          period,
+        ]
+          .filter(Boolean)
+          .join(" / "),
+        amount: numericToNumber(row.grossAmount ?? row.grossAmountLcy),
+        eventDate: toIso(row.postingDate) ?? toIso(row.fromDate) ?? new Date(0).toISOString(),
+        status: "posted",
+        sourceDocumentType: row.documentType ?? "Rental Ledger Entry",
+        sourceDocumentNo: row.documentNo ?? row.externalEntryNo,
+        invoiceStatus: "posted",
+        invoiceNumber: row.documentNo,
+        externalReference: row.externalEntryNo,
+        metadata: {
+          sourceProvider: "business_central",
+          billToCustomerNo: row.billToCustomerNo,
+          quantity: numericToNumber(row.quantity),
+        },
+      };
+    });
+
+  return [...canonicalEvents, ...rawEvents]
+    .sort((left, right) => timestampForSort(right.eventDate) - timestampForSort(left.eventDate))
+    .slice(0, 700);
 }
 
 export async function getArInvoicesView() {
   const invoices = await listInvoices();
-  return invoices.map((invoice) => ({
+  const canonicalInvoices = invoices.map((invoice) => ({
     ...invoice,
     sourceProvider: invoice.sourceProvider ?? "internal",
     sourceDocumentType: invoice.sourceDocumentType ?? null,
     sourceDocumentNo: invoice.sourceDocumentNo ?? null,
     sourceStatus: invoice.sourceStatus ?? null,
   }));
+  const canonicalSourceKeys = new Set(
+    canonicalInvoices
+      .map((invoice) =>
+        invoice.sourceDocumentType && invoice.sourceDocumentNo
+          ? `${invoice.sourceDocumentType}:${invoice.sourceDocumentNo}`
+          : null,
+      )
+      .filter((key): key is string => Boolean(key)),
+  );
+
+  const rawHeaders = await db
+    .select({
+      id: schema.bcRmiPostedRentalInvoiceHeaders.id,
+      documentType: schema.bcRmiPostedRentalInvoiceHeaders.documentType,
+      documentNo: schema.bcRmiPostedRentalInvoiceHeaders.documentNo,
+      previousDocType: schema.bcRmiPostedRentalInvoiceHeaders.previousDocType,
+      previousNo: schema.bcRmiPostedRentalInvoiceHeaders.previousNo,
+      sellToCustomerNo: schema.bcRmiPostedRentalInvoiceHeaders.sellToCustomerNo,
+      billToCustomerNo: schema.bcRmiPostedRentalInvoiceHeaders.billToCustomerNo,
+      postingDate: schema.bcRmiPostedRentalInvoiceHeaders.postingDate,
+      documentDate: schema.bcRmiPostedRentalInvoiceHeaders.documentDate,
+      dueDate: schema.bcRmiPostedRentalInvoiceHeaders.dueDate,
+      sourcePayload: schema.bcRmiPostedRentalInvoiceHeaders.sourcePayload,
+    })
+    .from(schema.bcRmiPostedRentalInvoiceHeaders)
+    .orderBy(desc(schema.bcRmiPostedRentalInvoiceHeaders.postingDate))
+    .limit(500);
+
+  const rawInvoices = rawHeaders
+    .filter((row) => !canonicalSourceKeys.has(`${row.documentType}:${row.documentNo}`))
+    .map((row) => {
+      const payload = row.sourcePayload as Record<string, unknown>;
+      return {
+        id: row.id,
+        invoiceNumber: row.documentNo,
+        customerName:
+          payloadText(payload, ["BilltoName", "SelltoCustomerName", "Name"]) ??
+          row.billToCustomerNo ??
+          row.sellToCustomerNo ??
+          "Unknown customer",
+        contractNumber: row.previousNo ?? "Legacy BC posted invoice",
+        status: "posted",
+        invoiceDate:
+          toIso(row.documentDate) ?? toIso(row.postingDate) ?? new Date(0).toISOString(),
+        dueDate: toIso(row.dueDate) ?? toIso(row.documentDate) ?? new Date(0).toISOString(),
+        totalAmount: payloadAmount(payload, ["AmountIncludingVAT", "Amount", "TotalAmount"]) ?? 0,
+        balanceAmount: 0,
+        deliveryStatus: "imported",
+        sentAt: null,
+        deliveryChannel: "business_central",
+        quickBooksSyncStatus: "skipped",
+        quickBooksLastSyncedAt: null,
+        quickBooksLastError: null,
+        reconciliationState: "synced",
+        sourceProvider: "business_central",
+        sourceDocumentType: row.documentType,
+        sourceDocumentNo: row.documentNo,
+        sourceStatus: "posted",
+        previousDocumentType: row.previousDocType,
+        previousDocumentNo: row.previousNo,
+      };
+    });
+
+  return [...canonicalInvoices, ...rawInvoices]
+    .sort((left, right) => timestampForSort(right.invoiceDate) - timestampForSort(left.invoiceDate))
+    .slice(0, 700);
 }
 
 export async function getArReceiptsView() {
@@ -878,6 +1073,14 @@ export async function getBusinessCentralOverviewView() {
       db.select({ count: sql<number>`count(*)` }).from(schema.bcVendorLedgerEntries),
       db.select({ count: sql<number>`count(*)` }).from(schema.bcCustomerLedgerEntries),
       db.select({ count: sql<number>`count(*)` }).from(schema.bcFaLedgerEntries),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcGlAccounts),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcDimensionSets),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcDimensionSetEntries),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcRmiPostedRentalInvoiceHeaders),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcRmiPostedRentalHeaders),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcRmiPostedRentalLines),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcRmiRentalLedgerEntries),
+      db.select({ count: sql<number>`count(*)` }).from(schema.bcRmiWsRentalLedgerEntries),
     ]),
   ]);
 
@@ -915,6 +1118,14 @@ export async function getBusinessCentralOverviewView() {
       bcVendorLedgerEntries: counts[6][0]?.count ?? 0,
       bcCustomerLedgerEntries: counts[7][0]?.count ?? 0,
       bcFaLedgerEntries: counts[8][0]?.count ?? 0,
+      bcGlAccounts: counts[9][0]?.count ?? 0,
+      bcDimensionSets: counts[10][0]?.count ?? 0,
+      bcDimensionSetEntries: counts[11][0]?.count ?? 0,
+      bcRmiPostedRentalInvoiceHeaders: counts[12][0]?.count ?? 0,
+      bcRmiPostedRentalHeaders: counts[13][0]?.count ?? 0,
+      bcRmiPostedRentalLines: counts[14][0]?.count ?? 0,
+      bcRmiRentalLedgerEntries: counts[15][0]?.count ?? 0,
+      bcRmiWsRentalLedgerEntries: counts[16][0]?.count ?? 0,
       sourceDocuments: sourceDocuments[0]?.count ?? 0,
       sourceDocumentLines: sourceLines[0]?.count ?? 0,
     },
@@ -965,9 +1176,28 @@ export async function getSourceDocumentsView() {
     .from(schema.bcSourceDocuments)
     .orderBy(desc(schema.bcSourceDocuments.importedAt))
     .limit(200);
+  const rmiInvoiceHeaders = await db
+    .select({
+      id: schema.bcRmiPostedRentalInvoiceHeaders.id,
+      documentType: schema.bcRmiPostedRentalInvoiceHeaders.documentType,
+      documentNo: schema.bcRmiPostedRentalInvoiceHeaders.documentNo,
+      previousDocType: schema.bcRmiPostedRentalInvoiceHeaders.previousDocType,
+      previousNo: schema.bcRmiPostedRentalInvoiceHeaders.previousNo,
+      sellToCustomerNo: schema.bcRmiPostedRentalInvoiceHeaders.sellToCustomerNo,
+      billToCustomerNo: schema.bcRmiPostedRentalInvoiceHeaders.billToCustomerNo,
+      postingDate: schema.bcRmiPostedRentalInvoiceHeaders.postingDate,
+      documentDate: schema.bcRmiPostedRentalInvoiceHeaders.documentDate,
+      dueDate: schema.bcRmiPostedRentalInvoiceHeaders.dueDate,
+      sourcePayload: schema.bcRmiPostedRentalInvoiceHeaders.sourcePayload,
+      importedAt: schema.bcRmiPostedRentalInvoiceHeaders.importedAt,
+    })
+    .from(schema.bcRmiPostedRentalInvoiceHeaders)
+    .orderBy(desc(schema.bcRmiPostedRentalInvoiceHeaders.postingDate))
+    .limit(500);
 
   const docIds = docs.map((doc) => doc.id);
-  const [lines, linkedContracts, linkedInvoices] = await Promise.all([
+  const rmiDocumentNos = rmiInvoiceHeaders.map((doc) => doc.documentNo);
+  const [lines, linkedContracts, linkedInvoices, rmiLineRows] = await Promise.all([
     docIds.length === 0
       ? Promise.resolve([] as Array<{ sourceDocumentId: string; count: number }>)
       : db
@@ -994,11 +1224,27 @@ export async function getSourceDocumentsView() {
         sourceDocumentNo: schema.invoices.sourceDocumentNo,
       })
       .from(schema.invoices),
+    rmiDocumentNos.length === 0
+      ? Promise.resolve([] as Array<{ documentNo: string | null; count: number }>)
+      : db
+          .select({
+            documentNo: schema.bcRmiPostedRentalLines.documentNo,
+            count: sql<number>`count(*)`,
+          })
+          .from(schema.bcRmiPostedRentalLines)
+          .where(inArray(schema.bcRmiPostedRentalLines.documentNo, rmiDocumentNos))
+          .groupBy(schema.bcRmiPostedRentalLines.documentNo),
   ]);
 
   const lineCountByDocument = new Map(lines.map((row) => [row.sourceDocumentId, Number(row.count)]));
+  const rmiLineCountByDocumentNo = new Map<string, number>();
+  for (const row of rmiLineRows) {
+    if (row.documentNo) {
+      rmiLineCountByDocumentNo.set(row.documentNo, Number(row.count));
+    }
+  }
 
-  return docs.map((doc) => ({
+  const indexedDocs = docs.map((doc) => ({
     ...doc,
     documentDate: toIso(doc.documentDate),
     dueDate: toIso(doc.dueDate),
@@ -1037,6 +1283,60 @@ export async function getSourceDocumentsView() {
         invoice.sourceDocumentType === doc.documentType,
     ),
   }));
+
+  const rawRmiDocs = rmiInvoiceHeaders.map((doc) => {
+    const payload = doc.sourcePayload as Record<string, unknown>;
+    return {
+      id: doc.id,
+      runId: null,
+      externalDocumentId: doc.documentNo,
+      documentType: doc.documentType,
+      documentNo: doc.documentNo,
+      customerExternalId: doc.billToCustomerNo ?? doc.sellToCustomerNo,
+      status: "posted",
+      documentDate: toIso(doc.documentDate) ?? toIso(doc.postingDate),
+      dueDate: toIso(doc.dueDate),
+      payload,
+      importedAt: toIso(doc.importedAt),
+      lineCount: rmiLineCountByDocumentNo.get(doc.documentNo) ?? 0,
+      customerName:
+        payloadText(payload, ["BilltoName", "SelltoCustomerName", "Name"]) ??
+        doc.billToCustomerNo ??
+        doc.sellToCustomerNo ??
+        "Unknown",
+      totalAmount: payloadAmount(payload, ["AmountIncludingVAT", "Amount", "TotalAmount"]),
+      linkedContracts: linkedContracts.filter(
+        (contract) =>
+          contract.sourceDocumentNo === doc.documentNo ||
+          contract.sourceDocumentNo === doc.previousNo,
+      ),
+      linkedInvoices: linkedInvoices.filter(
+        (invoice) =>
+          invoice.sourceDocumentNo === doc.documentNo ||
+          invoice.sourceDocumentNo === doc.previousNo,
+      ),
+      previousDocumentType: doc.previousDocType,
+      previousDocumentNo: doc.previousNo,
+      sourceKind: "rmi_posted_rental_invoice",
+    };
+  });
+
+  const seen = new Set<string>();
+  return [...rawRmiDocs, ...indexedDocs]
+    .filter((doc) => {
+      const key = `${doc.documentType}:${doc.documentNo}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort(
+      (left, right) =>
+        timestampForSort(right.documentDate ?? right.importedAt) -
+        timestampForSort(left.documentDate ?? left.importedAt),
+    )
+    .slice(0, 700);
 }
 
 export async function getFinancialDashboardView() {

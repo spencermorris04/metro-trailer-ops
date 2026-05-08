@@ -14,7 +14,7 @@ export default async function SourceDocumentsPage() {
       <PageHeader
         eyebrow="Admin"
         title="Source documents"
-        description="Imported BC commercial documents retained for reconciliation and lineage."
+        description="Imported BC/RMI commercial documents retained for search, reconciliation, and lineage."
         actions={
           <Link href="/integrations/business-central" className="btn-secondary">
             BC admin

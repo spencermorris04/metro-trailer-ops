@@ -13,7 +13,7 @@ export default async function ArInvoicesPage() {
       <PageHeader
         eyebrow="Accounting"
         title="AR invoices"
-        description="App-native receivables invoices with source-aware BC lineage."
+        description="App-native AR invoices plus imported BC/RMI posted rental invoices while canonical synthesis catches up."
       />
       <SectionCard eyebrow="Accounts Receivable" title="Invoice register">
         <div className="data-table">

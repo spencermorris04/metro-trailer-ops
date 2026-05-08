@@ -13,7 +13,7 @@ export default async function CommercialEventsPage() {
       <PageHeader
         eyebrow="Commercial"
         title="Commercial events"
-        description="Operational billing events, invoice linkage, and source document lineage."
+        description="Operational billing events plus imported RMI rental ledger rows for trailer-period revenue analysis."
       />
 
       <SectionCard eyebrow="Events" title="Commercial event stream">

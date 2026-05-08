@@ -34,10 +34,16 @@ export default async function BusinessCentralPage() {
           ["Customers", overview.metrics.customers],
           ["Contracts", overview.metrics.contracts],
           ["Invoices", overview.metrics.invoices],
-          ["Source docs", overview.metrics.sourceDocuments],
-          ["Source lines", overview.metrics.sourceDocumentLines],
+          ["RMI invoice headers", overview.metrics.bcRmiPostedRentalInvoiceHeaders],
+          ["RMI rental headers", overview.metrics.bcRmiPostedRentalHeaders],
+          ["RMI rental lines", overview.metrics.bcRmiPostedRentalLines],
+          ["RMI ledger", overview.metrics.bcRmiRentalLedgerEntries],
           ["BC GL", overview.metrics.bcGlEntries],
           ["BC AR", overview.metrics.bcCustomerLedgerEntries],
+          ["BC accounts", overview.metrics.bcGlAccounts],
+          ["Dimensions", overview.metrics.bcDimensionSets],
+          ["Source docs", overview.metrics.sourceDocuments],
+          ["Source lines", overview.metrics.sourceDocumentLines],
         ].map(([label, value]) => (
           <div key={label} className="bg-white px-3 py-2">
             <p className="workspace-metric-label">{label}</p>
