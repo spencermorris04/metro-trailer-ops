@@ -53,6 +53,36 @@ export const contractStatuses = [
   "cancelled",
 ] as const;
 
+export const agreementKinds = [
+  "quote",
+  "rental_order",
+  "lease",
+  "legacy_posted_invoice",
+  "credit_memo",
+  "blanket_order",
+] as const;
+
+export const importCompletenesses = [
+  "header_only",
+  "lines_complete",
+  "ledger_complete",
+  "fully_reconciled",
+] as const;
+
+export const contractLineKinds = [
+  "rental",
+  "lease",
+  "delivery",
+  "pickup",
+  "damage_waiver",
+  "resource",
+  "service",
+  "sale",
+  "buyout",
+  "tax",
+  "credit",
+] as const;
+
 export const billingUnits = [
   "day",
   "week",
@@ -81,6 +111,15 @@ export const commercialEventStatuses = [
   "voided",
 ] as const;
 
+export const revenueRecognitionBases = [
+  "rental_period",
+  "one_time",
+  "buyout",
+  "damage",
+  "tax",
+  "credit",
+] as const;
+
 export const financialEventTypes = commercialEventTypes;
 export const financialEventStatuses = commercialEventStatuses;
 
@@ -91,6 +130,12 @@ export const invoiceStatuses = [
   "paid",
   "overdue",
   "voided",
+] as const;
+
+export const invoiceSourceKinds = [
+  "app_native",
+  "bc_posted_rental",
+  "bc_sales_document",
 ] as const;
 
 export const dispatchTaskStatuses = [
@@ -144,12 +189,18 @@ export type AssetAvailabilityKey = (typeof assetAvailabilities)[number];
 export type MaintenanceStatusKey = (typeof maintenanceStatuses)[number];
 export type CustomerTypeKey = (typeof customerTypes)[number];
 export type ContractStatusKey = (typeof contractStatuses)[number];
+export type AgreementKindKey = (typeof agreementKinds)[number];
+export type ImportCompletenessKey = (typeof importCompletenesses)[number];
+export type ContractLineKindKey = (typeof contractLineKinds)[number];
 export type BillingUnitKey = (typeof billingUnits)[number];
 export type CommercialEventTypeKey = (typeof commercialEventTypes)[number];
 export type CommercialEventStatusKey = (typeof commercialEventStatuses)[number];
+export type RevenueRecognitionBasisKey =
+  (typeof revenueRecognitionBases)[number];
 export type FinancialEventTypeKey = CommercialEventTypeKey;
 export type FinancialEventStatusKey = CommercialEventStatusKey;
 export type InvoiceStatusKey = (typeof invoiceStatuses)[number];
+export type InvoiceSourceKindKey = (typeof invoiceSourceKinds)[number];
 export type DispatchTaskStatusKey = (typeof dispatchTaskStatuses)[number];
 export type WorkOrderStatusKey = (typeof workOrderStatuses)[number];
 export type WorkOrderSourceTypeKey = (typeof workOrderSourceTypes)[number];
@@ -257,6 +308,14 @@ export interface CustomerRecord {
   branchCoverage: string[];
   locations: CustomerLocationRecord[];
   sourcePayload?: Record<string, unknown> | null;
+  responsibilityCenter?: string | null;
+  defaultSalesTeam?: string | null;
+  defaultDealCode?: string | null;
+  damageWaiverDeclined?: boolean | null;
+  insuranceCertRequired?: boolean | null;
+  insuranceExpirationDate?: string | null;
+  insurancePolicyNo?: string | null;
+  registrationNumber?: string | null;
 }
 
 export interface ContractRecord {
@@ -290,6 +349,10 @@ export interface ContractRecord {
   sourceDocumentType?: string | null;
   sourceDocumentNo?: string | null;
   sourceStatus?: string | null;
+  agreementKind?: AgreementKindKey | null;
+  legacyDocumentNo?: string | null;
+  legacyPreviousDocumentNo?: string | null;
+  importCompleteness?: ImportCompletenessKey | null;
 }
 
 export interface CommercialEventRecord {
@@ -302,6 +365,13 @@ export interface CommercialEventRecord {
   status: CommercialEventStatusKey;
   sourceDocumentType?: string | null;
   sourceDocumentNo?: string | null;
+  assetId?: string | null;
+  contractLineId?: string | null;
+  serviceBranchId?: string | null;
+  serviceLocationCode?: string | null;
+  servicePeriodStart?: string | null;
+  servicePeriodEnd?: string | null;
+  revenueRecognitionBasis?: RevenueRecognitionBasisKey | null;
 }
 
 export type FinancialEventRecord = CommercialEventRecord;
@@ -327,6 +397,9 @@ export interface InvoiceRecord {
   sourceDocumentType?: string | null;
   sourceDocumentNo?: string | null;
   sourceStatus?: string | null;
+  invoiceSourceKind?: InvoiceSourceKindKey | null;
+  importCompleteness?: ImportCompletenessKey | null;
+  legacyOrderNo?: string | null;
 }
 
 export interface DispatchTaskRecord {
