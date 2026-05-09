@@ -71,6 +71,13 @@
       "when": 1778315978985,
       "tag": "0009_bc_rmi_read_model_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778340112240,
+      "tag": "0010_bc_rmi_hot_path_indexes",
+      "breakpoints": true
     }
   ]
 }

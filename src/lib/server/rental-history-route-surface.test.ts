@@ -59,3 +59,12 @@ test("AR invoice routes use BC/RMI invoice register and detail read models", asy
   assert.match(detail, /getInvoiceDetailView/);
   assert.match(detail, /Raw source snapshot/);
 });
+
+test("financial dashboard uses optimized rental history summaries", async () => {
+  const text = await source("src/app/financial/page.tsx");
+
+  assert.match(text, /getFinancialDashboardOptimizedView/);
+  assert.doesNotMatch(text, /getFinancialDashboardView/);
+  assert.doesNotMatch(text, /getInvoiceRegisterView/);
+  assert.match(text, /BC customer ledger/);
+});

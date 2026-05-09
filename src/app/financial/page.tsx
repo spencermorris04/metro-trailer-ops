@@ -6,16 +6,14 @@ import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import {
   getAssetsOverviewView,
-  getFinancialDashboardView,
-  getInvoiceRegisterView,
+  getFinancialDashboardOptimizedView,
 } from "@/lib/server/platform";
 
 
 export default async function FinancialPage() {
-  const [dashboard, rentalOverview, bcInvoices] = await Promise.all([
-    getFinancialDashboardView(),
+  const [dashboard, rentalOverview] = await Promise.all([
+    getFinancialDashboardOptimizedView(),
     getAssetsOverviewView(),
-    getInvoiceRegisterView({ source: "business_central", page: 1, pageSize: 12 }),
   ]);
 
   return (
@@ -138,24 +136,27 @@ export default async function FinancialPage() {
                 </Link>
               </div>
               <div className="divide-y divide-[var(--line)]">
-                {bcInvoices.data.map((invoice) => (
-                  <div key={invoice.id} className="flex items-center justify-between py-1.5">
+                {[
+                  ["Posted BC invoices", rentalOverview.metrics.bcInvoiceHeaders],
+                  ["Imported RMI lines", rentalOverview.metrics.bcLines],
+                  ["BC customer ledger", rentalOverview.metrics.bcCustomerLedgerEntries],
+                  ["BC G/L entries", rentalOverview.metrics.bcGlEntries],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex items-center justify-between py-1.5">
                     <div>
                       <div className="mono text-[0.65rem] text-slate-500">
-                        <Link href={`/ar/invoices/${invoice.invoiceNumber}`} className="text-[var(--brand)]">
-                          {invoice.invoiceNumber}
-                        </Link>
+                        Business Central
                       </div>
                       <div className="text-[0.75rem] text-slate-700">
-                        {invoice.customerName}
+                        {label}
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-slate-900">
-                        {formatCurrency(invoice.totalAmount)}
+                        {value}
                       </div>
                       <div className="text-[0.65rem] text-slate-400">
-                        {titleize(invoice.status)} / Balance pending
+                        {label === "BC customer ledger" ? "Open AR pending" : "Imported history"}
                       </div>
                     </div>
                   </div>

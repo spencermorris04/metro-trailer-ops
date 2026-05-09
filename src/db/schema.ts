@@ -1389,11 +1389,25 @@ export const bcRmiPostedRentalInvoiceHeaders = pgTable(
       table.documentType,
       table.documentNo,
     ),
+    documentNoIdx: index("bc_rmi_inv_hdr_document_no_idx").on(table.documentNo),
     customerIdx: index("bc_rmi_inv_hdr_customer_idx").on(table.billToCustomerNo),
+    customerPostingIdx: index("bc_rmi_inv_hdr_customer_posting_idx").on(
+      table.billToCustomerNo,
+      table.postingDate,
+    ),
     postingDateIdx: index("bc_rmi_inv_hdr_posting_date_idx").on(table.postingDate),
+    postingDocumentIdx: index("bc_rmi_inv_hdr_posting_document_idx").on(
+      table.postingDate,
+      table.documentNo,
+    ),
     previousIdx: index("bc_rmi_inv_hdr_previous_idx").on(
       table.previousDocType,
       table.previousNo,
+    ),
+    previousPostingIdx: index("bc_rmi_inv_hdr_previous_posting_idx").on(
+      table.previousDocType,
+      table.previousNo,
+      table.postingDate,
     ),
   }),
 );
