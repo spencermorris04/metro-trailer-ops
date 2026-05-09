@@ -4,11 +4,19 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
-import { getFinancialDashboardView } from "@/lib/server/platform";
+import {
+  getAssetsOverviewView,
+  getFinancialDashboardView,
+  getInvoiceRegisterView,
+} from "@/lib/server/platform";
 
 
 export default async function FinancialPage() {
-  const dashboard = await getFinancialDashboardView();
+  const [dashboard, rentalOverview, bcInvoices] = await Promise.all([
+    getFinancialDashboardView(),
+    getAssetsOverviewView(),
+    getInvoiceRegisterView({ source: "business_central", page: 1, pageSize: 12 }),
+  ]);
 
   return (
     <div className="space-y-2">
@@ -39,9 +47,19 @@ export default async function FinancialPage() {
             sub: formatCurrency(dashboard.metrics.uninvoicedCommercialAmount),
           },
           {
-            label: "Open AR",
+            label: "App open AR",
             value: dashboard.metrics.openArInvoices,
             sub: formatCurrency(dashboard.metrics.openArBalance),
+          },
+          {
+            label: "BC posted invoices",
+            value: rentalOverview.metrics.bcInvoiceHeaders,
+            sub: "Historical, read-only",
+          },
+          {
+            label: "BC AR ledger",
+            value: rentalOverview.metrics.bcCustomerLedgerEntries,
+            sub: "Required for historical open AR",
           },
           {
             label: "Unapplied receipts",
@@ -114,17 +132,19 @@ export default async function FinancialPage() {
           <div className="grid gap-3">
             <div>
               <div className="mb-2 flex items-center justify-between">
-                <span className="workspace-section-label">AR invoices</span>
+                <span className="workspace-section-label">BC posted invoices</span>
                 <Link href="/ar/invoices" className="text-[var(--brand)]">
                   Open
                 </Link>
               </div>
               <div className="divide-y divide-[var(--line)]">
-                {dashboard.arInvoices.map((invoice) => (
+                {bcInvoices.data.map((invoice) => (
                   <div key={invoice.id} className="flex items-center justify-between py-1.5">
                     <div>
                       <div className="mono text-[0.65rem] text-slate-500">
-                        {invoice.invoiceNumber}
+                        <Link href={`/ar/invoices/${invoice.invoiceNumber}`} className="text-[var(--brand)]">
+                          {invoice.invoiceNumber}
+                        </Link>
                       </div>
                       <div className="text-[0.75rem] text-slate-700">
                         {invoice.customerName}
@@ -132,10 +152,10 @@ export default async function FinancialPage() {
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-slate-900">
-                        {formatCurrency(invoice.balanceAmount)}
+                        {formatCurrency(invoice.totalAmount)}
                       </div>
                       <div className="text-[0.65rem] text-slate-400">
-                        {titleize(invoice.status)} / {formatDate(invoice.dueDate)}
+                        {titleize(invoice.status)} / Balance pending
                       </div>
                     </div>
                   </div>
@@ -163,7 +183,7 @@ export default async function FinancialPage() {
                         {formatCurrency(bill.balanceAmount)}
                       </div>
                       <div className="text-[0.65rem] text-slate-400">
-                        {titleize(bill.status)} / {formatDate(bill.dueDate)}
+                        {titleize(bill.status)} / {bill.dueDate ? formatDate(bill.dueDate) : "No due date"}
                       </div>
                     </div>
                   </div>
@@ -189,7 +209,7 @@ export default async function FinancialPage() {
                   </div>
                   <div className="text-[0.75rem] text-slate-700">{entry.description}</div>
                   <div className="text-[0.65rem] text-slate-400">
-                    {formatDate(entry.entryDate)} / {entry.sourceType ?? "manual"}
+                    {entry.entryDate ? formatDate(entry.entryDate) : "No entry date"} / {entry.sourceType ?? "manual"}
                   </div>
                 </div>
                 <div className="text-right">

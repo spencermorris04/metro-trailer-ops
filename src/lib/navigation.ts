@@ -69,16 +69,10 @@ export const navigationGroups: NavGroup[] = [
     label: "Commercial",
     items: [
       {
-        href: "/contracts",
-        label: "Contracts",
-        description: "Rental agreements, line allocations, invoices, and source lineage",
+        href: "/leases",
+        label: "Leases",
+        description: "Rental agreements, BC order history, invoice exposure, and asset allocations",
         icon: "file-text",
-      },
-      {
-        href: "/commercial-events",
-        label: "Commercial Events",
-        description: "Operational billing events and invoice readiness",
-        icon: "activity",
       },
       {
         href: "/documents",

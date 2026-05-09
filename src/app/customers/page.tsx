@@ -69,8 +69,8 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
         description="Accounts, locations, BC lineage, contract counts, and AR exposure."
         actions={
           <>
-            <WorkspaceLink href="/contracts" className="btn-secondary">
-              Contracts
+            <WorkspaceLink href="/leases" className="btn-secondary">
+              Leases
             </WorkspaceLink>
             <WorkspaceLink href="/ar/invoices" className="btn-secondary">
               AR invoices

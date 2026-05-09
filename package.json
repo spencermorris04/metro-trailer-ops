@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/dashboard-preferences.test.ts src/lib/search-core.test.ts src/lib/server/cache-tags.test.ts src/lib/server/pricing-engine.test.ts src/lib/server/work-orders.lifecycle.test.ts src/lib/server/esign-fields.test.ts src/lib/server/runtime-surface.test.ts src/lib/server/inventory.lifecycle.integration.test.ts src/lib/server/commercial.lifecycle.integration.test.ts src/lib/legacy/tooling.test.ts src/lib/testing/perf-harness.test.ts src/lib/testing/security-audit.test.ts",
+    "test": "tsx --test src/lib/dashboard-preferences.test.ts src/lib/search-core.test.ts src/lib/server/cache-tags.test.ts src/lib/server/pricing-engine.test.ts src/lib/server/work-orders.lifecycle.test.ts src/lib/server/esign-fields.test.ts src/lib/server/runtime-surface.test.ts src/lib/server/rental-history-core.test.ts src/lib/server/rental-history-route-surface.test.ts src/lib/server/inventory.lifecycle.integration.test.ts src/lib/server/commercial.lifecycle.integration.test.ts src/lib/legacy/tooling.test.ts src/lib/testing/perf-harness.test.ts src/lib/testing/security-audit.test.ts",
     "local:db:serve": "tsx scripts/local-db-serve.ts",
     "local:db:start": "tsx scripts/local-db-start.ts",
     "local:db:stop": "tsx scripts/local-db-stop.ts",

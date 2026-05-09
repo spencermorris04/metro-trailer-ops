@@ -27,7 +27,6 @@ const DEFAULT_DATASETS = [
   "posted-rental-invoice",
   "posted-rental-header",
   "posted-rental-line",
-  "rental-ledger-entries",
   "ws-rental-ledger-entries",
   "customer-ledger-entries",
   "gl-entries",

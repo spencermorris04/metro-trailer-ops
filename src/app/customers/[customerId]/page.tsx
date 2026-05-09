@@ -143,7 +143,7 @@ async function CustomerDetailContent({ params }: CustomerDetailPageProps) {
               {detail.contracts.map((contract) => (
                 <tr key={contract.id}>
                   <td>
-                    <WorkspaceLink href={`/contracts/${contract.id}`} className="font-semibold text-[var(--brand)]">
+                    <WorkspaceLink href={`/leases/${contract.id}`} className="font-semibold text-[var(--brand)]">
                       {contract.contractNumber}
                     </WorkspaceLink>
                   </td>
@@ -199,7 +199,7 @@ async function CustomerDetailContent({ params }: CustomerDetailPageProps) {
                     {receipt.receiptNumber}
                   </div>
                   <div className="text-[0.75rem] text-slate-700">
-                    {formatDate(receipt.receiptDate)}
+                    {receipt.receiptDate ? formatDate(receipt.receiptDate) : "No receipt date"}
                   </div>
                 </div>
                 <div className="text-right">

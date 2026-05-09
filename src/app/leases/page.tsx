@@ -6,11 +6,11 @@ import { StatusPill } from "@/components/status-pill";
 import { WorkspaceLink } from "@/components/workspace-link";
 import { ListPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCompactNumber, formatCurrency, formatDate, titleize } from "@/lib/format";
-import { getInvoiceRegisterView, type RentalSourceFilter } from "@/lib/server/platform";
+import { getLeaseRegisterView, type RentalSourceFilter } from "@/lib/server/platform";
 
 export const unstable_instant = { prefetch: "static" };
 
-type ArInvoicesPageProps = {
+type LeasesPageProps = {
   searchParams: Promise<{
     q?: string | string[];
     source?: string | string[];
@@ -37,52 +37,52 @@ function buildHref(
     }
   }
   const query = params.toString();
-  return query ? `/ar/invoices?${query}` : "/ar/invoices";
+  return query ? `/leases?${query}` : "/leases";
 }
 
-export default function ArInvoicesPage({ searchParams }: ArInvoicesPageProps) {
+export default function LeasesPage({ searchParams }: LeasesPageProps) {
   return (
-    <Suspense fallback={<ListPageSkeleton filters={2} metrics={4} columns={8} />}>
-      <ArInvoicesContent searchParams={searchParams} />
+    <Suspense fallback={<ListPageSkeleton filters={2} metrics={4} columns={7} />}>
+      <LeasesContent searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
+async function LeasesContent({ searchParams }: LeasesPageProps) {
   const resolved = await searchParams;
   const filters = {
     q: getParam(resolved.q),
     source: getSource(getParam(resolved.source)),
   };
   const page = Math.max(1, Number(getParam(resolved.page) ?? "1"));
-  const view = await getInvoiceRegisterView({ ...filters, page, pageSize: 50 });
+  const view = await getLeaseRegisterView({ ...filters, page, pageSize: 50 });
   const totalPages = Math.max(1, Math.ceil(view.total / view.pageSize));
 
   return (
     <div className="space-y-2">
       <PageHeader
-        eyebrow="Accounts Receivable"
-        title="Invoices"
-        description="Metro-native AR invoices plus raw BC/RMI posted rental invoice history."
+        eyebrow="Commercial"
+        title="Leases"
+        description="App-native leases plus BC/RMI rental order history grouped by original order number."
         actions={
           <>
             <WorkspaceLink href="/assets" className="btn-secondary">
-              Assets
+              Assets overview
             </WorkspaceLink>
-            <WorkspaceLink href="/leases" className="btn-secondary">
-              Leases
+            <WorkspaceLink href="/ar/invoices" className="btn-secondary">
+              Invoices
             </WorkspaceLink>
           </>
         }
       />
 
       <div className="panel px-3 py-2">
-        <InstantForm className="flex flex-wrap items-end gap-2" action="/ar/invoices">
+        <InstantForm className="flex flex-wrap items-end gap-2" action="/leases">
           <input
             type="text"
             name="q"
             defaultValue={filters.q ?? ""}
-            placeholder="Invoice, order, customer, asset..."
+            placeholder="Lease, order, customer, asset..."
             className="workspace-input w-64"
           />
           <select name="source" defaultValue={filters.source} className="workspace-input w-44">
@@ -93,7 +93,7 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
           <button type="submit" className="btn-primary">
             Apply
           </button>
-          <WorkspaceLink href="/ar/invoices" className="btn-secondary">
+          <WorkspaceLink href="/leases" className="btn-secondary">
             Reset
           </WorkspaceLink>
         </InstantForm>
@@ -101,10 +101,10 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
 
       <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
         {[
-          ["Invoices", formatCompactNumber(view.total)],
-          ["Visible BC", formatCompactNumber(view.data.filter((row) => row.source === "business_central").length)],
-          ["Visible Metro", formatCompactNumber(view.data.filter((row) => row.source === "app").length)],
-          ["BC open AR", "Pending ledger import"],
+          ["Leases", formatCompactNumber(view.total)],
+          ["BC order groups", formatCompactNumber(view.data.filter((row) => row.source === "business_central").length)],
+          ["Metro native", formatCompactNumber(view.data.filter((row) => row.source === "app").length)],
+          ["Line import", view.lineImport.done ? "Complete" : "Running"],
         ].map(([label, value]) => (
           <div key={label} className="bg-white px-3 py-2">
             <p className="workspace-metric-label">{label}</p>
@@ -127,92 +127,67 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
           <table>
             <thead>
               <tr>
-                <th>Invoice</th>
+                <th>Lease</th>
                 <th>Customer</th>
-                <th>Lease/order</th>
-                <th>Status</th>
                 <th>Dates</th>
-                <th>Lines</th>
-                <th>Balance</th>
+                <th>Source</th>
+                <th>Invoices</th>
+                <th>Assets / lines</th>
                 <th>Amount</th>
               </tr>
             </thead>
             <tbody>
               {view.data.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-slate-400">
-                    No invoices match the current scope.
+                  <td colSpan={7} className="text-slate-400">
+                    No leases match the current scope.
                   </td>
                 </tr>
               ) : (
-                view.data.map((invoice) => (
-                  <tr key={`${invoice.source}:${invoice.id}`}>
+                view.data.map((lease) => (
+                  <tr key={`${lease.source}:${lease.id}`}>
                     <td>
                       <WorkspaceLink
-                        href={`/ar/invoices/${invoice.invoiceNumber}`}
+                        href={`/leases/${lease.leaseKey}`}
                         className="font-semibold text-[var(--brand)]"
                       >
-                        {invoice.invoiceNumber}
+                        {lease.leaseKey}
                       </WorkspaceLink>
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
-                        {invoice.source === "business_central" ? "Business Central" : "Metro"}
+                        {lease.source === "business_central" ? "BC order" : "Metro lease"}
                       </span>
                     </td>
                     <td>
-                      {invoice.customerName}
+                      {lease.customerName}
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
-                        {invoice.customerNumber ?? "No customer number"}
+                        {lease.customerNumber ?? "No customer number"}
                       </span>
                     </td>
                     <td>
-                      {invoice.leaseKey ? (
-                        <WorkspaceLink href={`/leases/${invoice.leaseKey}`} className="text-[var(--brand)]">
-                          {invoice.leaseKey}
-                        </WorkspaceLink>
-                      ) : (
-                        "Unassigned"
-                      )}
+                      {lease.firstInvoiceDate ? formatDate(lease.firstInvoiceDate) : "Unknown"}
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
-                        {invoice.previousDocumentType ?? invoice.sourceDocumentType ?? "-"}
+                        {lease.latestInvoiceDate ? formatDate(lease.latestInvoiceDate) : "Open"}
                       </span>
                     </td>
-                    <td><StatusPill label={titleize(invoice.status)} /></td>
                     <td>
-                      {invoice.invoiceDate ? formatDate(invoice.invoiceDate) : "Unknown"}
+                      <StatusPill label={titleize(lease.source.replaceAll("_", " "))} />
+                      <div className="mt-1 text-[0.65rem] text-slate-400">
+                        {lease.sourceDocumentType ?? lease.completeness}
+                      </div>
+                    </td>
+                    <td>{lease.invoiceCount}</td>
+                    <td>
+                      {lease.assetCount} assets
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
-                        Due {invoice.dueDate ? formatDate(invoice.dueDate) : "n/a"}
+                        {lease.lineCount} lines
                       </span>
                     </td>
-                    <td>
-                      {invoice.lineCount}
-                      <br />
-                      <span className="text-[0.65rem] text-slate-400">
-                        {invoice.fixedAssetLineCount} assets
-                      </span>
-                    </td>
-                    <td>
-                      {invoice.balanceAmount === null ? (
-                        <StatusPill label="Pending BC ledger" />
-                      ) : (
-                        formatCurrency(invoice.balanceAmount)
-                      )}
-                    </td>
-                    <td>
-                      <span className="font-semibold text-slate-900">
-                        {formatCurrency(invoice.totalAmount)}
-                      </span>
-                      <br />
-                      <span className="text-[0.65rem] text-slate-400">
-                        {invoice.amountSource === "rmi_lines"
-                          ? "RMI lines"
-                          : invoice.amountSource === "header_payload"
-                            ? "Header payload"
-                            : "Metro invoice"}
-                      </span>
+                    <td className="font-semibold text-slate-900">
+                      {formatCurrency(lease.grossAmount)}
                     </td>
                   </tr>
                 ))
@@ -222,7 +197,7 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
         </div>
         <div className="flex items-center justify-between border-t border-[var(--line)] px-3 py-1.5">
           <span className="text-[0.7rem] text-slate-400">
-            BC balances are not treated as open AR until customer ledger entries are imported.
+            BC balances stay pending until customer ledger import is available.
           </span>
           <div className="flex gap-1.5">
             <WorkspaceLink

@@ -7,7 +7,7 @@ import { StatusPill } from "@/components/status-pill";
 import { WorkspaceLink } from "@/components/workspace-link";
 import { DetailPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
-import { getAssetDetailView } from "@/lib/server/platform";
+import { getAssetDetailView, getAssetRentalDetailView } from "@/lib/server/platform";
 
 export const unstable_instant = { prefetch: "static" };
 
@@ -27,7 +27,10 @@ export default function AssetDetailPage({ params }: AssetDetailPageProps) {
 
 async function AssetDetailContent({ params }: AssetDetailPageProps) {
   const { assetId } = await params;
-  const detail = await getAssetDetailView(assetId);
+  const [detail, rentalHistory] = await Promise.all([
+    getAssetDetailView(assetId),
+    getAssetRentalDetailView(assetId),
+  ]);
 
   if (!detail) {
     notFound();
@@ -46,8 +49,11 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
             <WorkspaceLink href="/assets" className="btn-secondary">
               Back to assets
             </WorkspaceLink>
-            <WorkspaceLink href="/contracts" className="btn-secondary">
-              Contracts
+            <WorkspaceLink href="/assets/fleet" className="btn-secondary">
+              Fleet
+            </WorkspaceLink>
+            <WorkspaceLink href="/leases" className="btn-secondary">
+              Leases
             </WorkspaceLink>
           </>
         }
@@ -147,6 +153,173 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
         </SectionCard>
       </div>
 
+      {rentalHistory ? (
+        <>
+          <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
+            {[
+              ["BC invoice lines", rentalHistory.summary.invoiceLineCount],
+              ["BC invoices", rentalHistory.summary.invoiceCount],
+              ["BC leases", rentalHistory.summary.leaseCount],
+              ["BC revenue", formatCurrency(rentalHistory.summary.grossAmount)],
+            ].map(([label, value]) => (
+              <div key={label} className="bg-white px-3 py-2">
+                <p className="workspace-metric-label">{label}</p>
+                <p className="text-base font-semibold text-slate-900">
+                  {typeof value === "number" ? value : value}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-2 xl:grid-cols-2">
+            <SectionCard
+              eyebrow="BC/RMI"
+              title="Imported invoice history"
+              description="Posted invoice lines matched by Fixed Asset item number."
+            >
+              <div className="data-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Invoice</th>
+                      <th>Lease</th>
+                      <th>Customer</th>
+                      <th>Period</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rentalHistory.recentLines.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="text-slate-400">
+                          No imported BC invoice lines are attached to this asset yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      rentalHistory.recentLines.slice(0, 12).map((line) => (
+                        <tr key={line.id}>
+                          <td>
+                            <WorkspaceLink
+                              href={`/ar/invoices/${line.invoiceNumber}`}
+                              className="font-semibold text-[var(--brand)]"
+                            >
+                              {line.invoiceNumber}
+                            </WorkspaceLink>
+                            <br />
+                            <span className="text-[0.65rem] text-slate-400">
+                              Line {line.lineNo}
+                            </span>
+                          </td>
+                          <td>
+                            {line.leaseKey ? (
+                              <WorkspaceLink
+                                href={`/leases/${line.leaseKey}`}
+                                className="text-[var(--brand)]"
+                              >
+                                {line.leaseKey}
+                              </WorkspaceLink>
+                            ) : (
+                              "Unassigned"
+                            )}
+                          </td>
+                          <td>
+                            {line.customerName ?? line.customerNumber ?? "Unknown"}
+                          </td>
+                          <td>
+                            {line.invoiceFromDate ? formatDate(line.invoiceFromDate) : "Unknown"}
+                            <br />
+                            <span className="text-[0.65rem] text-slate-400">
+                              {line.invoiceThruDate ? formatDate(line.invoiceThruDate) : "Open"}
+                            </span>
+                          </td>
+                          <td className="font-semibold text-slate-900">
+                            {formatCurrency(line.grossAmount)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              eyebrow="Revenue"
+              title="Recent revenue by month"
+              description="Summed from imported RMI posted rental lines."
+            >
+              <div className="divide-y divide-[var(--line)]">
+                {rentalHistory.revenueByMonth.slice(0, 12).map((row) => (
+                  <div key={row.month} className="flex items-center justify-between py-1.5">
+                    <div>
+                      <div className="font-semibold text-slate-900">
+                        {row.month ? formatDate(row.month) : "Unknown"}
+                      </div>
+                      <div className="text-[0.65rem] text-slate-400">
+                        {row.invoiceCount} invoices / {row.lineCount} lines
+                      </div>
+                    </div>
+                    <div className="font-semibold text-slate-900">
+                      {formatCurrency(row.grossAmount)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          </div>
+
+          <SectionCard eyebrow="Leases" title="Imported BC/RMI leases for this asset">
+            <div className="data-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Lease</th>
+                    <th>Customer</th>
+                    <th>Invoices</th>
+                    <th>Period</th>
+                    <th>Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rentalHistory.leases.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="text-slate-400">
+                        No imported lease/order history is attached to this asset yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    rentalHistory.leases.map((lease) => (
+                      <tr key={lease.leaseKey}>
+                        <td>
+                          <WorkspaceLink
+                            href={`/leases/${lease.leaseKey}`}
+                            className="font-semibold text-[var(--brand)]"
+                          >
+                            {lease.leaseKey}
+                          </WorkspaceLink>
+                        </td>
+                        <td>{lease.customerName ?? lease.customerNumber ?? "Unknown"}</td>
+                        <td>{lease.invoiceCount}</td>
+                        <td>
+                          {lease.firstPeriod ? formatDate(lease.firstPeriod) : "Unknown"}
+                          <br />
+                          <span className="text-[0.65rem] text-slate-400">
+                            {lease.lastPeriod ? formatDate(lease.lastPeriod) : "Open"}
+                          </span>
+                        </td>
+                        <td className="font-semibold text-slate-900">
+                          {formatCurrency(lease.grossAmount)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+        </>
+      ) : null}
+
       <SectionCard eyebrow="History" title="Contract history">
         <div className="data-table">
           <table>
@@ -162,14 +335,14 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
               {detail.contractHistory.map((contract) => (
                 <tr key={contract.contractId}>
                   <td>
-                    <WorkspaceLink href={`/contracts/${contract.contractId}`} className="font-semibold text-[var(--brand)]">
+                    <WorkspaceLink href={`/leases/${contract.contractId}`} className="font-semibold text-[var(--brand)]">
                       {contract.contractNumber}
                     </WorkspaceLink>
                   </td>
                   <td>{contract.customerName}</td>
                   <td><StatusPill label={titleize(contract.status)} /></td>
                   <td>
-                    {formatDate(contract.startDate)}
+                    {contract.startDate ? formatDate(contract.startDate) : "No start date"}
                     <br />
                     <span className="text-[0.65rem] text-slate-400">
                       {contract.endDate ? formatDate(contract.endDate) : "Open"}
@@ -197,7 +370,7 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
                   </div>
                 </div>
                 <div className="text-right text-[0.65rem] text-slate-400">
-                  <div>{formatDate(inspection.completedAt)}</div>
+                  <div>{inspection.completedAt ? formatDate(inspection.completedAt) : "Not completed"}</div>
                   <div>Damage {inspection.damageScore ?? "-"}</div>
                 </div>
               </div>
@@ -214,7 +387,7 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
                     {workOrder.title}
                   </div>
                   <div className="text-[0.65rem] text-slate-400">
-                    {titleize(workOrder.priority)} / {workOrder.billableDisposition ?? "No disposition"}
+                    {workOrder.priority ? titleize(workOrder.priority) : "No priority"} / {workOrder.billableDisposition ?? "No disposition"}
                   </div>
                 </div>
                 <div className="text-right">

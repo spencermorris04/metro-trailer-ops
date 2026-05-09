@@ -1272,6 +1272,7 @@ export const bcRmiPostedRentalLines = pgTable(
       table.previousNo,
     ),
     assetIdx: index("bc_rmi_prl_asset_idx").on(table.type, table.itemNo),
+    postingDateIdx: index("bc_rmi_prl_posting_date_idx").on(table.postingDate),
   }),
 );
 
@@ -1388,6 +1389,8 @@ export const bcRmiPostedRentalInvoiceHeaders = pgTable(
       table.documentType,
       table.documentNo,
     ),
+    customerIdx: index("bc_rmi_inv_hdr_customer_idx").on(table.billToCustomerNo),
+    postingDateIdx: index("bc_rmi_inv_hdr_posting_date_idx").on(table.postingDate),
     previousIdx: index("bc_rmi_inv_hdr_previous_idx").on(
       table.previousDocType,
       table.previousNo,

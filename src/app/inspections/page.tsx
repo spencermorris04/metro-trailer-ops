@@ -43,7 +43,7 @@ export default async function InspectionsPage() {
                   <td className="text-slate-700">{inspection.inspectionType}</td>
                   <td className="text-slate-600">
                     {inspection.contractNumber ? (
-                      <Link href={`/contracts/${inspection.contractNumber}`} className="text-[var(--brand)]">
+                      <Link href={`/leases/${inspection.contractNumber}`} className="text-[var(--brand)]">
                         {inspection.contractNumber}
                       </Link>
                     ) : (

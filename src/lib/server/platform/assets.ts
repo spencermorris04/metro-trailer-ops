@@ -228,7 +228,7 @@ export async function getInventoryOverview() {
     {
       key: "turns",
       title: "Upcoming turns",
-      href: "/contracts",
+      href: "/leases",
       count: turningSoonCount,
       assets: [],
     },

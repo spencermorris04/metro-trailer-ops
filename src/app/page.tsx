@@ -603,7 +603,7 @@ async function HomeDashboard() {
       </WidgetFrame>
     ),
     contracts: (
-      <WidgetFrame title="Contracts" href="/contracts" wide>
+      <WidgetFrame title="Leases" href="/leases" wide>
         <div className="grid grid-cols-4 gap-px overflow-hidden border border-[var(--line)] bg-[var(--line)]">
           {[
             ["Awaiting signature", financial.metrics.awaitingSignature],

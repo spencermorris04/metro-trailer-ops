@@ -18,6 +18,16 @@ const entityLabels: Record<string, { type: string; source: string; badge?: strin
   customer: { type: "Customer", source: "customers" },
   contract: { type: "Contract", source: "contracts" },
   invoice: { type: "Invoice", source: "invoices" },
+  bc_rmi_invoice: {
+    type: "BC Invoice",
+    source: "business_central",
+    badge: "RMI invoice",
+  },
+  bc_rmi_lease: {
+    type: "BC Lease",
+    source: "business_central",
+    badge: "RMI order",
+  },
   work_order: { type: "Work Order", source: "work_orders" },
   inspection: { type: "Inspection", source: "inspections" },
   bc_source_document: { type: "BC Source", source: "business_central" },
@@ -143,7 +153,7 @@ export async function rebuildGlobalSearchIndex() {
       c.id,
       c.contract_number,
       concat_ws(' / ', cust.name, b.code, c.source_document_no),
-      '/contracts/' || c.id,
+      '/leases/' || c.id,
       c.branch_id,
       concat_ws(' ', c.contract_number, cust.name, cust.customer_number, b.code, b.name, c.source_document_no),
       jsonb_build_array(c.contract_number, cust.customer_number, b.code),
@@ -169,7 +179,7 @@ export async function rebuildGlobalSearchIndex() {
       i.id,
       i.invoice_number,
       concat_ws(' / ', cust.name, ct.contract_number, b.code),
-      '/ar/invoices?q=' || i.invoice_number,
+      '/ar/invoices/' || i.invoice_number,
       ct.branch_id,
       concat_ws(' ', i.invoice_number, cust.name, cust.customer_number, ct.contract_number, b.code, i.source_document_no),
       jsonb_build_array(i.invoice_number, cust.customer_number, ct.contract_number),
@@ -254,6 +264,59 @@ export async function rebuildGlobalSearchIndex() {
       jsonb_build_array(document_no, external_document_id, customer_external_id),
       imported_at
     FROM bc_source_documents
+    ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+      title = excluded.title,
+      subtitle = excluded.subtitle,
+      href = excluded.href,
+      branch_id = excluded.branch_id,
+      search_text = excluded.search_text,
+      keywords = excluded.keywords,
+      updated_at = excluded.updated_at
+  `);
+
+  await upsertFromSelect(`
+    INSERT INTO global_search_documents (id, entity_type, entity_id, title, subtitle, href, branch_id, search_text, keywords, updated_at)
+    SELECT
+      'bc_rmi_invoice:' || h.id,
+      'bc_rmi_invoice',
+      h.id,
+      h.document_no,
+      concat_ws(' / ', h.document_type, coalesce(c.name, h.bill_to_customer_no), h.previous_no),
+      '/ar/invoices/' || h.document_no,
+      null,
+      concat_ws(' ', h.document_no, h.previous_no, h.bill_to_customer_no, h.sell_to_customer_no, coalesce(c.name, ''), h.external_document_no, h.document_type),
+      jsonb_build_array(h.document_no, h.previous_no, h.bill_to_customer_no),
+      h.imported_at
+    FROM bc_rmi_posted_rental_invoice_headers h
+    LEFT JOIN customers c ON c.customer_number = h.bill_to_customer_no
+    ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+      title = excluded.title,
+      subtitle = excluded.subtitle,
+      href = excluded.href,
+      branch_id = excluded.branch_id,
+      search_text = excluded.search_text,
+      keywords = excluded.keywords,
+      updated_at = excluded.updated_at
+  `);
+
+  await upsertFromSelect(`
+    INSERT INTO global_search_documents (id, entity_type, entity_id, title, subtitle, href, branch_id, search_text, keywords, updated_at)
+    SELECT
+      'bc_rmi_lease:' || h.previous_no,
+      'bc_rmi_lease',
+      h.previous_no,
+      h.previous_no,
+      concat_ws(' / ', 'RMI order', (array_agg(coalesce(c.name, h.bill_to_customer_no) order by h.posting_date desc nulls last))[1], count(distinct h.document_no)::text || ' invoices'),
+      '/leases/' || h.previous_no,
+      null,
+      concat_ws(' ', h.previous_no, string_agg(distinct h.document_no, ' '), string_agg(distinct coalesce(h.bill_to_customer_no, ''), ' '), string_agg(distinct coalesce(c.name, ''), ' ')),
+      jsonb_build_array(h.previous_no),
+      max(h.imported_at)
+    FROM bc_rmi_posted_rental_invoice_headers h
+    LEFT JOIN customers c ON c.customer_number = h.bill_to_customer_no
+    WHERE h.previous_doc_type = 'Order'
+      AND h.previous_no IS NOT NULL
+    GROUP BY h.previous_no
     ON CONFLICT (entity_type, entity_id) DO UPDATE SET
       title = excluded.title,
       subtitle = excluded.subtitle,

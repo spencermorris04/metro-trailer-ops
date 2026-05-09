@@ -10,6 +10,7 @@ export * from "./platform/integrations";
 export * from "./platform/payments";
 export * from "./platform/portal";
 export * from "./platform/reports";
+export * from "./platform/rental-history";
 export * from "./platform/telematics";
 export * from "./platform/work-orders";
 export * from "./platform/v1";

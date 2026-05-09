@@ -46,7 +46,7 @@ export default async function DispatchPage() {
                   <td className="text-slate-600">
                     {task.contractNumber ? (
                       <>
-                        <Link href={`/contracts/${task.contractNumber}`} className="font-semibold text-[var(--brand)]">
+                        <Link href={`/leases/${task.contractNumber}`} className="font-semibold text-[var(--brand)]">
                           {task.contractNumber}
                         </Link>
                         <br />

@@ -21,13 +21,17 @@ function byType(results: GlobalSearchResult[], type: string) {
 
 function businessCentralDocuments(results: GlobalSearchResult[]) {
   return results.filter(
-    (result) => result.source === "business_central" && result.type === "BC Source",
+    (result) =>
+      result.source === "business_central" &&
+      ["BC Source", "BC Invoice", "BC Lease"].includes(result.type),
   );
 }
 
 function ledgerKeys(results: GlobalSearchResult[]) {
   return results.filter(
-    (result) => result.source === "business_central" && result.type !== "BC Source",
+    (result) =>
+      result.source === "business_central" &&
+      !["BC Source", "BC Invoice", "BC Lease"].includes(result.type),
   );
 }
 
