@@ -21,6 +21,7 @@ type Options = {
 
 const API_BASE_URL = "https://api.businesscentral.dynamics.com/v2.0";
 const DEFAULT_DATASETS = [
+  "customer-card",
   "chart-of-accounts",
   "dimension-sets",
   "dimension-set-entries",
@@ -33,6 +34,40 @@ const DEFAULT_DATASETS = [
 ] as const;
 
 const DATASETS: DatasetConfig[] = [
+  {
+    key: "customer-card",
+    serviceName: "CustomerCard",
+    tableName: "bc_customer_cards",
+    description: "Business Central customer card records with RMI customer metadata.",
+    map: (row, runId) => {
+      const customerNo = text(row, "No");
+      if (!customerNo) return null;
+      return {
+        id: `bccustcard:${customerNo}`,
+        run_id: runId,
+        customer_no: customerNo,
+        name: text(row, "Name") || "Unknown Customer",
+        customer_type: text(row, "Customer_Type"),
+        parent_no: text(row, "Parent_No"),
+        parent_name: text(row, "Parent_Name"),
+        blocked: text(row, "Blocked"),
+        responsibility_center: text(row, "Responsibility_Center"),
+        salesperson_code: text(row, "Salesperson_Code"),
+        default_sales_team: text(row, "RMI_Default_Sales_Team"),
+        default_deal_code: text(row, "RMI_Default_Deal_Code"),
+        damage_waiver_declined: bool(row, "RMI_Damage_Waiver_Declined"),
+        insurance_cert_required: bool(row, "RMI_Insurance_Cert_Required"),
+        insurance_expiration_date: dateText(row, "RMI_Insurance_Expiration_Date"),
+        insurance_policy_no: text(row, "RMI_Insurance_Policy_No"),
+        registration_number: text(row, "Registration_Number"),
+        balance_lcy: numeric(row, "Balance_LCY"),
+        balance_due_lcy: numeric(row, "Balance_Due_LCY"),
+        credit_limit_lcy: numeric(row, "Credit_Limit_LCY"),
+        source_payload: row,
+        imported_at: new Date(),
+      };
+    },
+  },
   {
     key: "posted-rental-invoice",
     serviceName: "Posted_Rental_Invoice_Excel",
