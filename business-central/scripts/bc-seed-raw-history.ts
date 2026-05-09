@@ -391,6 +391,17 @@ async function seedDataset(
     ? await loadCheckpoint(pool, checkpointId, dataset.serviceName, options.pageSize)
     : null;
 
+  if (checkpoint?.done) {
+    console.log(
+      `[${dataset.key}] already completed, seen ${checkpoint.recordsSeen}/${total ?? "unknown"}; skipping`,
+    );
+    await pool.query(
+      `update bc_import_runs set status = 'succeeded', finished_at = now(), records_seen = $2, records_inserted = 0, metadata = coalesce(metadata, '{}'::jsonb) || $3::jsonb where id = $1`,
+      [runId, checkpoint.recordsSeen, JSON.stringify({ total, skippedCompletedCheckpoint: true })],
+    );
+    return;
+  }
+
   let nextUrl =
     checkpoint?.nextUrl ??
     buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, 0);
@@ -408,14 +419,15 @@ async function seedDataset(
     const mappedRows = sourceRows
       .map((row) => dataset.map(row, runId))
       .filter((row): row is Row => Boolean(row));
+    const dedupedRows = dedupeRowsById(mappedRows);
 
-    if (mappedRows.length > 0) {
-      await bulkUpsert(pool, dataset.tableName, mappedRows);
+    if (dedupedRows.length > 0) {
+      await bulkUpsert(pool, dataset.tableName, dedupedRows);
     }
 
     pageNumber += 1;
     recordsSeen += sourceRows.length;
-    recordsInserted += mappedRows.length;
+    recordsInserted += dedupedRows.length;
 
     const odataNext = page["@odata.nextLink"];
     if (typeof odataNext === "string" && odataNext.trim()) {
@@ -465,6 +477,22 @@ async function seedDataset(
   );
 }
 
+function dedupeRowsById(rows: Row[]) {
+  const rowsById = new Map<string, Row>();
+  let generatedFallbackIds = 0;
+  for (const row of rows) {
+    const id = row.id;
+    if (typeof id === "string" && id.trim()) {
+      rowsById.set(id, row);
+      continue;
+    }
+
+    generatedFallbackIds += 1;
+    rowsById.set(`__missing_id_${generatedFallbackIds}`, row);
+  }
+  return [...rowsById.values()];
+}
+
 async function loadCheckpoint(
   pool: Pool,
   id: string,
@@ -480,7 +508,7 @@ async function loadCheckpoint(
     [id],
   );
   const row = result.rows[0];
-  if (!row || row.checkpoint_data?.done) return null;
+  if (!row) return null;
   if (row.checkpoint_data?.serviceName !== serviceName || row.checkpoint_data?.pageSize !== pageSize) {
     return null;
   }
@@ -488,6 +516,7 @@ async function loadCheckpoint(
     pageNumber: row.page_number,
     nextUrl: row.cursor || null,
     recordsSeen: Number(row.checkpoint_data?.recordsSeen ?? 0),
+    done: Boolean(row.checkpoint_data?.done),
   };
 }
 
