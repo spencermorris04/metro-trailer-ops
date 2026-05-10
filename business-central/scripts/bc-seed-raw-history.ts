@@ -17,6 +17,10 @@ type Options = {
   pageSize: number;
   maxPages: number | null;
   resume: boolean;
+  concurrency: number;
+  maxRetries: number;
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
 };
 
 const API_BASE_URL = "https://api.businesscentral.dynamics.com/v2.0";
@@ -351,6 +355,10 @@ function parseArgs(argv: string[]): Options {
     pageSize: 1000,
     maxPages: null,
     resume: true,
+    concurrency: positiveInt(process.env.BC_RAW_HISTORY_CONCURRENCY || "1", "BC_RAW_HISTORY_CONCURRENCY"),
+    maxRetries: positiveInt(process.env.BC_RAW_HISTORY_MAX_RETRIES || "8", "BC_RAW_HISTORY_MAX_RETRIES"),
+    retryBaseDelayMs: positiveInt(process.env.BC_RAW_HISTORY_RETRY_BASE_DELAY_MS || "2000", "BC_RAW_HISTORY_RETRY_BASE_DELAY_MS"),
+    retryMaxDelayMs: positiveInt(process.env.BC_RAW_HISTORY_RETRY_MAX_DELAY_MS || "120000", "BC_RAW_HISTORY_RETRY_MAX_DELAY_MS"),
   };
 
   for (const arg of argv) {
@@ -374,6 +382,22 @@ function parseArgs(argv: string[]): Options {
       options.resume = false;
       continue;
     }
+    if (arg.startsWith("--concurrency=")) {
+      options.concurrency = positiveInt(arg.slice("--concurrency=".length), "--concurrency");
+      continue;
+    }
+    if (arg.startsWith("--max-retries=")) {
+      options.maxRetries = positiveInt(arg.slice("--max-retries=".length), "--max-retries");
+      continue;
+    }
+    if (arg.startsWith("--retry-base-delay-ms=")) {
+      options.retryBaseDelayMs = positiveInt(arg.slice("--retry-base-delay-ms=".length), "--retry-base-delay-ms");
+      continue;
+    }
+    if (arg.startsWith("--retry-max-delay-ms=")) {
+      options.retryMaxDelayMs = positiveInt(arg.slice("--retry-max-delay-ms=".length), "--retry-max-delay-ms");
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -384,7 +408,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const pool = new Pool({
     connectionString: normalizePostgresConnectionString(requireEnv("DATABASE_URL")),
-    max: Number(process.env.DATABASE_POOL_MAX || 2),
+    max: Math.max(Number(process.env.DATABASE_POOL_MAX || 2), options.concurrency + 1),
   });
 
   try {
@@ -418,7 +442,17 @@ async function seedDataset(
     `insert into bc_import_runs (id, provider, entity_type, status, started_at, records_seen, records_inserted, records_updated, records_skipped, records_failed, job_version, metadata)
      values ($1, 'business_central', $2, 'running', now(), 0, 0, 0, 0, 0, $3, $4)
      on conflict (id) do update set status = 'running', started_at = now(), metadata = excluded.metadata`,
-    [runId, `raw:${dataset.key}`, "bc-seed-raw-history:v1", JSON.stringify({ total, serviceName: dataset.serviceName })],
+    [
+      runId,
+      `raw:${dataset.key}`,
+      "bc-seed-raw-history:v2",
+      JSON.stringify({
+        total,
+        serviceName: dataset.serviceName,
+        concurrency: options.concurrency,
+        maxRetries: options.maxRetries,
+      }),
+    ],
   );
 
   const checkpoint = options.resume
@@ -436,79 +470,124 @@ async function seedDataset(
     return;
   }
 
-  let nextUrl =
-    checkpoint?.nextUrl ??
-    buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, 0);
   let pageNumber = checkpoint?.pageNumber ?? 0;
   let recordsSeen = checkpoint?.recordsSeen ?? 0;
   let recordsInserted = 0;
+  const startedAtPage = pageNumber;
+  const totalPages = total === null ? null : Math.ceil(total / options.pageSize);
 
   console.log(
-    `[${dataset.key}] starting at page ${pageNumber}, seen ${recordsSeen}/${total ?? "unknown"}`,
+    `[${dataset.key}] starting at page ${pageNumber}, seen ${recordsSeen}/${total ?? "unknown"}, concurrency ${options.concurrency}`,
   );
 
-  while (nextUrl) {
-    const page = await fetchJsonWithRefresh(nextUrl, tokenState);
-    const sourceRows = normalizeRows(page.value);
-    const mappedRows = sourceRows
-      .map((row) => dataset.map(row, runId))
-      .filter((row): row is Row => Boolean(row));
-    const dedupedRows = dedupeRowsById(mappedRows);
+  try {
+    while (true) {
+      const requestedPageLimit =
+        options.maxPages === null ? options.concurrency : startedAtPage + options.maxPages - pageNumber;
+      const remainingKnownPages = totalPages === null ? options.concurrency : totalPages - pageNumber;
+      const batchSize = Math.min(options.concurrency, requestedPageLimit, remainingKnownPages);
+      if (batchSize <= 0) break;
 
-    if (dedupedRows.length > 0) {
-      await bulkUpsert(pool, dataset.tableName, dedupedRows);
-    }
-
-    pageNumber += 1;
-    recordsSeen += sourceRows.length;
-    recordsInserted += dedupedRows.length;
-
-    const odataNext = page["@odata.nextLink"];
-    if (typeof odataNext === "string" && odataNext.trim()) {
-      nextUrl = odataNext;
-    } else if (sourceRows.length === options.pageSize) {
-      nextUrl = buildODataCollectionUrl(
-        dataset.serviceName,
-        options.pageSize,
-        company,
-        pageNumber * options.pageSize,
+      const batchStartPage = pageNumber;
+      const batchPageNumbers = Array.from({ length: batchSize }, (_, index) => batchStartPage + index);
+      const batchResults = await Promise.all(
+        batchPageNumbers.map((currentPageNumber) =>
+          processPage(pool, tokenState, dataset, options, company, runId, currentPageNumber),
+        ),
       );
-    } else {
-      nextUrl = "";
+
+      let reachedEnd = false;
+      for (const result of batchResults.sort((a, b) => a.pageNumber - b.pageNumber)) {
+        pageNumber = result.pageNumber + 1;
+        recordsSeen += result.sourceRowCount;
+        recordsInserted += result.upsertedRowCount;
+        if (result.sourceRowCount < options.pageSize) reachedEnd = true;
+        console.log(
+          `[${dataset.key}] page ${pageNumber}, seen ${recordsSeen}/${total ?? "unknown"}, upserted ${recordsInserted}`,
+        );
+      }
+
+      const stoppedAtPageLimit =
+        options.maxPages !== null && pageNumber >= startedAtPage + options.maxPages && !reachedEnd;
+      const done = reachedEnd || (totalPages !== null && pageNumber >= totalPages);
+      const nextUrl = done || stoppedAtPageLimit
+        ? ""
+        : buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, pageNumber * options.pageSize);
+      await saveCheckpoint(pool, {
+        id: checkpointId,
+        runId,
+        entityType: `raw:${dataset.key}`,
+        serviceName: dataset.serviceName,
+        pageSize: options.pageSize,
+        pageNumber,
+        nextUrl,
+        recordsSeen,
+        total,
+        done: done && !stoppedAtPageLimit,
+      });
+      await pool.query(
+        `update bc_import_runs set records_seen = $2, records_inserted = $3, updated_at = now(), metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
+        [runId, recordsSeen, recordsInserted, JSON.stringify({ total, pageNumber })],
+      );
+
+      if (done || stoppedAtPageLimit) break;
     }
 
-    const stoppedAtPageLimit =
-      options.maxPages !== null && pageNumber >= (checkpoint?.pageNumber ?? 0) + options.maxPages && Boolean(nextUrl);
-    if (stoppedAtPageLimit) {
-      nextUrl = "";
-    }
-
-    await saveCheckpoint(pool, {
-      id: checkpointId,
-      runId,
-      entityType: `raw:${dataset.key}`,
-      serviceName: dataset.serviceName,
-      pageSize: options.pageSize,
-      pageNumber,
-      nextUrl,
-      recordsSeen,
-      total,
-      done: !nextUrl && !stoppedAtPageLimit,
-    });
     await pool.query(
-      `update bc_import_runs set records_seen = $2, records_inserted = $3, metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
-      [runId, recordsSeen, recordsInserted, JSON.stringify({ total, pageNumber })],
+      `update bc_import_runs set status = 'succeeded', finished_at = now(), records_seen = $2, records_inserted = $3, updated_at = now(), metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
+      [runId, recordsSeen, recordsInserted, JSON.stringify({ total, completedAt: new Date().toISOString() })],
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await pool.query(
+      `update bc_import_runs
+       set status = 'failed',
+           finished_at = now(),
+           records_seen = $2,
+           records_inserted = $3,
+           records_failed = records_failed + 1,
+           error_summary = $4,
+           updated_at = now(),
+           metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
+       where id = $1`,
+      [
+        runId,
+        recordsSeen,
+        recordsInserted,
+        message.slice(0, 2048),
+        JSON.stringify({ total, pageNumber, failedAt: new Date().toISOString() }),
+      ],
+    );
+    throw error;
+  }
+}
 
-    console.log(
-      `[${dataset.key}] page ${pageNumber}, seen ${recordsSeen}/${total ?? "unknown"}, upserted ${recordsInserted}`,
-    );
+async function processPage(
+  pool: Pool,
+  tokenState: { value: string },
+  dataset: DatasetConfig,
+  options: Options,
+  company: string,
+  runId: string,
+  pageNumber: number,
+) {
+  const url = buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, pageNumber * options.pageSize);
+  const page = await fetchJsonWithRefresh(url, tokenState, options);
+  const sourceRows = normalizeRows(page.value);
+  const mappedRows = sourceRows
+    .map((row) => dataset.map(row, runId))
+    .filter((row): row is Row => Boolean(row));
+  const dedupedRows = dedupeRowsById(mappedRows);
+
+  if (dedupedRows.length > 0) {
+    await bulkUpsert(pool, dataset.tableName, dedupedRows);
   }
 
-  await pool.query(
-    `update bc_import_runs set status = 'succeeded', finished_at = now(), records_seen = $2, records_inserted = $3, metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
-    [runId, recordsSeen, recordsInserted, JSON.stringify({ total, completedAt: new Date().toISOString() })],
-  );
+  return {
+    pageNumber,
+    sourceRowCount: sourceRows.length,
+    upsertedRowCount: dedupedRows.length,
+  };
 }
 
 function dedupeRowsById(rows: Row[]) {
@@ -635,21 +714,39 @@ async function getAccessToken() {
   return payload.access_token;
 }
 
-async function fetchJsonWithRefresh(url: string, tokenState: { value: string }) {
-  let response = await fetch(url, {
-    headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
-  });
-  if (response.status === 401) {
-    tokenState.value = await getAccessToken();
-    response = await fetch(url, {
-      headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
-    });
+async function fetchJsonWithRefresh(url: string, tokenState: { value: string }, options: Options) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= options.maxRetries; attempt += 1) {
+    try {
+      let response = await fetch(url, {
+        headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
+      });
+      if (response.status === 401) {
+        tokenState.value = await getAccessToken();
+        response = await fetch(url, {
+          headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
+        });
+      }
+      const textBody = await response.text();
+      if (response.ok) {
+        return JSON.parse(textBody) as Record<string, unknown>;
+      }
+      if (!isRetryableHttpStatus(response.status) || attempt >= options.maxRetries) {
+        throw new Error(`BC request failed ${response.status}: ${textBody.slice(0, 500)}`);
+      }
+      const retryAfterMs = retryAfterHeaderMs(response.headers.get("retry-after"));
+      const delayMs = retryAfterMs ?? computeBackoffMs(attempt, options);
+      console.warn(`BC request failed ${response.status}; retrying in ${delayMs}ms (attempt ${attempt + 1}/${options.maxRetries})`);
+      await sleep(delayMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= options.maxRetries) break;
+      const delayMs = computeBackoffMs(attempt, options);
+      console.warn(`BC request error; retrying in ${delayMs}ms (attempt ${attempt + 1}/${options.maxRetries}): ${error instanceof Error ? error.message : String(error)}`);
+      await sleep(delayMs);
+    }
   }
-  const textBody = await response.text();
-  if (!response.ok) {
-    throw new Error(`BC request failed ${response.status}: ${textBody.slice(0, 500)}`);
-  }
-  return JSON.parse(textBody) as Record<string, unknown>;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function fetchODataCount(tokenState: { value: string }, serviceName: string, company: string) {
@@ -701,6 +798,29 @@ function positiveInt(value: string, flag: string) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${flag} must be a positive integer.`);
   return parsed;
+}
+
+function isRetryableHttpStatus(status: number) {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function retryAfterHeaderMs(value: string | null) {
+  if (!value) return null;
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
+
+function computeBackoffMs(attempt: number, options: Options) {
+  const exponential = options.retryBaseDelayMs * 2 ** attempt;
+  const jitter = Math.floor(Math.random() * options.retryBaseDelayMs);
+  return Math.min(options.retryMaxDelayMs, exponential + jitter);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function quoteIdent(identifier: string) {

@@ -207,6 +207,8 @@ function buildCommands(request: SyncRequest): string[][] {
           "--",
           `--datasets=${process.env.BC_RAW_HISTORY_DATASETS ?? "all"}`,
           `--page-size=${process.env.BC_RAW_HISTORY_PAGE_SIZE ?? "1000"}`,
+          `--concurrency=${process.env.BC_RAW_HISTORY_CONCURRENCY ?? "1"}`,
+          `--max-retries=${process.env.BC_RAW_HISTORY_MAX_RETRIES ?? "8"}`,
         ],
       ];
     }
