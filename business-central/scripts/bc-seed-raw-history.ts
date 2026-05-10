@@ -21,6 +21,7 @@ type Options = {
   maxRetries: number;
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
+  requestTimeoutMs: number;
 };
 
 const API_BASE_URL = "https://api.businesscentral.dynamics.com/v2.0";
@@ -359,6 +360,7 @@ function parseArgs(argv: string[]): Options {
     maxRetries: positiveInt(process.env.BC_RAW_HISTORY_MAX_RETRIES || "8", "BC_RAW_HISTORY_MAX_RETRIES"),
     retryBaseDelayMs: positiveInt(process.env.BC_RAW_HISTORY_RETRY_BASE_DELAY_MS || "2000", "BC_RAW_HISTORY_RETRY_BASE_DELAY_MS"),
     retryMaxDelayMs: positiveInt(process.env.BC_RAW_HISTORY_RETRY_MAX_DELAY_MS || "120000", "BC_RAW_HISTORY_RETRY_MAX_DELAY_MS"),
+    requestTimeoutMs: positiveInt(process.env.BC_RAW_HISTORY_REQUEST_TIMEOUT_MS || "90000", "BC_RAW_HISTORY_REQUEST_TIMEOUT_MS"),
   };
 
   for (const arg of argv) {
@@ -396,6 +398,10 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg.startsWith("--retry-max-delay-ms=")) {
       options.retryMaxDelayMs = positiveInt(arg.slice("--retry-max-delay-ms=".length), "--retry-max-delay-ms");
+      continue;
+    }
+    if (arg.startsWith("--request-timeout-ms=")) {
+      options.requestTimeoutMs = positiveInt(arg.slice("--request-timeout-ms=".length), "--request-timeout-ms");
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -718,12 +724,12 @@ async function fetchJsonWithRefresh(url: string, tokenState: { value: string }, 
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= options.maxRetries; attempt += 1) {
     try {
-      let response = await fetch(url, {
+      let response = await fetchWithTimeout(url, options.requestTimeoutMs, {
         headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
       });
       if (response.status === 401) {
         tokenState.value = await getAccessToken();
-        response = await fetch(url, {
+        response = await fetchWithTimeout(url, options.requestTimeoutMs, {
           headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
         });
       }
@@ -752,7 +758,7 @@ async function fetchJsonWithRefresh(url: string, tokenState: { value: string }, 
 async function fetchODataCount(tokenState: { value: string }, serviceName: string, company: string) {
   const url = `${getODataRootUrl()}/${serviceName}/$count?company=${encodeURIComponent(company)}`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, positiveInt(process.env.BC_RAW_HISTORY_REQUEST_TIMEOUT_MS || "90000", "BC_RAW_HISTORY_REQUEST_TIMEOUT_MS"), {
       headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
     });
     if (!response.ok) return null;
@@ -761,6 +767,21 @@ async function fetchODataCount(tokenState: { value: string }, serviceName: strin
     return Number.isFinite(parsed) ? parsed : null;
   } catch {
     return null;
+  }
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`BC request timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
