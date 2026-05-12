@@ -38,7 +38,12 @@ export default async function FinancialPage() {
 
       <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
         {[
-          ["Rental revenue", formatCurrency(trailerRevenue.metrics.grossRevenue)],
+          [
+            "Rental revenue",
+            trailerRevenue.rollupsDeferred
+              ? "Deferred"
+              : formatCurrency(trailerRevenue.metrics.grossRevenue),
+          ],
           ["Rental invoices", formatCompactNumber(trailerRevenue.metrics.invoiceCount)],
           ["Equipment billed", formatCompactNumber(trailerRevenue.metrics.equipmentCount)],
           ["Leases/orders", formatCompactNumber(trailerRevenue.metrics.leaseCount)],
@@ -58,6 +63,14 @@ export default async function FinancialPage() {
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[0.75rem] text-amber-900">
           Some BC/RMI accounting aggregates timed out, so this page is showing a safe
           degraded dashboard instead of failing the request.
+        </div>
+      ) : null}
+
+      {trailerRevenue.rollupsDeferred ? (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-[0.75rem] text-sky-900">
+          Detailed revenue rollups are deferred from first paint to avoid scanning millions
+          of BC/RMI lines during page render. Counts and recent invoices are loaded from
+          lightweight source metadata.
         </div>
       ) : null}
 

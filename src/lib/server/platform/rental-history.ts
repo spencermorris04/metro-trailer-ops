@@ -495,10 +495,84 @@ function emptyTrailerRevenueDashboardView() {
       missingDimensionLines: 0,
     },
     degraded: true,
+    rollupsDeferred: false,
   };
 }
 
 export async function getTrailerRevenueDashboardView() {
+  try {
+    const [metrics, recentActivityResult] = await Promise.all([
+      getRentalHistoryMetricSnapshot(),
+      pool.query<{
+        entry_no: string;
+        document_no: string | null;
+        order_no: string | null;
+        equipment_no: string | null;
+        customer_no: string | null;
+        posting_date: Date | null;
+        gross_amount: string | null;
+        deal_code: string | null;
+      }>(
+        `
+          select
+            h.document_no as entry_no,
+            h.document_no,
+            h.previous_no as order_no,
+            null::text as equipment_no,
+            coalesce(h.bill_to_customer_no, h.sell_to_customer_no) as customer_no,
+            h.posting_date,
+            null::numeric as gross_amount,
+            null::text as deal_code
+          from bc_rmi_posted_rental_invoice_headers h
+          order by h.posting_date desc nulls last, h.document_no desc
+          limit 20
+        `,
+      ),
+    ]);
+
+    return {
+      metrics: {
+        grossRevenue: 0,
+        taxAmount: 0,
+        damageWaiverAmount: 0,
+        invoiceCount: metrics.bcInvoiceHeaders,
+        creditMemoCount: metrics.bcCreditMemos,
+        equipmentCount: metrics.totalAssets,
+        leaseCount: metrics.bcDistinctOrderKeys,
+        unmatchedAssetLines: 0,
+      },
+      revenueByMonth: [],
+      revenueByEquipmentType: [],
+      revenueByBranch: [],
+      revenueByCustomer: [],
+      revenueByLease: [],
+      revenueByDealCode: [],
+      arAging: [],
+      recentRentalActivity: recentActivityResult.rows.map((row) => ({
+        entryNo: row.entry_no,
+        documentNo: row.document_no,
+        orderNo: row.order_no,
+        equipmentNo: row.equipment_no,
+        customerNo: row.customer_no,
+        postingDate: toIso(row.posting_date),
+        grossAmount: numericToNumber(row.gross_amount),
+        dealCode: row.deal_code,
+      })),
+      exceptions: {
+        unmatchedAssetLines: 0,
+        unmatchedCustomerInvoices: metrics.bcInvoiceHeadersUnmatchedToCustomers,
+        missingDimensionLines: 0,
+      },
+      degraded: false,
+      rollupsDeferred: true,
+    };
+  } catch (error) {
+    console.error("Failed to load trailer revenue dashboard", error);
+    return emptyTrailerRevenueDashboardView();
+  }
+}
+
+async function getTrailerRevenueDashboardViewBounded() {
   try {
     const [
       metrics,
