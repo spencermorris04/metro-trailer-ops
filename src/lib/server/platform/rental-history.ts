@@ -426,7 +426,338 @@ export async function getEquipmentListView(filters?: Parameters<typeof getAssetL
   };
 }
 
+function emptyTrailerRevenueDashboardView() {
+  return {
+    metrics: {
+      grossRevenue: 0,
+      taxAmount: 0,
+      damageWaiverAmount: 0,
+      invoiceCount: 0,
+      creditMemoCount: 0,
+      equipmentCount: 0,
+      leaseCount: 0,
+      unmatchedAssetLines: 0,
+    },
+    revenueByMonth: [] as Array<{
+      month: string | null;
+      grossRevenue: number;
+      invoiceCount: number;
+      equipmentCount: number;
+    }>,
+    revenueByEquipmentType: [] as Array<{
+      equipmentType: string;
+      grossRevenue: number;
+      lineCount: number;
+      equipmentCount: number;
+    }>,
+    revenueByBranch: [] as Array<{
+      branchCode: string;
+      grossRevenue: number;
+      lineCount: number;
+    }>,
+    revenueByCustomer: [] as Array<{
+      customerNumber: string | null;
+      customerName: string | null;
+      grossRevenue: number;
+      invoiceCount: number;
+    }>,
+    revenueByLease: [] as Array<{
+      leaseKey: string;
+      customerNumber: string | null;
+      customerName: string | null;
+      grossRevenue: number;
+      invoiceCount: number;
+      equipmentCount: number;
+    }>,
+    revenueByDealCode: [] as Array<{
+      dealCode: string;
+      grossRevenue: number;
+      lineCount: number;
+    }>,
+    arAging: [] as Array<{
+      bucket: string;
+      balance: number;
+      entryCount: number;
+    }>,
+    recentRentalActivity: [] as Array<{
+      entryNo: string;
+      documentNo: string | null;
+      orderNo: string | null;
+      equipmentNo: string | null;
+      customerNo: string | null;
+      postingDate: string | null;
+      grossAmount: number;
+      dealCode: string | null;
+    }>,
+    exceptions: {
+      unmatchedAssetLines: 0,
+      unmatchedCustomerInvoices: 0,
+      missingDimensionLines: 0,
+    },
+    degraded: true,
+  };
+}
+
 export async function getTrailerRevenueDashboardView() {
+  try {
+    const [
+      metrics,
+      summaryResult,
+      byMonthResult,
+      byEquipmentTypeResult,
+      byBranchResult,
+      byCustomerResult,
+      byLeaseResult,
+      byDealCodeResult,
+      recentActivityResult,
+    ] = await Promise.all([
+      getRentalHistoryMetricSnapshot(),
+      pool.query<{
+        gross_revenue: string | null;
+        tax_amount: string | null;
+        damage_waiver_amount: string | null;
+        invoice_count: string;
+        credit_memo_count: string;
+        equipment_count: string;
+        lease_count: string;
+      }>(
+        `
+          select
+            coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+            coalesce(sum(tax_amount), 0)::numeric(18,2) as tax_amount,
+            coalesce(sum(damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
+            count(distinct document_no)::bigint as invoice_count,
+            count(distinct document_no) filter (where document_type ilike '%credit%')::bigint as credit_memo_count,
+            count(distinct item_no) filter (where type = 'Fixed Asset' and item_no is not null)::bigint as equipment_count,
+            count(distinct previous_no) filter (where previous_no is not null)::bigint as lease_count
+          from bc_rmi_posted_rental_lines
+          where posting_date >= current_date - interval '24 months'
+        `,
+      ),
+      pool.query<{
+        month: Date;
+        gross_revenue: string | null;
+        invoice_count: string;
+        equipment_count: string;
+      }>(
+        `
+          select
+            date_trunc('month', posting_date) as month,
+            coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+            count(distinct document_no)::bigint as invoice_count,
+            count(distinct item_no) filter (where type = 'Fixed Asset' and item_no is not null)::bigint as equipment_count
+          from bc_rmi_posted_rental_lines
+          where posting_date >= current_date - interval '18 months'
+          group by 1
+          order by 1 desc
+          limit 18
+        `,
+      ),
+      pool.query<{
+        equipment_type: string;
+        gross_revenue: string | null;
+        line_count: string;
+        equipment_count: string;
+      }>(
+        `
+          select
+            coalesce(a.type::text, l.type, 'Unmatched') as equipment_type,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+            count(*)::bigint as line_count,
+            count(distinct l.item_no)::bigint as equipment_count
+          from bc_rmi_posted_rental_lines l
+          left join assets a on a.asset_number = l.item_no and l.type = 'Fixed Asset'
+          where l.posting_date >= current_date - interval '24 months'
+          group by coalesce(a.type::text, l.type, 'Unmatched')
+          order by coalesce(sum(l.gross_amount), 0) desc
+          limit 12
+        `,
+      ),
+      pool.query<{
+        branch_code: string;
+        gross_revenue: string | null;
+        line_count: string;
+      }>(
+        `
+          select
+            coalesce(location_code, shortcut_dimension1_code, 'Unassigned') as branch_code,
+            coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+            count(*)::bigint as line_count
+          from bc_rmi_posted_rental_lines
+          where posting_date >= current_date - interval '24 months'
+          group by coalesce(location_code, shortcut_dimension1_code, 'Unassigned')
+          order by coalesce(sum(gross_amount), 0) desc
+          limit 12
+        `,
+      ),
+      pool.query<{
+        customer_number: string | null;
+        customer_name: string | null;
+        gross_revenue: string | null;
+        invoice_count: string;
+      }>(
+        `
+          select
+            coalesce(h.bill_to_customer_no, h.sell_to_customer_no) as customer_number,
+            max(c.name) as customer_name,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+            count(distinct l.document_no)::bigint as invoice_count
+          from bc_rmi_posted_rental_lines l
+          left join bc_rmi_posted_rental_invoice_headers h
+            on h.document_type = l.document_type
+           and h.document_no = l.document_no
+          left join customers c on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+          where l.posting_date >= current_date - interval '12 months'
+          group by coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+          order by coalesce(sum(l.gross_amount), 0) desc
+          limit 12
+        `,
+      ),
+      pool.query<{
+        lease_key: string;
+        customer_number: string | null;
+        customer_name: string | null;
+        gross_revenue: string | null;
+        invoice_count: string;
+        equipment_count: string;
+      }>(
+        `
+          select
+            l.previous_no as lease_key,
+            max(coalesce(h.bill_to_customer_no, h.sell_to_customer_no)) as customer_number,
+            max(c.name) as customer_name,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+            count(distinct l.document_no)::bigint as invoice_count,
+            count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as equipment_count
+          from bc_rmi_posted_rental_lines l
+          left join bc_rmi_posted_rental_invoice_headers h
+            on h.document_type = l.document_type
+           and h.document_no = l.document_no
+          left join customers c on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+          where l.previous_no is not null
+            and l.posting_date >= current_date - interval '12 months'
+          group by l.previous_no
+          order by coalesce(sum(l.gross_amount), 0) desc
+          limit 12
+        `,
+      ),
+      pool.query<{
+        deal_code: string;
+        gross_revenue: string | null;
+        line_count: string;
+      }>(
+        `
+          select
+            coalesce(deal_code, 'Unassigned') as deal_code,
+            coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+            count(*)::bigint as line_count
+          from bc_rmi_posted_rental_lines
+          where posting_date >= current_date - interval '24 months'
+          group by coalesce(deal_code, 'Unassigned')
+          order by coalesce(sum(gross_amount), 0) desc
+          limit 12
+        `,
+      ),
+      pool.query<{
+        entry_no: string;
+        document_no: string | null;
+        order_no: string | null;
+        equipment_no: string | null;
+        customer_no: string | null;
+        posting_date: Date | null;
+        gross_amount: string | null;
+        deal_code: string | null;
+      }>(
+        `
+          select
+            h.document_no as entry_no,
+            h.document_no,
+            h.previous_no as order_no,
+            null::text as equipment_no,
+            coalesce(h.bill_to_customer_no, h.sell_to_customer_no) as customer_no,
+            h.posting_date,
+            null::numeric as gross_amount,
+            null::text as deal_code
+          from bc_rmi_posted_rental_invoice_headers h
+          order by h.posting_date desc nulls last, h.document_no desc
+          limit 20
+        `,
+      ),
+    ]);
+
+    const summary = summaryResult.rows[0];
+    return {
+      metrics: {
+        grossRevenue: numericToNumber(summary.gross_revenue),
+        taxAmount: numericToNumber(summary.tax_amount),
+        damageWaiverAmount: numericToNumber(summary.damage_waiver_amount),
+        invoiceCount: Number(summary.invoice_count || metrics.bcInvoiceHeaders),
+        creditMemoCount: Number(summary.credit_memo_count),
+        equipmentCount: Number(summary.equipment_count),
+        leaseCount: Number(summary.lease_count || metrics.bcDistinctOrderKeys),
+        unmatchedAssetLines: 0,
+      },
+      revenueByMonth: byMonthResult.rows.map((row) => ({
+        month: toIso(row.month),
+        grossRevenue: numericToNumber(row.gross_revenue),
+        invoiceCount: Number(row.invoice_count),
+        equipmentCount: Number(row.equipment_count),
+      })),
+      revenueByEquipmentType: byEquipmentTypeResult.rows.map((row) => ({
+        equipmentType: row.equipment_type,
+        grossRevenue: numericToNumber(row.gross_revenue),
+        lineCount: Number(row.line_count),
+        equipmentCount: Number(row.equipment_count),
+      })),
+      revenueByBranch: byBranchResult.rows.map((row) => ({
+        branchCode: row.branch_code,
+        grossRevenue: numericToNumber(row.gross_revenue),
+        lineCount: Number(row.line_count),
+      })),
+      revenueByCustomer: byCustomerResult.rows.map((row) => ({
+        customerNumber: row.customer_number,
+        customerName: row.customer_name,
+        grossRevenue: numericToNumber(row.gross_revenue),
+        invoiceCount: Number(row.invoice_count),
+      })),
+      revenueByLease: byLeaseResult.rows.map((row) => ({
+        leaseKey: row.lease_key,
+        customerNumber: row.customer_number,
+        customerName: row.customer_name,
+        grossRevenue: numericToNumber(row.gross_revenue),
+        invoiceCount: Number(row.invoice_count),
+        equipmentCount: Number(row.equipment_count),
+      })),
+      revenueByDealCode: byDealCodeResult.rows.map((row) => ({
+        dealCode: row.deal_code,
+        grossRevenue: numericToNumber(row.gross_revenue),
+        lineCount: Number(row.line_count),
+      })),
+      arAging: [],
+      recentRentalActivity: recentActivityResult.rows.map((row) => ({
+        entryNo: row.entry_no,
+        documentNo: row.document_no,
+        orderNo: row.order_no,
+        equipmentNo: row.equipment_no,
+        customerNo: row.customer_no,
+        postingDate: toIso(row.posting_date),
+        grossAmount: numericToNumber(row.gross_amount),
+        dealCode: row.deal_code,
+      })),
+      exceptions: {
+        unmatchedAssetLines: 0,
+        unmatchedCustomerInvoices: metrics.bcInvoiceHeadersUnmatchedToCustomers,
+        missingDimensionLines: 0,
+      },
+      degraded: false,
+    };
+  } catch (error) {
+    console.error("Failed to load trailer revenue dashboard", error);
+    return emptyTrailerRevenueDashboardView();
+  }
+}
+
+async function getTrailerRevenueDashboardViewHeavy() {
   const [
     metricsResult,
     byMonthResult,

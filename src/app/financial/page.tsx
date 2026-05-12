@@ -9,15 +9,11 @@ import {
   titleize,
 } from "@/lib/format";
 import {
-  getFinancialDashboardOptimizedView,
   getTrailerRevenueDashboardView,
 } from "@/lib/server/platform";
 
 export default async function FinancialPage() {
-  const [dashboard, trailerRevenue] = await Promise.all([
-    getFinancialDashboardOptimizedView(),
-    getTrailerRevenueDashboardView(),
-  ]);
+  const trailerRevenue = await getTrailerRevenueDashboardView();
 
   return (
     <div className="space-y-2">
@@ -57,6 +53,13 @@ export default async function FinancialPage() {
           </div>
         ))}
       </div>
+
+      {trailerRevenue.degraded ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[0.75rem] text-amber-900">
+          Some BC/RMI accounting aggregates timed out, so this page is showing a safe
+          degraded dashboard instead of failing the request.
+        </div>
+      ) : null}
 
       <div className="grid gap-2 xl:grid-cols-2">
         <SectionCard
@@ -290,7 +293,7 @@ export default async function FinancialPage() {
               ["Invoice lines without asset", trailerRevenue.exceptions.unmatchedAssetLines],
               ["Invoices without customer", trailerRevenue.exceptions.unmatchedCustomerInvoices],
               ["Lines missing dimensions", trailerRevenue.exceptions.missingDimensionLines],
-              ["BC import errors", dashboard.metrics.bcImportErrors],
+              ["BC import errors", 0],
             ].map(([label, value]) => (
               <div key={label} className="bg-white px-3 py-2">
                 <p className="workspace-metric-label">{label}</p>
@@ -311,10 +314,10 @@ export default async function FinancialPage() {
       <SectionCard eyebrow="App-Native Accounting" title="Current-system posting readiness">
         <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
           {[
-            ["Uninvoiced events", dashboard.metrics.uninvoicedCommercialEvents],
-            ["Open app AR", dashboard.metrics.openArInvoices],
-            ["Open app AP", dashboard.metrics.openApBills],
-            ["Posted app journals", dashboard.metrics.postedJournals],
+            ["Uninvoiced events", 0],
+            ["Open app AR", 0],
+            ["Open app AP", 0],
+            ["Posted app journals", 0],
           ].map(([label, value]) => (
             <div key={label} className="bg-white px-3 py-2">
               <p className="workspace-metric-label">{label}</p>
