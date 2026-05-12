@@ -408,7 +408,7 @@ async function HomeDashboard() {
 
   const widgetRenderers: Record<DashboardWidgetId, React.ReactNode> = {
     "fleet-summary": (
-      <WidgetFrame title="Serialized Fleet Quantity" href="/assets" wide>
+        <WidgetFrame title="Serialized Fleet Quantity" href="/equipment" wide>
         <div className="grid gap-3 sm:grid-cols-2">
           {[
             {
@@ -467,7 +467,7 @@ async function HomeDashboard() {
       </WidgetFrame>
     ),
     "fleet-category": (
-      <WidgetFrame title="Serialized Fleet By Category" href="/assets" wide>
+        <WidgetFrame title="Serialized Fleet By Category" href="/equipment" wide>
         <div className="grid gap-2">
           {inventory.fleetMix.slice(0, 7).map((item) => {
             const rate =
@@ -516,7 +516,7 @@ async function HomeDashboard() {
       </WidgetFrame>
     ),
     "branch-pressure": (
-      <WidgetFrame title="Branch Pressure" href="/assets" wide>
+        <WidgetFrame title="Branch Pressure" href="/equipment" wide>
         <div className="grid gap-2">
           {branchPressure.slice(0, 8).map((branch) => (
             <div key={branch.branch} className="border border-[var(--line)] p-2">

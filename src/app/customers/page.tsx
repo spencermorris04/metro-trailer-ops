@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { StatusPill } from "@/components/status-pill";
 import { WorkspaceLink } from "@/components/workspace-link";
 import { ListPageSkeleton } from "@/components/workspace-skeletons";
-import { formatCompactNumber, formatCurrency, titleize } from "@/lib/format";
+import { formatCompactNumber, formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getCustomerListView } from "@/lib/server/platform";
 
 export const unstable_instant = { prefetch: "static" };
@@ -197,14 +197,15 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
                 <th>Type / Source</th>
                 <th>Coverage</th>
                 <th>Sites</th>
-                <th>Contracts</th>
+                <th>Leases / trailers</th>
+                <th>Latest activity</th>
                 <th>AR</th>
               </tr>
             </thead>
             <tbody>
               {view.data.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-slate-400">
+                  <td colSpan={7} className="text-slate-400">
                     No customers match the current scope.
                   </td>
                 </tr>
@@ -260,12 +261,21 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
                       </span>
                     </td>
                     <td>
-                      <span className="text-slate-700">{customer.contractCount} contracts</span>
+                      <span className="text-slate-700">
+                        {customer.bcLeaseCount || customer.contractCount} leases
+                      </span>
                       <br />
                       <span className="text-[0.65rem] text-slate-400">
-                        {customer.sourcePayloadAvailable
-                          ? "Legacy payload saved"
-                          : "No raw payload"}
+                        {customer.bcEquipmentCount} trailers / {customer.bcInvoiceCount} invoices
+                      </span>
+                    </td>
+                    <td>
+                      {customer.latestActivityDate
+                        ? formatDate(customer.latestActivityDate)
+                        : "No BC activity"}
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {formatCurrency(customer.bcRevenue ?? 0)} billed
                       </span>
                     </td>
                     <td className="font-semibold text-slate-900">

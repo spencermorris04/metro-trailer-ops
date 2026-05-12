@@ -1,6 +1,6 @@
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 
-import { db, schema } from "@/lib/db";
+import { db, pool, schema } from "@/lib/db";
 import {
   listAssets,
   listAssetsPage,
@@ -477,7 +477,9 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
       contractCount: contractCountByCustomer.get(customer.id) ?? 0,
       arBalance: arBalanceByCustomer.get(customer.id) ?? 0,
       sourceProvider: bcMappings.has(customer.id) ? "business_central" : "internal",
-      sourcePayloadAvailable: Boolean(customer.sourcePayload),
+      sourcePayloadAvailable: Boolean(
+        (customer as { sourcePayload?: unknown }).sourcePayload,
+      ),
     }))
     .filter((customer) => {
       if (filters?.sourceProvider && customer.sourceProvider !== filters.sourceProvider) {
@@ -487,8 +489,99 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
     });
 
   const start = (page - 1) * pageSize;
+  const pageData = filtered.slice(start, start + pageSize);
+  const customerNumbers = pageData.map((customer) => customer.customerNumber);
+  const bcStatsResult =
+    customerNumbers.length === 0
+      ? { rows: [] as Array<{
+          customer_number: string;
+          bc_invoice_count: string;
+          bc_lease_count: string;
+          bc_equipment_count: string;
+          bc_revenue: string | null;
+          bc_ar_balance: string | null;
+          latest_invoice_date: Date | null;
+          latest_activity_date: Date | null;
+        }> }
+      : await pool.query<{
+          customer_number: string;
+          bc_invoice_count: string;
+          bc_lease_count: string;
+          bc_equipment_count: string;
+          bc_revenue: string | null;
+          bc_ar_balance: string | null;
+          latest_invoice_date: Date | null;
+          latest_activity_date: Date | null;
+        }>(
+          `
+            with scoped_headers as (
+              select
+                coalesce(h.bill_to_customer_no, h.sell_to_customer_no) as customer_number,
+                h.document_type,
+                h.document_no,
+                h.previous_no,
+                h.posting_date
+              from bc_rmi_posted_rental_invoice_headers h
+              where coalesce(h.bill_to_customer_no, h.sell_to_customer_no) = any($1::text[])
+            ),
+            line_stats as (
+              select
+                sh.customer_number,
+                count(distinct sh.document_no)::bigint as bc_invoice_count,
+                count(distinct sh.previous_no) filter (where sh.previous_no is not null)::bigint as bc_lease_count,
+                count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as bc_equipment_count,
+                coalesce(sum(l.gross_amount), 0)::numeric(18,2) as bc_revenue,
+                max(coalesce(l.invoice_thru_date, l.invoice_from_date, l.posting_date, sh.posting_date)) as latest_activity_date,
+                max(sh.posting_date) as latest_invoice_date
+              from scoped_headers sh
+              left join bc_rmi_posted_rental_lines l
+                on l.document_type = sh.document_type
+               and l.document_no = sh.document_no
+              group by sh.customer_number
+            ),
+            ar_stats as (
+              select
+                customer_no as customer_number,
+                coalesce(sum(amount), 0)::numeric(18,2) as bc_ar_balance
+              from bc_customer_ledger_entries
+              where customer_no = any($1::text[])
+              group by customer_no
+            )
+            select
+              coalesce(ls.customer_number, ar.customer_number) as customer_number,
+              coalesce(ls.bc_invoice_count, 0)::bigint as bc_invoice_count,
+              coalesce(ls.bc_lease_count, 0)::bigint as bc_lease_count,
+              coalesce(ls.bc_equipment_count, 0)::bigint as bc_equipment_count,
+              coalesce(ls.bc_revenue, 0)::numeric(18,2) as bc_revenue,
+              coalesce(ar.bc_ar_balance, 0)::numeric(18,2) as bc_ar_balance,
+              ls.latest_invoice_date,
+              ls.latest_activity_date
+            from line_stats ls
+            full join ar_stats ar on ar.customer_number = ls.customer_number
+          `,
+          [customerNumbers],
+        );
+  const bcStatsByCustomer = new Map(
+    bcStatsResult.rows.map((row) => [row.customer_number, row]),
+  );
+
   return {
-    data: filtered.slice(start, start + pageSize),
+    data: pageData.map((customer) => {
+      const stats = bcStatsByCustomer.get(customer.customerNumber);
+      return {
+        ...customer,
+        arBalance:
+          stats?.bc_ar_balance !== undefined
+            ? numericToNumber(stats.bc_ar_balance)
+            : customer.arBalance,
+        bcInvoiceCount: Number(stats?.bc_invoice_count ?? 0),
+        bcLeaseCount: Number(stats?.bc_lease_count ?? 0),
+        bcEquipmentCount: Number(stats?.bc_equipment_count ?? 0),
+        bcRevenue: numericToNumber(stats?.bc_revenue),
+        latestInvoiceDate: toIso(stats?.latest_invoice_date ?? null),
+        latestActivityDate: toIso(stats?.latest_activity_date ?? null),
+      };
+    }),
     total: filtered.length,
     page,
     pageSize,
@@ -721,8 +814,8 @@ export async function getCommercialEventsView(filters?: CommercialEventFilters) 
     const row = rowById.get(event.id);
     return {
       ...event,
-      sourceDocumentType: row?.sourceDocumentType ?? event.sourceDocumentType ?? null,
-      sourceDocumentNo: row?.sourceDocumentNo ?? event.sourceDocumentNo ?? null,
+      sourceDocumentType: row?.sourceDocumentType ?? null,
+      sourceDocumentNo: row?.sourceDocumentNo ?? null,
       invoiceStatus: row?.invoiceStatus ?? null,
       invoiceNumber: row?.invoiceNumber ?? null,
     };
@@ -809,13 +902,21 @@ export async function getCommercialEventsView(filters?: CommercialEventFilters) 
 
 export async function getArInvoicesView() {
   const invoices = await listInvoices();
-  const canonicalInvoices = invoices.map((invoice) => ({
-    ...invoice,
-    sourceProvider: invoice.sourceProvider ?? "internal",
-    sourceDocumentType: invoice.sourceDocumentType ?? null,
-    sourceDocumentNo: invoice.sourceDocumentNo ?? null,
-    sourceStatus: invoice.sourceStatus ?? null,
-  }));
+  const canonicalInvoices = invoices.map((invoice) => {
+    const sourceInvoice = invoice as typeof invoice & {
+      sourceProvider?: string | null;
+      sourceDocumentType?: string | null;
+      sourceDocumentNo?: string | null;
+      sourceStatus?: string | null;
+    };
+    return {
+      ...invoice,
+      sourceProvider: sourceInvoice.sourceProvider ?? "internal",
+      sourceDocumentType: sourceInvoice.sourceDocumentType ?? null,
+      sourceDocumentNo: sourceInvoice.sourceDocumentNo ?? null,
+      sourceStatus: sourceInvoice.sourceStatus ?? null,
+    };
+  });
   const canonicalSourceKeys = new Set(
     canonicalInvoices
       .map((invoice) =>
@@ -938,16 +1039,164 @@ export async function getApBillsView() {
   }));
 }
 
+export async function getVendorApHistoryView() {
+  const [summaryResult, vendorResult, ledgerResult, canonicalCountsResult] =
+    await Promise.all([
+      pool.query<{
+        vendor_count: string;
+        ledger_count: string;
+        ledger_amount: string | null;
+      }>(
+        `
+          select
+            (select count(*)::bigint from bc_vendors) as vendor_count,
+            (select count(*)::bigint from bc_vendor_ledger_entries) as ledger_count,
+            (select coalesce(sum(amount), 0)::numeric(18,2) from bc_vendor_ledger_entries) as ledger_amount
+        `,
+      ),
+      pool.query<{
+        id: string;
+        vendor_no: string;
+        name: string;
+        status: string | null;
+        location_code: string | null;
+        ledger_count: string;
+        balance: string | null;
+        latest_posting_date: Date | null;
+      }>(
+        `
+          select
+            v.id,
+            v.vendor_no,
+            v.name,
+            v.status,
+            v.location_code,
+            count(e.id)::bigint as ledger_count,
+            coalesce(sum(e.amount), 0)::numeric(18,2) as balance,
+            max(e.posting_date) as latest_posting_date
+          from bc_vendors v
+          left join bc_vendor_ledger_entries e on e.vendor_no = v.vendor_no
+          group by v.id, v.vendor_no, v.name, v.status, v.location_code
+          order by max(e.posting_date) desc nulls last, v.vendor_no
+          limit 200
+        `,
+      ),
+      pool.query<{
+        id: string;
+        external_entry_no: string;
+        vendor_no: string | null;
+        vendor_name: string | null;
+        posting_date: Date | null;
+        document_no: string | null;
+        amount: string | null;
+        payload: Record<string, unknown>;
+      }>(
+        `
+          select
+            e.id,
+            e.external_entry_no,
+            e.vendor_no,
+            v.name as vendor_name,
+            e.posting_date,
+            e.document_no,
+            e.amount,
+            e.payload
+          from bc_vendor_ledger_entries e
+          left join bc_vendors v on v.vendor_no = e.vendor_no
+          order by e.posting_date desc nulls last, e.external_entry_no desc
+          limit 200
+        `,
+      ),
+      pool.query<{
+        ap_bill_count: string;
+        ap_payment_count: string;
+      }>(
+        `
+          select
+            (select count(*)::bigint from ap_bills) as ap_bill_count,
+            (select count(*)::bigint from ap_payments) as ap_payment_count
+        `,
+      ),
+    ]);
+
+  const summary = summaryResult.rows[0];
+  const canonicalCounts = canonicalCountsResult.rows[0];
+  return {
+    summary: {
+      vendorCount: Number(summary.vendor_count),
+      vendorLedgerCount: Number(summary.ledger_count),
+      vendorLedgerAmount: numericToNumber(summary.ledger_amount),
+      appBillCount: Number(canonicalCounts.ap_bill_count),
+      appPaymentCount: Number(canonicalCounts.ap_payment_count),
+    },
+    vendors: vendorResult.rows.map((row) => ({
+      id: row.id,
+      vendorNo: row.vendor_no,
+      name: row.name,
+      status: row.status,
+      locationCode: row.location_code,
+      ledgerCount: Number(row.ledger_count),
+      balance: numericToNumber(row.balance),
+      latestPostingDate: toIso(row.latest_posting_date),
+    })),
+    ledgerEntries: ledgerResult.rows.map((row) => ({
+      id: row.id,
+      entryNo: row.external_entry_no,
+      vendorNo: row.vendor_no,
+      vendorName: row.vendor_name,
+      postingDate: toIso(row.posting_date),
+      documentNo: row.document_no,
+      amount: numericToNumber(row.amount),
+      documentType:
+        typeof row.payload.Document_Type === "string"
+          ? row.payload.Document_Type
+          : null,
+      description:
+        typeof row.payload.Description === "string" ? row.payload.Description : null,
+    })),
+    purchaseOrdersImported: false,
+  };
+}
+
 export async function getGlAccountsView() {
   const rows = await db
     .select()
     .from(schema.glAccounts)
     .orderBy(schema.glAccounts.accountNumber);
 
-  return rows.map((row) => ({
+  const appRows = rows.map((row) => ({
     ...row,
     sourceProvider: row.sourceProvider ?? "internal",
+    sourceKind: "app" as const,
   }));
+
+  const appAccountNumbers = new Set(appRows.map((row) => row.accountNumber));
+  const bcRows = await db
+    .select()
+    .from(schema.bcGlAccounts)
+    .orderBy(schema.bcGlAccounts.accountNo);
+
+  const bcAccounts = bcRows
+    .filter((row) => !appAccountNumbers.has(row.accountNo))
+    .map((row) => ({
+      id: row.id,
+      accountNumber: row.accountNo,
+      name: row.name,
+      category: row.category ?? row.accountType ?? "uncategorized",
+      subcategory: row.subcategory,
+      normalSide: row.incomeBalance ?? row.accountType ?? "account",
+      active: !row.blocked,
+      sourceProvider: "business_central",
+      sourceExternalId: row.accountNo,
+      sourcePayload: row.payload,
+      createdAt: row.importedAt,
+      updatedAt: row.importedAt,
+      sourceKind: "business_central" as const,
+    }));
+
+  return [...appRows, ...bcAccounts].sort((left, right) =>
+    left.accountNumber.localeCompare(right.accountNumber),
+  );
 }
 
 export async function getGlJournalView() {

@@ -28,9 +28,9 @@ export const navigationGroups: NavGroup[] = [
     label: "Operations",
     items: [
       {
-        href: "/assets",
-        label: "Assets",
-        description: "Fleet master, BC lineage, placement, and readiness state",
+        href: "/equipment",
+        label: "Equipment",
+        description: "Fleet master, trailer revenue, BC lineage, placement, and readiness state",
         icon: "truck",
       },
       {
@@ -105,8 +105,8 @@ export const navigationGroups: NavGroup[] = [
       },
       {
         href: "/ap/bills",
-        label: "Purchase Orders",
-        description: "Vendor bills, due dates, procurement review, and source lineage",
+        label: "AP / Vendors",
+        description: "Vendor master, AP ledger history, and purchase-order readiness",
         icon: "clipboard",
       },
       {

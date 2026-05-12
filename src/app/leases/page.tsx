@@ -66,8 +66,8 @@ async function LeasesContent({ searchParams }: LeasesPageProps) {
         description="App-native leases plus BC/RMI rental order history grouped by original order number."
         actions={
           <>
-            <WorkspaceLink href="/assets" className="btn-secondary">
-              Assets overview
+            <WorkspaceLink href="/equipment" className="btn-secondary">
+              Equipment
             </WorkspaceLink>
             <WorkspaceLink href="/ar/invoices" className="btn-secondary">
               Invoices

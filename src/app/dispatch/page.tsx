@@ -39,7 +39,7 @@ export default async function DispatchPage() {
                     <br /><span className="text-[0.65rem] text-slate-400">{task.branch}</span>
                   </td>
                   <td className="text-slate-600">
-                    <Link href={`/assets/${task.assetNumber}`} className="font-semibold text-[var(--brand)]">
+                  <Link href={`/equipment/${task.assetNumber}`} className="font-semibold text-[var(--brand)]">
                       {task.assetNumber}
                     </Link>
                   </td>

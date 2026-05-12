@@ -36,7 +36,7 @@ export default async function InspectionsPage() {
               {inspections.map((inspection) => (
                 <tr key={inspection.id}>
                   <td className="mono font-semibold text-slate-900">
-                    <Link href={`/assets/${inspection.assetNumber}`} className="text-[var(--brand)]">
+                  <Link href={`/equipment/${inspection.assetNumber}`} className="text-[var(--brand)]">
                       {inspection.assetNumber}
                     </Link>
                   </td>

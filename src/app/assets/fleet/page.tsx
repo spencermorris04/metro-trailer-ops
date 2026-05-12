@@ -12,7 +12,7 @@ import {
   maintenanceStatuses,
 } from "@/lib/domain/models";
 import { formatCompactNumber, formatCurrency, titleize } from "@/lib/format";
-import { getFleetListView } from "@/lib/server/platform";
+import { getEquipmentListView } from "@/lib/server/platform";
 
 export const unstable_instant = { prefetch: "static" };
 
@@ -51,7 +51,7 @@ function buildHref(
     }
   }
   const query = params.toString();
-  return query ? `/assets/fleet?${query}` : "/assets/fleet";
+  return query ? `/equipment?${query}` : "/equipment";
 }
 
 function booleanLabel(value: boolean) {
@@ -87,7 +87,7 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
   const page = Math.max(1, Number(getParam(resolved.page) ?? "1"));
   const pageSize = 25;
 
-  const view = await getFleetListView({ ...filters, page, pageSize });
+  const view = await getEquipmentListView({ ...filters, page, pageSize });
   const totalPages = Math.max(1, Math.ceil(view.total / view.pageSize));
   const filtersActive = Object.values(filters).some(Boolean);
 
@@ -102,12 +102,12 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
     <div className="space-y-2">
       <PageHeader
         eyebrow="Operations"
-        title="Fleet"
-        description="BC-enriched trailer and equipment records with lifecycle flags, location codes, and source lineage."
+        title="Equipment"
+        description="BC-enriched trailers, containers, chassis, and equipment with lifecycle state, revenue, latest customer, and source lineage."
         actions={
           <>
             <WorkspaceLink href="/assets" className="btn-secondary">
-              Assets overview
+              Equipment overview
             </WorkspaceLink>
             <WorkspaceLink href="/leases" className="btn-secondary">
               Leases
@@ -120,7 +120,7 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
       />
 
       <div className="panel px-3 py-2">
-        <InstantForm className="flex flex-wrap items-end gap-2" action="/assets/fleet">
+        <InstantForm className="flex flex-wrap items-end gap-2" action="/equipment">
           <input
             type="text"
             name="q"
@@ -219,7 +219,7 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
           <button type="submit" className="btn-primary">
             Apply
           </button>
-          <WorkspaceLink href="/assets/fleet" className="btn-secondary">
+          <WorkspaceLink href="/equipment" className="btn-secondary">
             Reset
           </WorkspaceLink>
         </InstantForm>
@@ -275,13 +275,14 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
                 <th>Branch / BC</th>
                 <th>Lifecycle</th>
                 <th>Flags</th>
-                <th>Source</th>
+                <th>Latest rental</th>
+                <th>Revenue</th>
               </tr>
             </thead>
             <tbody>
               {view.data.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-slate-400">
+                  <td colSpan={8} className="text-slate-400">
                     No assets match the current scope.
                   </td>
                 </tr>
@@ -290,7 +291,7 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
                   <tr key={asset.id}>
                     <td>
                       <WorkspaceLink
-                        href={`/assets/${asset.id}`}
+                        href={`/equipment/${asset.id}`}
                         className="font-semibold text-[var(--brand)]"
                       >
                         {asset.assetNumber}
@@ -354,13 +355,37 @@ async function AssetsContent({ searchParams }: AssetsPageProps) {
                       <div>Maint: {booleanLabel(asset.underMaintenance)}</div>
                     </td>
                     <td>
+                      {asset.latestInvoiceNo ? (
+                        <WorkspaceLink
+                          href={`/ar/invoices/${asset.latestInvoiceNo}`}
+                          className="font-semibold text-[var(--brand)]"
+                        >
+                          {asset.latestInvoiceNo}
+                        </WorkspaceLink>
+                      ) : (
+                        <span className="text-slate-400">No BC invoice</span>
+                      )}
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {asset.latestLeaseKey ? `Lease ${asset.latestLeaseKey}` : "No lease"}
+                      </span>
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {asset.latestCustomerName ?? asset.latestCustomerNo ?? "No customer"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="font-semibold text-slate-900">
+                        {formatCurrency(asset.lifetimeRevenue)}
+                      </span>
+                      <br />
+                      <span className="text-[0.65rem] text-slate-400">
+                        {asset.invoiceLineCount} lines / {asset.invoiceCount} invoices
+                      </span>
+                      <br />
                       <StatusPill
                         label={titleize(asset.sourceProvider.replaceAll("_", " "))}
                       />
-                      <br />
-                      <span className="text-[0.65rem] text-slate-400">
-                        {asset.sourcePayloadAvailable ? "Payload preserved" : "No raw payload"}
-                      </span>
                     </td>
                   </tr>
                 ))

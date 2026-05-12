@@ -162,7 +162,7 @@ async function LeaseDetailContent({ params }: LeaseDetailPageProps) {
                 <div key={asset.assetId} className="flex items-center justify-between py-1.5">
                   <div>
                     <WorkspaceLink
-                      href={`/assets/${asset.assetId}`}
+                        href={`/equipment/${asset.assetId}`}
                       className="font-semibold text-[var(--brand)]"
                     >
                       {asset.assetNumber}
@@ -218,7 +218,7 @@ async function LeaseDetailContent({ params }: LeaseDetailPageProps) {
                     </td>
                     <td>
                       {line.assetId ? (
-                        <WorkspaceLink href={`/assets/${line.assetId}`} className="text-[var(--brand)]">
+                        <WorkspaceLink href={`/equipment/${line.assetId}`} className="text-[var(--brand)]">
                           {line.assetNumber}
                         </WorkspaceLink>
                       ) : (

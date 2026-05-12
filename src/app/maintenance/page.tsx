@@ -73,7 +73,7 @@ export default async function MaintenancePage() {
               {workOrders.map((order) => (
                 <tr key={order.id}>
                   <td className="mono font-semibold text-slate-900">
-                    <Link href={`/assets/${order.assetNumber}`} className="text-[var(--brand)]">
+                  <Link href={`/equipment/${order.assetNumber}`} className="text-[var(--brand)]">
                       {order.assetNumber}
                     </Link>
                   </td>

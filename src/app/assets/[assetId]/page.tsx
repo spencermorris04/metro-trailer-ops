@@ -46,11 +46,11 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
         description="Asset detail with operational ownership, contract history, inspections, work orders, and BC lineage."
         actions={
           <>
-            <WorkspaceLink href="/assets" className="btn-secondary">
-              Back to assets
+            <WorkspaceLink href="/equipment" className="btn-secondary">
+              Back to equipment
             </WorkspaceLink>
-            <WorkspaceLink href="/assets/fleet" className="btn-secondary">
-              Fleet
+            <WorkspaceLink href="/equipment" className="btn-secondary">
+              Equipment
             </WorkspaceLink>
             <WorkspaceLink href="/leases" className="btn-secondary">
               Leases

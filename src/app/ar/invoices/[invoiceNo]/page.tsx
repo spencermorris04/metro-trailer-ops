@@ -106,7 +106,7 @@ async function InvoiceDetailContent({ params }: InvoiceDetailPageProps) {
             <div className="flex items-center justify-between">
               <span>Balance</span>
               {summary.balanceAmount === null ? (
-                <StatusPill label="Pending BC ledger" />
+                <StatusPill label="No ledger balance" />
               ) : (
                 <span className="font-semibold text-slate-900">
                   {formatCurrency(summary.balanceAmount)}
@@ -139,7 +139,7 @@ async function InvoiceDetailContent({ params }: InvoiceDetailPageProps) {
                 <div key={asset.assetId} className="flex items-center justify-between py-1.5">
                   <div>
                     <WorkspaceLink
-                      href={`/assets/${asset.assetId}`}
+                      href={`/equipment/${asset.assetId}`}
                       className="font-semibold text-[var(--brand)]"
                     >
                       {asset.assetNumber}
@@ -217,7 +217,7 @@ async function InvoiceDetailContent({ params }: InvoiceDetailPageProps) {
                     <td>{line.lineNo ?? "-"}</td>
                     <td>
                       {line.assetId ? (
-                        <WorkspaceLink href={`/assets/${line.assetId}`} className="font-semibold text-[var(--brand)]">
+                        <WorkspaceLink href={`/equipment/${line.assetId}`} className="font-semibold text-[var(--brand)]">
                           {line.assetNumber}
                         </WorkspaceLink>
                       ) : (
@@ -253,6 +253,47 @@ async function InvoiceDetailContent({ params }: InvoiceDetailPageProps) {
                         </div>
                       ) : null}
                     </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      <SectionCard eyebrow="AR Ledger" title="Customer ledger entries tied to this invoice">
+        <div className="data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Entry</th>
+                <th>Date</th>
+                <th>Customer</th>
+                <th>Document type</th>
+                <th>Status</th>
+                <th>Amount</th>
+                <th>Remaining</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.ledgerEntries.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-slate-400">
+                    No BC customer ledger rows are linked to this invoice number.
+                  </td>
+                </tr>
+              ) : (
+                detail.ledgerEntries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>{entry.entryNo}</td>
+                    <td>{entry.postingDate ? formatDate(entry.postingDate) : "Unknown"}</td>
+                    <td>{entry.customerNo ?? summary.customerNumber ?? "-"}</td>
+                    <td>{entry.documentType ?? "-"}</td>
+                    <td>
+                      <StatusPill label={entry.open ? "Open" : "Closed"} />
+                    </td>
+                    <td>{formatCurrency(entry.amount)}</td>
+                    <td>{formatCurrency(entry.remainingAmount)}</td>
                   </tr>
                 ))
               )}

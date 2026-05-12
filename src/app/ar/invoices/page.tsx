@@ -66,8 +66,8 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
         description="Metro-native AR invoices plus raw BC/RMI posted rental invoice history."
         actions={
           <>
-            <WorkspaceLink href="/assets" className="btn-secondary">
-              Assets
+            <WorkspaceLink href="/equipment" className="btn-secondary">
+              Equipment
             </WorkspaceLink>
             <WorkspaceLink href="/leases" className="btn-secondary">
               Leases
@@ -104,7 +104,7 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
           ["Invoices", formatCompactNumber(view.total)],
           ["Visible BC", formatCompactNumber(view.data.filter((row) => row.source === "business_central").length)],
           ["Visible Metro", formatCompactNumber(view.data.filter((row) => row.source === "app").length)],
-          ["BC open AR", "Pending ledger import"],
+          ["BC ledger balances", view.openBalanceAvailable ? "Available" : "Pending"],
         ].map(([label, value]) => (
           <div key={label} className="bg-white px-3 py-2">
             <p className="workspace-metric-label">{label}</p>
@@ -196,7 +196,7 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
                     </td>
                     <td>
                       {invoice.balanceAmount === null ? (
-                        <StatusPill label="Pending BC ledger" />
+                        <StatusPill label="No ledger balance" />
                       ) : (
                         formatCurrency(invoice.balanceAmount)
                       )}
@@ -222,7 +222,7 @@ async function ArInvoicesContent({ searchParams }: ArInvoicesPageProps) {
         </div>
         <div className="flex items-center justify-between border-t border-[var(--line)] px-3 py-1.5">
           <span className="text-[0.7rem] text-slate-400">
-            BC balances are not treated as open AR until customer ledger entries are imported.
+            BC open AR is derived from customer ledger entries, not invoice headers.
           </span>
           <div className="flex gap-1.5">
             <WorkspaceLink

@@ -312,6 +312,440 @@ export async function getFleetListView(filters?: Parameters<typeof getAssetListV
   return getAssetListView(filters);
 }
 
+export async function getEquipmentListView(filters?: Parameters<typeof getAssetListView>[0]) {
+  const base = await getFleetListView(filters);
+  const assetNumbers = base.data.map((asset) => asset.assetNumber);
+  if (assetNumbers.length === 0) {
+    return {
+      ...base,
+      data: base.data.map((asset) => ({
+        ...asset,
+        invoiceLineCount: 0,
+        invoiceCount: 0,
+        leaseCount: 0,
+        lifetimeRevenue: 0,
+        latestInvoiceNo: null,
+        latestLeaseKey: null,
+        latestCustomerNo: null,
+        latestCustomerName: null,
+        latestBilledFrom: null,
+        latestBilledThru: null,
+      })),
+    };
+  }
+
+  const revenueResult = await pool.query<{
+    asset_number: string;
+    invoice_line_count: string;
+    invoice_count: string;
+    lease_count: string;
+    lifetime_revenue: string | null;
+    latest_invoice_no: string | null;
+    latest_lease_key: string | null;
+    latest_customer_no: string | null;
+    latest_customer_name: string | null;
+    latest_billed_from: Date | null;
+    latest_billed_thru: Date | null;
+  }>(
+    `
+      with scoped_lines as (
+        select
+          l.*,
+          coalesce(l.invoice_thru_date, l.invoice_from_date, l.posting_date) as activity_date
+        from bc_rmi_posted_rental_lines l
+        where l.type = 'Fixed Asset'
+          and l.item_no = any($1::text[])
+      ),
+      latest as (
+        select *
+        from (
+          select
+            l.item_no,
+            l.document_type,
+            l.document_no,
+            l.previous_no,
+            l.invoice_from_date,
+            l.invoice_thru_date,
+            h.bill_to_customer_no,
+            h.sell_to_customer_no,
+            c.name as customer_name,
+            row_number() over (
+              partition by l.item_no
+              order by l.activity_date desc nulls last, l.document_no desc, l.line_no desc
+            ) as rn
+          from scoped_lines l
+          left join bc_rmi_posted_rental_invoice_headers h
+            on h.document_type = l.document_type
+           and h.document_no = l.document_no
+          left join customers c
+            on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+        ) ranked
+        where rn = 1
+      )
+      select
+        l.item_no as asset_number,
+        count(*)::bigint as invoice_line_count,
+        count(distinct l.document_no)::bigint as invoice_count,
+        count(distinct l.previous_no) filter (where l.previous_no is not null)::bigint as lease_count,
+        coalesce(sum(l.gross_amount), 0)::numeric(18,2) as lifetime_revenue,
+        max(latest.document_no) as latest_invoice_no,
+        max(latest.previous_no) as latest_lease_key,
+        max(coalesce(latest.bill_to_customer_no, latest.sell_to_customer_no)) as latest_customer_no,
+        max(latest.customer_name) as latest_customer_name,
+        max(latest.invoice_from_date) as latest_billed_from,
+        max(latest.invoice_thru_date) as latest_billed_thru
+      from scoped_lines l
+      left join latest on latest.item_no = l.item_no
+      group by l.item_no
+    `,
+    [assetNumbers],
+  );
+
+  const revenueByAsset = new Map(
+    revenueResult.rows.map((row) => [row.asset_number, row]),
+  );
+
+  return {
+    ...base,
+    data: base.data.map((asset) => {
+      const revenue = revenueByAsset.get(asset.assetNumber);
+      return {
+        ...asset,
+        invoiceLineCount: Number(revenue?.invoice_line_count ?? 0),
+        invoiceCount: Number(revenue?.invoice_count ?? 0),
+        leaseCount: Number(revenue?.lease_count ?? 0),
+        lifetimeRevenue: numericToNumber(revenue?.lifetime_revenue),
+        latestInvoiceNo: revenue?.latest_invoice_no ?? null,
+        latestLeaseKey: revenue?.latest_lease_key ?? null,
+        latestCustomerNo: revenue?.latest_customer_no ?? null,
+        latestCustomerName: revenue?.latest_customer_name ?? null,
+        latestBilledFrom: toIso(revenue?.latest_billed_from ?? null),
+        latestBilledThru: toIso(revenue?.latest_billed_thru ?? null),
+      };
+    }),
+  };
+}
+
+export async function getTrailerRevenueDashboardView() {
+  const [
+    metricsResult,
+    byMonthResult,
+    byEquipmentTypeResult,
+    byBranchResult,
+    byCustomerResult,
+    byLeaseResult,
+    byDealCodeResult,
+    arAgingResult,
+    recentActivityResult,
+    exceptionResult,
+  ] = await Promise.all([
+    pool.query<{
+      gross_revenue: string | null;
+      tax_amount: string | null;
+      damage_waiver_amount: string | null;
+      invoice_count: string;
+      credit_memo_count: string;
+      equipment_count: string;
+      lease_count: string;
+      unmatched_asset_lines: string;
+    }>(
+      `
+        select
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(l.tax_amount), 0)::numeric(18,2) as tax_amount,
+          coalesce(sum(l.damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
+          count(distinct l.document_no)::bigint as invoice_count,
+          count(distinct l.document_no) filter (where l.document_type ilike '%credit%')::bigint as credit_memo_count,
+          count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as equipment_count,
+          count(distinct l.previous_no) filter (where l.previous_no is not null)::bigint as lease_count,
+          count(*) filter (where l.type = 'Fixed Asset' and a.id is null)::bigint as unmatched_asset_lines
+        from bc_rmi_posted_rental_lines l
+        left join assets a on a.asset_number = l.item_no and l.type = 'Fixed Asset'
+      `,
+    ),
+    pool.query<{
+      month: Date;
+      gross_revenue: string | null;
+      invoice_count: string;
+      equipment_count: string;
+    }>(
+      `
+        select
+          date_trunc('month', coalesce(l.invoice_from_date, l.posting_date)) as month,
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(distinct l.document_no)::bigint as invoice_count,
+          count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as equipment_count
+        from bc_rmi_posted_rental_lines l
+        where coalesce(l.invoice_from_date, l.posting_date) is not null
+        group by 1
+        order by 1 desc
+        limit 18
+      `,
+    ),
+    pool.query<{
+      equipment_type: string;
+      gross_revenue: string | null;
+      line_count: string;
+      equipment_count: string;
+    }>(
+      `
+        select
+          coalesce(a.type::text, l.description, l.type, 'Unmatched') as equipment_type,
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(*)::bigint as line_count,
+          count(distinct l.item_no)::bigint as equipment_count
+        from bc_rmi_posted_rental_lines l
+        left join assets a on a.asset_number = l.item_no and l.type = 'Fixed Asset'
+        group by coalesce(a.type::text, l.description, l.type, 'Unmatched')
+        order by coalesce(sum(l.gross_amount), 0) desc
+        limit 12
+      `,
+    ),
+    pool.query<{
+      branch_code: string;
+      gross_revenue: string | null;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(l.location_code, l.shortcut_dimension1_code, 'Unassigned') as branch_code,
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(*)::bigint as line_count
+        from bc_rmi_posted_rental_lines l
+        group by coalesce(l.location_code, l.shortcut_dimension1_code, 'Unassigned')
+        order by coalesce(sum(l.gross_amount), 0) desc
+        limit 12
+      `,
+    ),
+    pool.query<{
+      customer_number: string | null;
+      customer_name: string | null;
+      gross_revenue: string | null;
+      invoice_count: string;
+    }>(
+      `
+        select
+          coalesce(h.bill_to_customer_no, h.sell_to_customer_no) as customer_number,
+          max(c.name) as customer_name,
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(distinct l.document_no)::bigint as invoice_count
+        from bc_rmi_posted_rental_lines l
+        left join bc_rmi_posted_rental_invoice_headers h
+          on h.document_type = l.document_type
+         and h.document_no = l.document_no
+        left join customers c on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+        group by coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+        order by coalesce(sum(l.gross_amount), 0) desc
+        limit 12
+      `,
+    ),
+    pool.query<{
+      lease_key: string;
+      customer_number: string | null;
+      customer_name: string | null;
+      gross_revenue: string | null;
+      invoice_count: string;
+      equipment_count: string;
+    }>(
+      `
+        select
+          l.previous_no as lease_key,
+          max(coalesce(h.bill_to_customer_no, h.sell_to_customer_no)) as customer_number,
+          max(c.name) as customer_name,
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(distinct l.document_no)::bigint as invoice_count,
+          count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as equipment_count
+        from bc_rmi_posted_rental_lines l
+        left join bc_rmi_posted_rental_invoice_headers h
+          on h.document_type = l.document_type
+         and h.document_no = l.document_no
+        left join customers c on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+        where l.previous_no is not null
+        group by l.previous_no
+        order by coalesce(sum(l.gross_amount), 0) desc
+        limit 12
+      `,
+    ),
+    pool.query<{
+      deal_code: string;
+      gross_revenue: string | null;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(l.deal_code, 'Unassigned') as deal_code,
+          coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(*)::bigint as line_count
+        from bc_rmi_posted_rental_lines l
+        group by coalesce(l.deal_code, 'Unassigned')
+        order by coalesce(sum(l.gross_amount), 0) desc
+        limit 12
+      `,
+    ),
+    pool.query<{
+      bucket: string;
+      balance: string | null;
+      entry_count: string;
+    }>(
+      `
+        with normalized as (
+          select
+            lower(coalesce(payload->>'Open', 'false')) = 'true' as is_open,
+            coalesce(nullif(payload->>'Due_Date', '')::date, posting_date::date) as due_date,
+            coalesce(
+              nullif(regexp_replace(coalesce(payload->>'Remaining_Amount', payload->>'Remaining_Amt_LCY', amount::text, '0'), '[^0-9.-]', '', 'g'), '')::numeric,
+              0
+            ) as remaining_amount
+          from bc_customer_ledger_entries
+        ),
+        bucketed as (
+          select
+            case
+              when not is_open then 'Closed'
+              when due_date >= current_date then 'Current'
+              when current_date - due_date <= 30 then '1-30'
+              when current_date - due_date <= 60 then '31-60'
+              when current_date - due_date <= 90 then '61-90'
+              else '90+'
+            end as bucket,
+            remaining_amount
+          from normalized
+        )
+        select
+          bucket,
+          coalesce(sum(remaining_amount), 0)::numeric(18,2) as balance,
+          count(*)::bigint as entry_count
+        from bucketed
+        group by bucket
+        order by case bucket
+          when 'Current' then 1
+          when '1-30' then 2
+          when '31-60' then 3
+          when '61-90' then 4
+          when '90+' then 5
+          else 6
+        end
+      `,
+    ),
+    pool.query<{
+      entry_no: string;
+      document_no: string | null;
+      order_no: string | null;
+      equipment_no: string | null;
+      customer_no: string | null;
+      posting_date: Date | null;
+      gross_amount: string | null;
+      deal_code: string | null;
+    }>(
+      `
+        select
+          external_entry_no as entry_no,
+          document_no,
+          order_no,
+          no_shipped as equipment_no,
+          bill_to_customer_no as customer_no,
+          posting_date,
+          gross_amount,
+          deal_code
+        from bc_rmi_ws_rental_ledger_entries
+        order by posting_date desc nulls last, external_entry_no desc
+        limit 20
+      `,
+    ),
+    pool.query<{
+      unmatched_asset_lines: string;
+      unmatched_customer_invoices: string;
+      missing_dimension_lines: string;
+    }>(
+      `
+        select
+          (select count(*)::bigint
+             from bc_rmi_posted_rental_lines l
+             left join assets a on a.asset_number = l.item_no and l.type = 'Fixed Asset'
+            where l.type = 'Fixed Asset' and a.id is null) as unmatched_asset_lines,
+          (select count(*)::bigint
+             from bc_rmi_posted_rental_invoice_headers h
+             left join customers c on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
+            where c.id is null) as unmatched_customer_invoices,
+          (select count(*)::bigint
+             from bc_rmi_posted_rental_lines
+            where dimension_set_id is null) as missing_dimension_lines
+      `,
+    ),
+  ]);
+
+  const metrics = metricsResult.rows[0];
+  const exceptions = exceptionResult.rows[0];
+  return {
+    metrics: {
+      grossRevenue: numericToNumber(metrics.gross_revenue),
+      taxAmount: numericToNumber(metrics.tax_amount),
+      damageWaiverAmount: numericToNumber(metrics.damage_waiver_amount),
+      invoiceCount: Number(metrics.invoice_count),
+      creditMemoCount: Number(metrics.credit_memo_count),
+      equipmentCount: Number(metrics.equipment_count),
+      leaseCount: Number(metrics.lease_count),
+      unmatchedAssetLines: Number(metrics.unmatched_asset_lines),
+    },
+    revenueByMonth: byMonthResult.rows.map((row) => ({
+      month: toIso(row.month),
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+    })),
+    revenueByEquipmentType: byEquipmentTypeResult.rows.map((row) => ({
+      equipmentType: row.equipment_type,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      lineCount: Number(row.line_count),
+      equipmentCount: Number(row.equipment_count),
+    })),
+    revenueByBranch: byBranchResult.rows.map((row) => ({
+      branchCode: row.branch_code,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      lineCount: Number(row.line_count),
+    })),
+    revenueByCustomer: byCustomerResult.rows.map((row) => ({
+      customerNumber: row.customer_number,
+      customerName: row.customer_name,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+    })),
+    revenueByLease: byLeaseResult.rows.map((row) => ({
+      leaseKey: row.lease_key,
+      customerNumber: row.customer_number,
+      customerName: row.customer_name,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+    })),
+    revenueByDealCode: byDealCodeResult.rows.map((row) => ({
+      dealCode: row.deal_code,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      lineCount: Number(row.line_count),
+    })),
+    arAging: arAgingResult.rows.map((row) => ({
+      bucket: row.bucket,
+      balance: numericToNumber(row.balance),
+      entryCount: Number(row.entry_count),
+    })),
+    recentRentalActivity: recentActivityResult.rows.map((row) => ({
+      entryNo: row.entry_no,
+      documentNo: row.document_no,
+      orderNo: row.order_no,
+      equipmentNo: row.equipment_no,
+      customerNo: row.customer_no,
+      postingDate: toIso(row.posting_date),
+      grossAmount: numericToNumber(row.gross_amount),
+      dealCode: row.deal_code,
+    })),
+    exceptions: {
+      unmatchedAssetLines: Number(exceptions.unmatched_asset_lines),
+      unmatchedCustomerInvoices: Number(exceptions.unmatched_customer_invoices),
+      missingDimensionLines: Number(exceptions.missing_dimension_lines),
+    },
+  };
+}
+
 export async function getFinancialDashboardOptimizedView() {
   const [
     metrics,
@@ -782,6 +1216,8 @@ type BusinessCentralInvoiceRegisterRow = {
   previous_document_type: string | null;
   previous_document_no: string | null;
   source_payload: Record<string, unknown> | null;
+  ledger_balance: string | null;
+  ledger_open_count: string | null;
 };
 
 async function getBusinessCentralInvoiceRegisterFast(
@@ -817,6 +1253,27 @@ async function getBusinessCentralInvoiceRegisterFast(
   const [result, appResult] = await Promise.all([
     pool.query<BusinessCentralInvoiceRegisterRow>(
       `
+        with ledger as (
+          select
+            document_no,
+            coalesce(
+              sum(
+                case
+                  when lower(coalesce(payload->>'Open', 'false')) = 'true' then
+                    coalesce(
+                      nullif(regexp_replace(coalesce(payload->>'Remaining_Amount', payload->>'Remaining_Amt_LCY', amount::text, '0'), '[^0-9.-]', '', 'g'), '')::numeric,
+                      0
+                    )
+                  else 0
+                end
+              ),
+              0
+            )::numeric(18,2) as ledger_balance,
+            count(*) filter (where lower(coalesce(payload->>'Open', 'false')) = 'true')::bigint as ledger_open_count
+          from bc_customer_ledger_entries
+          where document_no is not null
+          group by document_no
+        )
         select
           h.id,
           h.document_no as invoice_number,
@@ -830,9 +1287,12 @@ async function getBusinessCentralInvoiceRegisterFast(
           h.document_no as source_document_no,
           h.previous_doc_type as previous_document_type,
           h.previous_no as previous_document_no,
-          h.source_payload
+          h.source_payload,
+          ledger.ledger_balance,
+          ledger.ledger_open_count
         from bc_rmi_posted_rental_invoice_headers h
         left join customers c on c.customer_number = h.bill_to_customer_no
+        left join ledger on ledger.document_no = h.document_no
         ${where}
         order by h.posting_date desc nulls last, h.document_no desc
         limit $1
@@ -855,6 +1315,8 @@ async function getBusinessCentralInvoiceRegisterFast(
           source_document_type: string | null;
           source_document_no: string | null;
           previous_document_no: string | null;
+          ledger_balance: string | null;
+          ledger_open_count: string | null;
         }>(
           `
             select
@@ -870,7 +1332,9 @@ async function getBusinessCentralInvoiceRegisterFast(
               i.balance_amount::numeric(18,2) as balance_amount,
               coalesce(i.source_document_type, 'Metro AR Invoice') as source_document_type,
               coalesce(i.source_document_no, i.invoice_number) as source_document_no,
-              i.legacy_order_no as previous_document_no
+              i.legacy_order_no as previous_document_no,
+              null::numeric(18,2) as ledger_balance,
+              null::bigint as ledger_open_count
             from invoices i
             join customers cust on cust.id = i.customer_id
             left join contracts ct on ct.id = i.contract_id
@@ -902,8 +1366,11 @@ async function getBusinessCentralInvoiceRegisterFast(
       invoiceDate: toIso(row.invoice_date),
       dueDate: toIso(row.due_date),
       totalAmount: amount.amount,
-      balanceAmount: null,
-      balanceStatus: "Pending BC customer ledger import" as const,
+      balanceAmount: numericToNumber(row.ledger_balance),
+      balanceStatus:
+        Number(row.ledger_open_count ?? 0) > 0
+          ? ("Open in BC customer ledger" as const)
+          : ("Closed or no open BC ledger entry" as const),
       amountSource: amount.source,
       sourceDocumentType: row.source_document_type,
       sourceDocumentNo: row.source_document_no,
@@ -961,7 +1428,311 @@ async function getBusinessCentralInvoiceRegisterFast(
     pageSize,
     source: sourceFilter(filters.source),
     lineImport,
+    openBalanceAvailable: true,
   };
+}
+
+export async function getCustomerRevenueDetailView(customerId: string) {
+  const customerResult = await pool.query<{
+    id: string;
+    customer_number: string;
+  }>(
+    `
+      select id, customer_number
+      from customers
+      where id = $1 or customer_number = $1
+      limit 1
+    `,
+    [customerId],
+  );
+  const customer = customerResult.rows[0];
+  if (!customer) {
+    return null;
+  }
+
+  const customerNo = customer.customer_number;
+  const [summaryResult, equipmentResult, invoiceResult, leaseResult, revenueByMonthResult, branchResult] =
+    await Promise.all([
+      pool.query<{
+        invoice_count: string;
+        lease_count: string;
+        equipment_count: string;
+        gross_amount: string | null;
+        tax_amount: string | null;
+        damage_waiver_amount: string | null;
+        first_invoice_date: Date | null;
+        latest_invoice_date: Date | null;
+      }>(
+        `
+          with headers as (
+            select *
+            from bc_rmi_posted_rental_invoice_headers
+            where coalesce(bill_to_customer_no, sell_to_customer_no) = $1
+          )
+          select
+            count(distinct h.document_no)::bigint as invoice_count,
+            count(distinct h.previous_no) filter (where h.previous_no is not null)::bigint as lease_count,
+            count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as equipment_count,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_amount,
+            coalesce(sum(l.tax_amount), 0)::numeric(18,2) as tax_amount,
+            coalesce(sum(l.damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
+            min(h.posting_date) as first_invoice_date,
+            max(h.posting_date) as latest_invoice_date
+          from headers h
+          left join bc_rmi_posted_rental_lines l
+            on l.document_type = h.document_type
+           and l.document_no = h.document_no
+        `,
+        [customerNo],
+      ),
+      pool.query<{
+        asset_id: string | null;
+        asset_number: string | null;
+        asset_type: string | null;
+        invoice_count: string;
+        line_count: string;
+        gross_amount: string | null;
+        latest_invoice_date: Date | null;
+      }>(
+        `
+          with headers as (
+            select document_type, document_no, posting_date
+            from bc_rmi_posted_rental_invoice_headers
+            where coalesce(bill_to_customer_no, sell_to_customer_no) = $1
+          )
+          select
+            a.id as asset_id,
+            coalesce(a.asset_number, l.item_no) as asset_number,
+            a.type::text as asset_type,
+            count(distinct l.document_no)::bigint as invoice_count,
+            count(*)::bigint as line_count,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_amount,
+            max(h.posting_date) as latest_invoice_date
+          from headers h
+          join bc_rmi_posted_rental_lines l
+            on l.document_type = h.document_type
+           and l.document_no = h.document_no
+          left join assets a on a.asset_number = l.item_no and l.type = 'Fixed Asset'
+          where l.type = 'Fixed Asset'
+            and l.item_no is not null
+          group by a.id, a.asset_number, l.item_no, a.type
+          order by max(h.posting_date) desc nulls last, coalesce(sum(l.gross_amount), 0) desc
+          limit 40
+        `,
+        [customerNo],
+      ),
+      pool.query<{
+        invoice_number: string;
+        document_type: string;
+        lease_key: string | null;
+        posting_date: Date | null;
+        due_date: Date | null;
+        line_count: string;
+        gross_amount: string | null;
+      }>(
+        `
+          select
+            h.document_no as invoice_number,
+            h.document_type,
+            h.previous_no as lease_key,
+            h.posting_date,
+            h.due_date,
+            count(l.id)::bigint as line_count,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_amount
+          from bc_rmi_posted_rental_invoice_headers h
+          left join bc_rmi_posted_rental_lines l
+            on l.document_type = h.document_type
+           and l.document_no = h.document_no
+          where coalesce(h.bill_to_customer_no, h.sell_to_customer_no) = $1
+          group by h.document_no, h.document_type, h.previous_no, h.posting_date, h.due_date
+          order by h.posting_date desc nulls last, h.document_no desc
+          limit 40
+        `,
+        [customerNo],
+      ),
+      pool.query<{
+        lease_key: string;
+        invoice_count: string;
+        equipment_count: string;
+        gross_amount: string | null;
+        first_invoice_date: Date | null;
+        latest_invoice_date: Date | null;
+      }>(
+        `
+          with headers as (
+            select *
+            from bc_rmi_posted_rental_invoice_headers
+            where coalesce(bill_to_customer_no, sell_to_customer_no) = $1
+              and previous_no is not null
+          )
+          select
+            h.previous_no as lease_key,
+            count(distinct h.document_no)::bigint as invoice_count,
+            count(distinct l.item_no) filter (where l.type = 'Fixed Asset' and l.item_no is not null)::bigint as equipment_count,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_amount,
+            min(h.posting_date) as first_invoice_date,
+            max(h.posting_date) as latest_invoice_date
+          from headers h
+          left join bc_rmi_posted_rental_lines l
+            on l.document_type = h.document_type
+           and l.document_no = h.document_no
+          group by h.previous_no
+          order by max(h.posting_date) desc nulls last
+          limit 40
+        `,
+        [customerNo],
+      ),
+      pool.query<{
+        month: Date;
+        invoice_count: string;
+        gross_amount: string | null;
+      }>(
+        `
+          with headers as (
+            select document_type, document_no
+            from bc_rmi_posted_rental_invoice_headers
+            where coalesce(bill_to_customer_no, sell_to_customer_no) = $1
+          )
+          select
+            date_trunc('month', coalesce(l.invoice_from_date, l.posting_date)) as month,
+            count(distinct l.document_no)::bigint as invoice_count,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_amount
+          from headers h
+          join bc_rmi_posted_rental_lines l
+            on l.document_type = h.document_type
+           and l.document_no = h.document_no
+          where coalesce(l.invoice_from_date, l.posting_date) is not null
+          group by 1
+          order by 1 desc
+          limit 24
+        `,
+        [customerNo],
+      ),
+      pool.query<{
+        branch_code: string | null;
+        line_count: string;
+        gross_amount: string | null;
+      }>(
+        `
+          with headers as (
+            select document_type, document_no
+            from bc_rmi_posted_rental_invoice_headers
+            where coalesce(bill_to_customer_no, sell_to_customer_no) = $1
+          )
+          select
+            coalesce(l.location_code, l.shortcut_dimension1_code) as branch_code,
+            count(*)::bigint as line_count,
+            coalesce(sum(l.gross_amount), 0)::numeric(18,2) as gross_amount
+          from headers h
+          join bc_rmi_posted_rental_lines l
+            on l.document_type = h.document_type
+           and l.document_no = h.document_no
+          group by coalesce(l.location_code, l.shortcut_dimension1_code)
+          order by coalesce(sum(l.gross_amount), 0) desc
+          limit 12
+        `,
+        [customerNo],
+      ),
+    ]);
+
+  const summary = summaryResult.rows[0];
+  return {
+    summary: {
+      invoiceCount: Number(summary?.invoice_count ?? 0),
+      leaseCount: Number(summary?.lease_count ?? 0),
+      equipmentCount: Number(summary?.equipment_count ?? 0),
+      grossAmount: numericToNumber(summary?.gross_amount),
+      taxAmount: numericToNumber(summary?.tax_amount),
+      damageWaiverAmount: numericToNumber(summary?.damage_waiver_amount),
+      firstInvoiceDate: toIso(summary?.first_invoice_date ?? null),
+      latestInvoiceDate: toIso(summary?.latest_invoice_date ?? null),
+    },
+    equipment: equipmentResult.rows.map((row) => ({
+      assetId: row.asset_id,
+      assetNumber: row.asset_number,
+      assetType: row.asset_type,
+      invoiceCount: Number(row.invoice_count),
+      lineCount: Number(row.line_count),
+      grossAmount: numericToNumber(row.gross_amount),
+      latestInvoiceDate: toIso(row.latest_invoice_date),
+    })),
+    invoices: invoiceResult.rows.map((row) => ({
+      invoiceNumber: row.invoice_number,
+      documentType: row.document_type,
+      leaseKey: row.lease_key,
+      postingDate: toIso(row.posting_date),
+      dueDate: toIso(row.due_date),
+      lineCount: Number(row.line_count),
+      grossAmount: numericToNumber(row.gross_amount),
+    })),
+    leases: leaseResult.rows.map((row) => ({
+      leaseKey: row.lease_key,
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+      grossAmount: numericToNumber(row.gross_amount),
+      firstInvoiceDate: toIso(row.first_invoice_date),
+      latestInvoiceDate: toIso(row.latest_invoice_date),
+    })),
+    revenueByMonth: revenueByMonthResult.rows.map((row) => ({
+      month: toIso(row.month),
+      invoiceCount: Number(row.invoice_count),
+      grossAmount: numericToNumber(row.gross_amount),
+    })),
+    revenueByBranch: branchResult.rows.map((row) => ({
+      branchCode: row.branch_code ?? "Unassigned",
+      lineCount: Number(row.line_count),
+      grossAmount: numericToNumber(row.gross_amount),
+    })),
+  };
+}
+
+export async function getCustomerArLedgerView(customerId: string) {
+  const customerResult = await pool.query<{ customer_number: string }>(
+    `
+      select customer_number
+      from customers
+      where id = $1 or customer_number = $1
+      limit 1
+    `,
+    [customerId],
+  );
+  const customerNo = customerResult.rows[0]?.customer_number;
+  if (!customerNo) {
+    return [];
+  }
+
+  const result = await pool.query<{
+    id: string;
+    external_entry_no: string;
+    posting_date: Date | null;
+    document_no: string | null;
+    amount: string | null;
+    payload: Record<string, unknown>;
+  }>(
+    `
+      select id, external_entry_no, posting_date, document_no, amount, payload
+      from bc_customer_ledger_entries
+      where customer_no = $1
+      order by posting_date desc nulls last, external_entry_no desc
+      limit 100
+    `,
+    [customerNo],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    entryNo: row.external_entry_no,
+    postingDate: toIso(row.posting_date),
+    documentNo: row.document_no,
+    amount: numericToNumber(row.amount),
+    documentType: payloadText(row.payload, ["Document_Type"]),
+    description: payloadText(row.payload, ["Description"]),
+    dueDate: payloadText(row.payload, ["Due_Date"]),
+    remainingAmount: numericToNumber(
+      payloadText(row.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]),
+    ),
+    open: payloadText(row.payload, ["Open"]) === "true",
+  }));
 }
 
 export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
@@ -1014,9 +1785,32 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
     line_total: string | null;
     line_tax: string | null;
     asset_numbers: string | null;
+    ledger_balance: string | null;
+    ledger_open_count: string | null;
   }>(
     `
-      with app_rows as (
+      with ledger as (
+        select
+          document_no,
+          coalesce(
+            sum(
+              case
+                when lower(coalesce(payload->>'Open', 'false')) = 'true' then
+                  coalesce(
+                    nullif(regexp_replace(coalesce(payload->>'Remaining_Amount', payload->>'Remaining_Amt_LCY', amount::text, '0'), '[^0-9.-]', '', 'g'), '')::numeric,
+                    0
+                  )
+                else 0
+              end
+            ),
+            0
+          )::numeric(18,2) as ledger_balance,
+          count(*) filter (where lower(coalesce(payload->>'Open', 'false')) = 'true')::bigint as ledger_open_count
+        from bc_customer_ledger_entries
+        where document_no is not null
+        group by document_no
+      ),
+      app_rows as (
         select
           'app'::text as row_source,
           i.id,
@@ -1033,7 +1827,9 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
           coalesce(i.source_document_no, i.invoice_number) as source_document_no,
           null::text as previous_document_type,
           i.legacy_order_no as previous_document_no,
-          i.source_snapshot as source_payload
+          i.source_snapshot as source_payload,
+          null::numeric(18,2) as ledger_balance,
+          null::bigint as ledger_open_count
         from invoices i
         join customers cust on cust.id = i.customer_id
         left join contracts ct on ct.id = i.contract_id
@@ -1057,9 +1853,12 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
           h.document_no as source_document_no,
           h.previous_doc_type as previous_document_type,
           h.previous_no as previous_document_no,
-          h.source_payload
+          h.source_payload,
+          ledger.ledger_balance,
+          ledger.ledger_open_count
         from bc_rmi_posted_rental_invoice_headers h
         left join customers c on c.customer_number = h.bill_to_customer_no
+        left join ledger on ledger.document_no = h.document_no
         where $${sourceParam}::text in ('all', 'business_central')
         ${bcPageSearch}
       ),
@@ -1110,9 +1909,11 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
         invoiceDate: toIso(row.invoice_date),
         dueDate: toIso(row.due_date),
         totalAmount: amount.amount,
-        balanceAmount: null,
+        balanceAmount: numericToNumber(row.ledger_balance),
         balanceStatus:
-          "Pending BC customer ledger import" as const,
+          Number(row.ledger_open_count ?? 0) > 0
+            ? ("Open in BC customer ledger" as const)
+            : ("Closed or no open BC ledger entry" as const),
         amountSource: amount.source,
         sourceDocumentType: row.source_document_type,
         sourceDocumentNo: row.source_document_no,
@@ -1165,7 +1966,7 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
     pageSize,
     source,
     lineImport,
-    openBalanceAvailable: false,
+    openBalanceAvailable: true,
   };
 }
 
@@ -1212,41 +2013,60 @@ export async function getInvoiceDetailView(invoiceNo: string) {
 
   if (appInvoiceResult.rows[0]) {
     const invoice = appInvoiceResult.rows[0];
-    const linesResult = await pool.query<{
-      id: string;
-      line_no: number | null;
-      description: string;
-      quantity: string;
-      unit_price: string;
-      total_amount: string;
-      asset_id: string | null;
-      asset_number: string | null;
-      service_period_start: Date | null;
-      service_period_end: Date | null;
-      line_kind: string | null;
-      source_item_no: string | null;
-    }>(
-      `
-        select
-          il.id,
-          il.source_line_no as line_no,
-          il.description,
-          il.quantity,
-          il.unit_price,
-          il.total_amount,
-          a.id as asset_id,
-          a.asset_number,
-          il.service_period_start,
-          il.service_period_end,
-          il.line_kind::text,
-          il.source_item_no
-        from invoice_lines il
-        left join assets a on a.id = il.asset_id
-        where il.invoice_id = $1
-        order by il.source_line_no nulls last, il.created_at
-      `,
-      [invoice.id],
-    );
+    const [linesResult, ledgerResult] = await Promise.all([
+      pool.query<{
+        id: string;
+        line_no: number | null;
+        description: string;
+        quantity: string;
+        unit_price: string;
+        total_amount: string;
+        asset_id: string | null;
+        asset_number: string | null;
+        service_period_start: Date | null;
+        service_period_end: Date | null;
+        line_kind: string | null;
+        source_item_no: string | null;
+      }>(
+        `
+          select
+            il.id,
+            il.source_line_no as line_no,
+            il.description,
+            il.quantity,
+            il.unit_price,
+            il.total_amount,
+            a.id as asset_id,
+            a.asset_number,
+            il.service_period_start,
+            il.service_period_end,
+            il.line_kind::text,
+            il.source_item_no
+          from invoice_lines il
+          left join assets a on a.id = il.asset_id
+          where il.invoice_id = $1
+          order by il.source_line_no nulls last, il.created_at
+        `,
+        [invoice.id],
+      ),
+      pool.query<{
+        id: string;
+        external_entry_no: string;
+        posting_date: Date | null;
+        customer_no: string | null;
+        document_no: string | null;
+        amount: string | null;
+        payload: Record<string, unknown>;
+      }>(
+        `
+          select id, external_entry_no, posting_date, customer_no, document_no, amount, payload
+          from bc_customer_ledger_entries
+          where document_no = $1
+          order by posting_date desc nulls last, external_entry_no desc
+        `,
+        [invoice.invoice_number],
+      ),
+    ]);
     return {
       source: "app" as const,
       summary: {
@@ -1285,6 +2105,21 @@ export async function getInvoiceDetailView(invoiceNo: string) {
         postingDate: toIso(invoice.invoice_date),
       })),
       assets: [],
+      ledgerEntries: ledgerResult.rows.map((entry) => ({
+        id: entry.id,
+        entryNo: entry.external_entry_no,
+        postingDate: toIso(entry.posting_date),
+        customerNo: entry.customer_no,
+        documentNo: entry.document_no,
+        amount: numericToNumber(entry.amount),
+        remainingAmount: numericToNumber(
+          payloadText(entry.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]),
+        ),
+        documentType: payloadText(entry.payload, ["Document_Type"]),
+        description: payloadText(entry.payload, ["Description"]),
+        dueDate: payloadText(entry.payload, ["Due_Date"]),
+        open: payloadText(entry.payload, ["Open"]) === "true",
+      })),
       lineImport,
     };
   }
@@ -1333,7 +2168,7 @@ export async function getInvoiceDetailView(invoiceNo: string) {
     return null;
   }
 
-  const [linesResult, assetsResult] = await Promise.all([
+  const [linesResult, assetsResult, ledgerResult] = await Promise.all([
     pool.query<{
       id: string;
       line_no: number;
@@ -1416,6 +2251,23 @@ export async function getInvoiceDetailView(invoiceNo: string) {
       `,
       [header.document_type, header.document_no],
     ),
+    pool.query<{
+      id: string;
+      external_entry_no: string;
+      posting_date: Date | null;
+      customer_no: string | null;
+      document_no: string | null;
+      amount: string | null;
+      payload: Record<string, unknown>;
+    }>(
+      `
+        select id, external_entry_no, posting_date, customer_no, document_no, amount, payload
+        from bc_customer_ledger_entries
+        where document_no = $1
+        order by posting_date desc nulls last, external_entry_no desc
+      `,
+      [header.document_no],
+    ),
   ]);
 
   const lineCount = linesResult.rows.length;
@@ -1428,6 +2280,18 @@ export async function getInvoiceDetailView(invoiceNo: string) {
     lineTotal,
     sourcePayload: header.source_payload,
   });
+  const ledgerBalance = ledgerResult.rows.reduce((sum, entry) => {
+    if (payloadText(entry.payload, ["Open"]) !== "true") {
+      return sum;
+    }
+    return (
+      sum +
+      numericToNumber(
+        payloadText(entry.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]) ??
+          entry.amount,
+      )
+    );
+  }, 0);
 
   return {
     source: "business_central" as const,
@@ -1449,8 +2313,11 @@ export async function getInvoiceDetailView(invoiceNo: string) {
       invoiceDate: toIso(header.document_date) ?? toIso(header.posting_date),
       dueDate: toIso(header.due_date),
       totalAmount: amount.amount,
-      balanceAmount: null,
-      balanceStatus: "Pending BC customer ledger import" as const,
+      balanceAmount: ledgerBalance,
+      balanceStatus:
+        ledgerResult.rows.some((entry) => payloadText(entry.payload, ["Open"]) === "true")
+          ? ("Open in BC customer ledger" as const)
+          : ("Closed or no open BC ledger entry" as const),
       amountSource: amount.source,
       sourceDocumentType: header.document_type,
       sourceDocumentNo: header.document_no,
@@ -1491,6 +2358,21 @@ export async function getInvoiceDetailView(invoiceNo: string) {
       grossAmount: numericToNumber(asset.gross_amount),
       firstPeriod: toIso(asset.first_period),
       lastPeriod: toIso(asset.last_period),
+    })),
+    ledgerEntries: ledgerResult.rows.map((entry) => ({
+      id: entry.id,
+      entryNo: entry.external_entry_no,
+      postingDate: toIso(entry.posting_date),
+      customerNo: entry.customer_no,
+      documentNo: entry.document_no,
+      amount: numericToNumber(entry.amount),
+      remainingAmount: numericToNumber(
+        payloadText(entry.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]),
+      ),
+      documentType: payloadText(entry.payload, ["Document_Type"]),
+      description: payloadText(entry.payload, ["Description"]),
+      dueDate: payloadText(entry.payload, ["Due_Date"]),
+      open: payloadText(entry.payload, ["Open"]) === "true",
     })),
     lineImport,
   };

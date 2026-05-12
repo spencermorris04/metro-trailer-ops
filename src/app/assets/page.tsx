@@ -26,8 +26,8 @@ export default async function AssetsOverviewPage() {
         description="Fleet, leases, imported BC/RMI invoice history, and accounting readiness in one operating view."
         actions={
           <>
-            <WorkspaceLink href="/assets/fleet" className="btn-secondary">
-              Fleet
+            <WorkspaceLink href="/equipment" className="btn-secondary">
+              Equipment
             </WorkspaceLink>
             <WorkspaceLink href="/leases" className="btn-secondary">
               Leases
@@ -80,8 +80,8 @@ export default async function AssetsOverviewPage() {
                 </div>
               ))}
             </div>
-            <WorkspaceLink href="/assets/fleet" className="btn-primary">
-              Open fleet register
+            <WorkspaceLink href="/equipment" className="btn-primary">
+              Open equipment register
             </WorkspaceLink>
           </div>
         </SectionCard>
