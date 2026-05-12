@@ -58,22 +58,24 @@ const railItems: Array<{
   icon: IconName;
 }> = [
   { href: "/", label: "Favorites", icon: "home" },
-  { href: "/commercial-events", label: "Transactions", icon: "file-text" },
+  { href: "/equipment", label: "Equipment", icon: "truck" },
+  { href: "/customers", label: "Customers", icon: "users" },
+  { href: "/leases", label: "Leases", icon: "file-text" },
   { href: "/reports", label: "Tools", icon: "wrench" },
   { href: "/portal", label: "User Tools", icon: "user" },
   { href: "/cash", label: "End Of Day", icon: "clipboard" },
   { href: "/financial", label: "Accounting", icon: "dollar" },
-  { href: "/ap/bills", label: "Purchase Orders", icon: "folder" },
+  { href: "/ap/bills", label: "AP / Vendors", icon: "folder" },
 ];
 
 const categoryItems = [
-  { href: "/assets", label: "Inventory" },
-  { href: "/commercial-events", label: "Transactions" },
-  { href: "/financial", label: "Income" },
-  { href: "/reports", label: "Other" },
-  { href: "/maintenance", label: "Maintenance" },
+  { href: "/equipment", label: "Equipment" },
+  { href: "/customers", label: "Customers" },
+  { href: "/leases", label: "Leases" },
+  { href: "/financial", label: "Revenue / Accounting" },
   { href: "/dispatch", label: "Logistics" },
-  { href: "/customers", label: "CRM / Sales" },
+  { href: "/maintenance", label: "Maintenance" },
+  { href: "/reports", label: "Reports" },
   { href: "/integrations", label: "Configuration" },
 ];
 
