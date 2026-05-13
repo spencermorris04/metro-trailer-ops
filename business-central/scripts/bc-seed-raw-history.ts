@@ -9,6 +9,8 @@ type DatasetConfig = {
   serviceName: string;
   tableName: string;
   description: string;
+  incrementalFilterField?: string;
+  projectionEntityType?: string;
   map: (row: Row, runId: string) => Row | null;
 };
 
@@ -22,6 +24,11 @@ type Options = {
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
   requestTimeoutMs: number;
+  incremental: boolean;
+  windowHours: number;
+  windowEnd: Date;
+  dryRun: boolean;
+  emitProjectionEvents: boolean;
 };
 
 const API_BASE_URL = "https://api.businesscentral.dynamics.com/v2.0";
@@ -30,6 +37,15 @@ const DEFAULT_DATASETS = [
   "chart-of-accounts",
   "dimension-sets",
   "dimension-set-entries",
+  "posted-rental-invoice",
+  "posted-rental-header",
+  "posted-rental-line",
+  "ws-rental-ledger-entries",
+  "customer-ledger-entries",
+  "gl-entries",
+] as const;
+
+const DEFAULT_INCREMENTAL_DATASETS = [
   "posted-rental-invoice",
   "posted-rental-header",
   "posted-rental-line",
@@ -78,6 +94,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "Posted_Rental_Invoice_Excel",
     tableName: "bc_rmi_posted_rental_invoice_headers",
     description: "RMI posted rental invoice headers.",
+    incrementalFilterField: "PostingDate",
+    projectionEntityType: "invoice",
     map: (row, runId) => {
       const documentNo = text(row, "No");
       const documentType = textAny(row, ["Document_Type", "DocumentType"]) || "Posted Invoice";
@@ -109,6 +127,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "WSPostedRentalHeader",
     tableName: "bc_rmi_posted_rental_headers",
     description: "RMI posted rental headers.",
+    incrementalFilterField: "PostingDate",
+    projectionEntityType: "invoice",
     map: (row, runId) => {
       const documentNo = textAny(row, ["No", "DocumentNo"]);
       const documentType = textAny(row, ["DocumentType", "Document_Type"]) || "Posted Invoice";
@@ -149,6 +169,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "WSPostedRentalLine",
     tableName: "bc_rmi_posted_rental_lines",
     description: "RMI posted rental lines.",
+    incrementalFilterField: "PostingDate",
+    projectionEntityType: "invoice_line",
     map: (row, runId) => {
       const documentNo = text(row, "DocumentNo");
       const documentType = text(row, "DocumentType") || "Posted Invoice";
@@ -202,6 +224,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "RentalLedgerEntries",
     tableName: "bc_rmi_rental_ledger_entries",
     description: "RMI rental ledger entries.",
+    incrementalFilterField: "PostingDate",
+    projectionEntityType: "rental_ledger_entry",
     map: (row, runId) => mapRentalLedger(row, runId, "bcrle"),
   },
   {
@@ -209,6 +233,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "WSRentalLedgerEntries",
     tableName: "bc_rmi_ws_rental_ledger_entries",
     description: "RMI WS rental ledger entries with order/deal metadata.",
+    incrementalFilterField: "PostingDate",
+    projectionEntityType: "rental_ledger_entry",
     map: (row, runId) => mapRentalLedger(row, runId, "bcwsrle"),
   },
   {
@@ -216,6 +242,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "CustomerLedgerEntries",
     tableName: "bc_customer_ledger_entries",
     description: "Business Central customer ledger entries.",
+    incrementalFilterField: "Posting_Date",
+    projectionEntityType: "customer_ledger_entry",
     map: (row) => {
       const entryNo = entryNoText(row);
       if (!entryNo) return null;
@@ -236,6 +264,8 @@ const DATASETS: DatasetConfig[] = [
     serviceName: "G_LEntries",
     tableName: "bc_gl_entries",
     description: "Business Central general ledger entries.",
+    incrementalFilterField: "Posting_Date",
+    projectionEntityType: "gl_entry",
     map: (row) => {
       const entryNo = entryNoText(row);
       if (!entryNo) return null;
@@ -361,9 +391,21 @@ function parseArgs(argv: string[]): Options {
     retryBaseDelayMs: positiveInt(process.env.BC_RAW_HISTORY_RETRY_BASE_DELAY_MS || "2000", "BC_RAW_HISTORY_RETRY_BASE_DELAY_MS"),
     retryMaxDelayMs: positiveInt(process.env.BC_RAW_HISTORY_RETRY_MAX_DELAY_MS || "120000", "BC_RAW_HISTORY_RETRY_MAX_DELAY_MS"),
     requestTimeoutMs: positiveInt(process.env.BC_RAW_HISTORY_REQUEST_TIMEOUT_MS || "90000", "BC_RAW_HISTORY_REQUEST_TIMEOUT_MS"),
+    incremental: false,
+    windowHours: positiveInt(process.env.BC_INCREMENTAL_WINDOW_HOURS || "36", "BC_INCREMENTAL_WINDOW_HOURS"),
+    windowEnd: process.env.BC_INCREMENTAL_WINDOW_END
+      ? parseDateArg(process.env.BC_INCREMENTAL_WINDOW_END, "BC_INCREMENTAL_WINDOW_END")
+      : new Date(),
+    dryRun: false,
+    emitProjectionEvents: false,
   };
 
   for (const arg of argv) {
+    if (arg === "--incremental") {
+      options.incremental = true;
+      options.datasets = [...DEFAULT_INCREMENTAL_DATASETS];
+      continue;
+    }
     if (arg.startsWith("--datasets=")) {
       const raw = arg.slice("--datasets=".length).trim();
       options.datasets =
@@ -382,6 +424,22 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg === "--no-resume") {
       options.resume = false;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (arg === "--emit-projection-events") {
+      options.emitProjectionEvents = true;
+      continue;
+    }
+    if (arg.startsWith("--window-hours=")) {
+      options.windowHours = positiveInt(arg.slice("--window-hours=".length), "--window-hours");
+      continue;
+    }
+    if (arg.startsWith("--window-end=")) {
+      options.windowEnd = parseDateArg(arg.slice("--window-end=".length), "--window-end");
       continue;
     }
     if (arg.startsWith("--concurrency=")) {
@@ -405,6 +463,18 @@ function parseArgs(argv: string[]): Options {
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  if (options.incremental) {
+    const unsupportedDatasets = options.datasets.filter((key) => {
+      const dataset = DATASETS.find((candidate) => candidate.key === key);
+      return !dataset?.incrementalFilterField;
+    });
+    if (unsupportedDatasets.length > 0) {
+      throw new Error(
+        `Incremental mode requires datasets with known date filters. Unsupported: ${unsupportedDatasets.join(", ")}`,
+      );
+    }
   }
 
   return options;
@@ -440,30 +510,67 @@ async function seedDataset(
   options: Options,
 ) {
   const runId = `bcraw_${dataset.key}_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`;
-  const checkpointId = `bcraw:${dataset.key}`;
+  const checkpointId = options.incremental ? `bcraw-incremental:${dataset.key}` : `bcraw:${dataset.key}`;
   const company = requireEnv("METRO_BC_COMPANY");
-  const total = await fetchODataCount(tokenState, dataset.serviceName, company);
+  const windowStart = options.incremental
+    ? new Date(options.windowEnd.getTime() - options.windowHours * 60 * 60 * 1000)
+    : null;
+  const filter = windowStart
+    ? buildDateWindowFilter(dataset, windowStart, options.windowEnd)
+    : null;
+  const total = await fetchODataCount(tokenState, dataset.serviceName, company, filter);
 
-  await pool.query(
-    `insert into bc_import_runs (id, provider, entity_type, status, started_at, records_seen, records_inserted, records_updated, records_skipped, records_failed, job_version, metadata)
-     values ($1, 'business_central', $2, 'running', now(), 0, 0, 0, 0, 0, $3, $4)
-     on conflict (id) do update set status = 'running', started_at = now(), metadata = excluded.metadata`,
-    [
-      runId,
-      `raw:${dataset.key}`,
-      "bc-seed-raw-history:v2",
-      JSON.stringify({
-        total,
-        serviceName: dataset.serviceName,
-        concurrency: options.concurrency,
-        maxRetries: options.maxRetries,
-      }),
-    ],
-  );
+  if (!options.dryRun) {
+    await pool.query(
+      `insert into bc_import_runs (
+         id,
+         provider,
+         entity_type,
+         status,
+         source_window_start,
+         source_window_end,
+         started_at,
+         records_seen,
+         records_inserted,
+         records_updated,
+         records_skipped,
+         records_failed,
+         job_version,
+         metadata
+       )
+       values ($1, 'business_central', $2, 'running', $3, $4, now(), 0, 0, 0, 0, 0, $5, $6)
+       on conflict (id) do update set
+         status = 'running',
+         source_window_start = excluded.source_window_start,
+         source_window_end = excluded.source_window_end,
+         started_at = now(),
+         metadata = excluded.metadata`,
+      [
+        runId,
+        options.incremental ? `raw-incremental:${dataset.key}` : `raw:${dataset.key}`,
+        windowStart,
+        options.incremental ? options.windowEnd : null,
+        options.incremental ? "bc-seed-raw-history:incremental:v1" : "bc-seed-raw-history:v2",
+        JSON.stringify({
+          total,
+          serviceName: dataset.serviceName,
+          concurrency: options.concurrency,
+          maxRetries: options.maxRetries,
+          incremental: options.incremental,
+          filter,
+          dryRun: options.dryRun,
+        }),
+      ],
+    );
+  }
 
-  const checkpoint = options.resume
+  const loadedCheckpoint = options.resume && !options.dryRun
     ? await loadCheckpoint(pool, checkpointId, dataset.serviceName, options.pageSize)
     : null;
+  const checkpoint =
+    loadedCheckpoint && (!options.incremental || loadedCheckpoint.filter === filter)
+      ? loadedCheckpoint
+      : null;
 
   if (checkpoint?.done) {
     console.log(
@@ -483,7 +590,7 @@ async function seedDataset(
   const totalPages = total === null ? null : Math.ceil(total / options.pageSize);
 
   console.log(
-    `[${dataset.key}] starting at page ${pageNumber}, seen ${recordsSeen}/${total ?? "unknown"}, concurrency ${options.concurrency}`,
+    `[${dataset.key}] starting at page ${pageNumber}, seen ${recordsSeen}/${total ?? "unknown"}, concurrency ${options.concurrency}${filter ? `, filter ${filter}` : ""}${options.dryRun ? ", dry-run" : ""}`,
   );
 
   try {
@@ -518,52 +625,61 @@ async function seedDataset(
       const done = reachedEnd || (totalPages !== null && pageNumber >= totalPages);
       const nextUrl = done || stoppedAtPageLimit
         ? ""
-        : buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, pageNumber * options.pageSize);
-      await saveCheckpoint(pool, {
-        id: checkpointId,
-        runId,
-        entityType: `raw:${dataset.key}`,
-        serviceName: dataset.serviceName,
-        pageSize: options.pageSize,
-        pageNumber,
-        nextUrl,
-        recordsSeen,
-        total,
-        done: done && !stoppedAtPageLimit,
-      });
-      await pool.query(
-        `update bc_import_runs set records_seen = $2, records_inserted = $3, updated_at = now(), metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
-        [runId, recordsSeen, recordsInserted, JSON.stringify({ total, pageNumber })],
-      );
+        : buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, pageNumber * options.pageSize, filter);
+      if (!options.dryRun) {
+        await saveCheckpoint(pool, {
+          id: checkpointId,
+          runId,
+          entityType: options.incremental ? `raw-incremental:${dataset.key}` : `raw:${dataset.key}`,
+          serviceName: dataset.serviceName,
+          pageSize: options.pageSize,
+          pageNumber,
+          nextUrl,
+          recordsSeen,
+          total,
+          done: done && !stoppedAtPageLimit,
+          windowStart,
+          windowEnd: options.incremental ? options.windowEnd : null,
+          filter,
+        });
+        await pool.query(
+          `update bc_import_runs set records_seen = $2, records_inserted = $3, updated_at = now(), metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
+          [runId, recordsSeen, recordsInserted, JSON.stringify({ total, pageNumber, filter })],
+        );
+      }
 
       if (done || stoppedAtPageLimit) break;
     }
 
-    await pool.query(
-      `update bc_import_runs set status = 'succeeded', finished_at = now(), records_seen = $2, records_inserted = $3, updated_at = now(), metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
-      [runId, recordsSeen, recordsInserted, JSON.stringify({ total, completedAt: new Date().toISOString() })],
-    );
+    if (!options.dryRun) {
+      await pool.query(
+        `update bc_import_runs set status = 'succeeded', finished_at = now(), records_seen = $2, records_inserted = $3, updated_at = now(), metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb where id = $1`,
+        [runId, recordsSeen, recordsInserted, JSON.stringify({ total, completedAt: new Date().toISOString(), filter })],
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await pool.query(
-      `update bc_import_runs
-       set status = 'failed',
-           finished_at = now(),
-           records_seen = $2,
-           records_inserted = $3,
-           records_failed = records_failed + 1,
-           error_summary = $4,
-           updated_at = now(),
-           metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
-       where id = $1`,
-      [
-        runId,
-        recordsSeen,
-        recordsInserted,
-        message.slice(0, 2048),
-        JSON.stringify({ total, pageNumber, failedAt: new Date().toISOString() }),
-      ],
-    );
+    if (!options.dryRun) {
+      await pool.query(
+        `update bc_import_runs
+         set status = 'failed',
+             finished_at = now(),
+             records_seen = $2,
+             records_inserted = $3,
+             records_failed = records_failed + 1,
+             error_summary = $4,
+             updated_at = now(),
+             metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
+         where id = $1`,
+        [
+          runId,
+          recordsSeen,
+          recordsInserted,
+          message.slice(0, 2048),
+          JSON.stringify({ total, pageNumber, filter, failedAt: new Date().toISOString() }),
+        ],
+      );
+    }
     throw error;
   }
 }
@@ -577,7 +693,17 @@ async function processPage(
   runId: string,
   pageNumber: number,
 ) {
-  const url = buildODataCollectionUrl(dataset.serviceName, options.pageSize, company, pageNumber * options.pageSize);
+  const windowStart = options.incremental
+    ? new Date(options.windowEnd.getTime() - options.windowHours * 60 * 60 * 1000)
+    : null;
+  const filter = windowStart ? buildDateWindowFilter(dataset, windowStart, options.windowEnd) : null;
+  const url = buildODataCollectionUrl(
+    dataset.serviceName,
+    options.pageSize,
+    company,
+    pageNumber * options.pageSize,
+    filter,
+  );
   const page = await fetchJsonWithRefresh(url, tokenState, options);
   const sourceRows = normalizeRows(page.value);
   const mappedRows = sourceRows
@@ -585,8 +711,11 @@ async function processPage(
     .filter((row): row is Row => Boolean(row));
   const dedupedRows = dedupeRowsById(mappedRows);
 
-  if (dedupedRows.length > 0) {
+  if (dedupedRows.length > 0 && !options.dryRun) {
     await bulkUpsert(pool, dataset.tableName, dedupedRows);
+    if (options.emitProjectionEvents) {
+      await enqueueProjectionEvents(pool, dataset, dedupedRows);
+    }
   }
 
   return {
@@ -621,7 +750,13 @@ async function loadCheckpoint(
   const result = await pool.query<{
     page_number: number;
     cursor: string | null;
-    checkpoint_data: { serviceName?: string; pageSize?: number; recordsSeen?: number; done?: boolean } | null;
+    checkpoint_data: {
+      serviceName?: string;
+      pageSize?: number;
+      recordsSeen?: number;
+      done?: boolean;
+      filter?: string | null;
+    } | null;
   }>(
     `select page_number, cursor, checkpoint_data from bc_import_checkpoints where id = $1`,
     [id],
@@ -636,6 +771,7 @@ async function loadCheckpoint(
     nextUrl: row.cursor || null,
     recordsSeen: Number(row.checkpoint_data?.recordsSeen ?? 0),
     done: Boolean(row.checkpoint_data?.done),
+    filter: row.checkpoint_data?.filter ?? null,
   };
 }
 
@@ -652,24 +788,47 @@ async function saveCheckpoint(
     recordsSeen: number;
     total: number | null;
     done: boolean;
+    windowStart?: Date | null;
+    windowEnd?: Date | null;
+    filter?: string | null;
   },
 ) {
   await pool.query(
-    `insert into bc_import_checkpoints (id, entity_type, run_id, cursor, page_number, checkpoint_data, updated_at)
-     values ($1, $2, $3, $4, $5, $6, now())
-     on conflict (id) do update set run_id = excluded.run_id, cursor = excluded.cursor, page_number = excluded.page_number, checkpoint_data = excluded.checkpoint_data, updated_at = now()`,
+    `insert into bc_import_checkpoints (
+       id,
+       entity_type,
+       run_id,
+       cursor,
+       page_number,
+       window_start,
+       window_end,
+       checkpoint_data,
+       updated_at
+     )
+     values ($1, $2, $3, $4, $5, $6, $7, $8, now())
+     on conflict (id) do update set
+       run_id = excluded.run_id,
+       cursor = excluded.cursor,
+       page_number = excluded.page_number,
+       window_start = excluded.window_start,
+       window_end = excluded.window_end,
+       checkpoint_data = excluded.checkpoint_data,
+       updated_at = now()`,
     [
       input.id,
       input.entityType,
       input.runId,
       input.nextUrl || null,
       input.pageNumber,
+      input.windowStart ?? null,
+      input.windowEnd ?? null,
       JSON.stringify({
         recordsSeen: input.recordsSeen,
         total: input.total,
         done: input.done,
         serviceName: input.serviceName,
         pageSize: input.pageSize,
+        filter: input.filter ?? null,
       }),
     ],
   );
@@ -694,6 +853,52 @@ async function bulkUpsert(pool: Pool, tableName: string, rows: Row[]) {
     `insert into ${quoteIdent(tableName)} (${columns.map(quoteIdent).join(", ")})
      values ${tuples.join(", ")}
      on conflict (id) do update set ${updates}`,
+    values,
+  );
+}
+
+async function enqueueProjectionEvents(pool: Pool, dataset: DatasetConfig, rows: Row[]) {
+  const values: unknown[] = [];
+  const tuples = rows.map((row, rowIndex) => {
+    const sourceId = String(row.id);
+    const payload = {
+      dataset: dataset.key,
+      tableName: dataset.tableName,
+      documentType: row.document_type ?? null,
+      documentNo: row.document_no ?? null,
+      lineNo: row.line_no ?? null,
+      entryNo: row.external_entry_no ?? null,
+      customerNo: row.customer_no ?? row.bill_to_customer_no ?? row.sell_to_customer_no ?? null,
+      assetNo: row.item_no ?? row.no_shipped ?? null,
+      leaseKey: row.previous_no ?? row.order_no ?? null,
+      importedAt: new Date().toISOString(),
+    };
+    values.push(
+      `bc-incremental:${dataset.key}:${sourceId}:${Date.now()}:${rowIndex}`,
+      "bc_raw_upserted",
+      dataset.tableName,
+      sourceId,
+      dataset.projectionEntityType ?? null,
+      sourceId,
+      JSON.stringify(payload),
+    );
+    const offset = rowIndex * 7;
+    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb)`;
+  });
+
+  if (tuples.length === 0) return;
+
+  await pool.query(
+    `insert into projection_events (
+       id,
+       event_type,
+       source_table,
+       source_id,
+       entity_type,
+       entity_id,
+       payload
+     )
+     values ${tuples.join(", ")}`,
     values,
   );
 }
@@ -755,10 +960,17 @@ async function fetchJsonWithRefresh(url: string, tokenState: { value: string }, 
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-async function fetchODataCount(tokenState: { value: string }, serviceName: string, company: string) {
-  const url = `${getODataRootUrl()}/${serviceName}/$count?company=${encodeURIComponent(company)}`;
+async function fetchODataCount(
+  tokenState: { value: string },
+  serviceName: string,
+  company: string,
+  filter?: string | null,
+) {
+  const url = new URL(`${getODataRootUrl()}/${serviceName}/$count`);
+  url.searchParams.set("company", company);
+  if (filter) url.searchParams.set("$filter", filter);
   try {
-    const response = await fetchWithTimeout(url, positiveInt(process.env.BC_RAW_HISTORY_REQUEST_TIMEOUT_MS || "90000", "BC_RAW_HISTORY_REQUEST_TIMEOUT_MS"), {
+    const response = await fetchWithTimeout(url.toString(), positiveInt(process.env.BC_RAW_HISTORY_REQUEST_TIMEOUT_MS || "90000", "BC_RAW_HISTORY_REQUEST_TIMEOUT_MS"), {
       headers: { Authorization: `Bearer ${tokenState.value}`, Accept: "application/json" },
     });
     if (!response.ok) return null;
@@ -789,11 +1001,18 @@ function getODataRootUrl() {
   return `${API_BASE_URL}/${encodeURIComponent(requireEnv("METRO_GRAPH_TENANT_ID"))}/${encodeURIComponent(requireEnv("METRO_BC_ENVIRONMENT"))}/ODataV4`;
 }
 
-function buildODataCollectionUrl(serviceName: string, pageSize: number, company: string, skip: number) {
+function buildODataCollectionUrl(
+  serviceName: string,
+  pageSize: number,
+  company: string,
+  skip: number,
+  filter?: string | null,
+) {
   const url = new URL(`${getODataRootUrl()}/${serviceName}`);
   url.searchParams.set("company", company);
   url.searchParams.set("$top", String(pageSize));
   if (skip > 0) url.searchParams.set("$skip", String(skip));
+  if (filter) url.searchParams.set("$filter", filter);
   return url.toString();
 }
 
@@ -819,6 +1038,28 @@ function positiveInt(value: string, flag: string) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${flag} must be a positive integer.`);
   return parsed;
+}
+
+function parseDateArg(value: string, flag: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${flag} must be a valid ISO date or date-time.`);
+  }
+  return parsed;
+}
+
+function buildDateWindowFilter(dataset: DatasetConfig, windowStart: Date, windowEnd: Date) {
+  if (!dataset.incrementalFilterField) {
+    throw new Error(`${dataset.key} does not define an incremental filter field.`);
+  }
+
+  const start = formatODataDateLiteral(windowStart);
+  const end = formatODataDateLiteral(windowEnd);
+  return `${dataset.incrementalFilterField} ge ${start} and ${dataset.incrementalFilterField} le ${end}`;
+}
+
+function formatODataDateLiteral(value: Date) {
+  return value.toISOString().slice(0, 10);
 }
 
 function isRetryableHttpStatus(status: number) {
