@@ -4,7 +4,7 @@ import {
   type GlobalSearchGroup,
   type GlobalSearchResult,
 } from "@/lib/search-core";
-import { queryGlobalSearchIndex } from "@/lib/server/search-index";
+import { searchWorkspaceEntities } from "@/lib/server/search/search-provider";
 
 type SearchOptions = {
   query: string;
@@ -53,7 +53,7 @@ export async function searchWorkspace({ query, store }: SearchOptions) {
     };
   }
 
-  const indexedResults = await queryGlobalSearchIndex(trimmed, store);
+  const indexedResults = await searchWorkspaceEntities(trimmed, store);
   const groups: GlobalSearchGroup[] = groupSearchResults([
     { id: "pages", label: "Pages", results: pageResults },
     { id: "assets", label: "Fleet", results: bySource(indexedResults, "assets") },

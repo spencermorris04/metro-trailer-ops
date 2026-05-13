@@ -15,6 +15,7 @@ import {
   listWorkOrders,
 } from "@/lib/server/platform-operations.production";
 import { numericToNumber, toIso } from "@/lib/server/production-utils";
+import { getCachedView } from "@/lib/server/workspace-cache";
 
 type AssetListFilters = {
   q?: string;
@@ -290,144 +291,157 @@ export async function getAssetListView(filters?: AssetListFilters) {
 }
 
 export async function getAssetDetailView(assetId: string) {
-  const [assets, assetRows, contractLinks, inspections, workOrders, bcMapping] =
-    await Promise.all([
-      listAssets(),
-      db
-        .select({
-          id: schema.assets.id,
-          assetNumber: schema.assets.assetNumber,
-          type: schema.assets.type,
-          subtype: schema.assets.subtype,
-          branchCode: schema.branches.code,
-          branchName: schema.branches.name,
-          status: schema.assets.status,
-          availability: schema.assets.availability,
-          maintenanceStatus: schema.assets.maintenanceStatus,
-          serialNumber: schema.assets.serialNumber,
-          manufacturer: schema.assets.manufacturer,
-          modelYear: schema.assets.modelYear,
-          registrationNumber: schema.assets.registrationNumber,
-          faClassCode: schema.assets.faClassCode,
-          faSubclassCode: schema.assets.faSubclassCode,
-          bcLocationCode: schema.assets.bcLocationCode,
-          bcDimension1Code: schema.assets.bcDimension1Code,
-          bcProductNo: schema.assets.bcProductNo,
-          bcServiceItemNo: schema.assets.bcServiceItemNo,
-          isBlocked: schema.assets.isBlocked,
-          isInactive: schema.assets.isInactive,
-          isDisposed: schema.assets.isDisposed,
-          isOnRent: schema.assets.isOnRent,
-          isInService: schema.assets.isInService,
-          underMaintenance: schema.assets.underMaintenance,
-          bookValue: schema.assets.bookValue,
-          dimensions: schema.assets.dimensions,
-          sourcePayload: schema.assets.sourcePayload,
-          updatedAt: schema.assets.updatedAt,
-        })
-        .from(schema.assets)
-        .innerJoin(schema.branches, eq(schema.assets.branchId, schema.branches.id))
-        .where(or(eq(schema.assets.id, assetId), eq(schema.assets.assetNumber, assetId))),
-      db
-        .select({
-          contractId: schema.contracts.id,
-          contractNumber: schema.contracts.contractNumber,
-          status: schema.contracts.status,
-          startDate: schema.contracts.startDate,
-          endDate: schema.contracts.endDate,
-          customerName: schema.customers.name,
-        })
-        .from(schema.contractLines)
-        .innerJoin(schema.contracts, eq(schema.contractLines.contractId, schema.contracts.id))
-        .innerJoin(schema.customers, eq(schema.contracts.customerId, schema.customers.id))
-        .innerJoin(schema.assets, eq(schema.contractLines.assetId, schema.assets.id))
-        .where(or(eq(schema.assets.id, assetId), eq(schema.assets.assetNumber, assetId)))
-        .orderBy(desc(schema.contracts.startDate)),
-      db
-        .select({
-          id: schema.inspections.id,
-          inspectionType: schema.inspections.inspectionType,
-          status: schema.inspections.status,
-          resultSummary: schema.inspections.resultSummary,
-          damageScore: schema.inspections.damageScore,
-          completedAt: schema.inspections.completedAt,
-        })
-        .from(schema.inspections)
-        .innerJoin(schema.assets, eq(schema.inspections.assetId, schema.assets.id))
-        .where(or(eq(schema.assets.id, assetId), eq(schema.assets.assetNumber, assetId)))
-        .orderBy(desc(schema.inspections.completedAt)),
-      db
-        .select({
-          id: schema.workOrders.id,
-          title: schema.workOrders.title,
-          status: schema.workOrders.status,
-          priority: schema.workOrders.priority,
-          dueAt: schema.workOrders.dueAt,
-          billableDisposition: schema.workOrders.billableDisposition,
-        })
-        .from(schema.workOrders)
-        .innerJoin(schema.assets, eq(schema.workOrders.assetId, schema.assets.id))
-        .where(or(eq(schema.assets.id, assetId), eq(schema.assets.assetNumber, assetId)))
-        .orderBy(desc(schema.workOrders.updatedAt)),
-      db.query.externalEntityMappings.findFirst({
-        where: (table, { and: localAnd, eq: localEq, or: localOr }) =>
-          localAnd(
-            localEq(table.provider, "business_central"),
-            localEq(table.entityType, "bc_asset"),
-            localOr(localEq(table.internalId, assetId), localEq(table.externalId, assetId)),
-          ),
-      }),
-    ]);
+  return getCachedView(
+    `asset-detail:v2:${assetId}`,
+    ["equipment", `asset:${assetId}`],
+    300,
+    300,
+    async () => {
+      const summaryResult = await pool.query<{
+        asset_id: string;
+        asset_number: string;
+        asset_type: string;
+        asset_subtype: string | null;
+        branch_code: string | null;
+        branch_name: string | null;
+        status: string | null;
+        availability: string | null;
+        maintenance_status: string | null;
+        serial_number: string | null;
+        manufacturer: string | null;
+        model_year: number | null;
+        registration_number: string | null;
+        fa_class_code: string | null;
+        fa_subclass_code: string | null;
+        bc_location_code: string | null;
+        bc_dimension1_code: string | null;
+        bc_product_no: string | null;
+        bc_service_item_no: string | null;
+        is_blocked: boolean;
+        is_inactive: boolean;
+        is_disposed: boolean;
+        is_on_rent: boolean;
+        is_in_service: boolean;
+        under_maintenance: boolean;
+        book_value: string | null;
+        latest_lease_key: string | null;
+        latest_customer_name: string | null;
+        source_provider: string | null;
+        source_external_id: string | null;
+        source_payload_available: boolean;
+        refreshed_at: Date;
+      }>(
+        `
+          select *
+          from equipment_detail_summary
+          where asset_id = $1 or asset_number = $1
+          limit 1
+        `,
+        [assetId],
+      );
+      const raw = summaryResult.rows[0];
+      if (!raw) {
+        return null;
+      }
 
-  const operational = assets.find(
-    (asset) => asset.id === assetId || asset.assetNumber === assetId,
-  );
-  const raw = assetRows[0];
+      const [contractLinks, inspections, workOrders] = await Promise.all([
+        db
+          .select({
+            contractId: schema.contracts.id,
+            contractNumber: schema.contracts.contractNumber,
+            status: schema.contracts.status,
+            startDate: schema.contracts.startDate,
+            endDate: schema.contracts.endDate,
+            customerName: schema.customers.name,
+          })
+          .from(schema.contractLines)
+          .innerJoin(schema.contracts, eq(schema.contractLines.contractId, schema.contracts.id))
+          .innerJoin(schema.customers, eq(schema.contracts.customerId, schema.customers.id))
+          .where(eq(schema.contractLines.assetId, raw.asset_id))
+          .orderBy(desc(schema.contracts.startDate))
+          .limit(50),
+        db
+          .select({
+            id: schema.inspections.id,
+            inspectionType: schema.inspections.inspectionType,
+            status: schema.inspections.status,
+            resultSummary: schema.inspections.resultSummary,
+            damageScore: schema.inspections.damageScore,
+            completedAt: schema.inspections.completedAt,
+          })
+          .from(schema.inspections)
+          .where(eq(schema.inspections.assetId, raw.asset_id))
+          .orderBy(desc(schema.inspections.completedAt))
+          .limit(50),
+        db
+          .select({
+            id: schema.workOrders.id,
+            title: schema.workOrders.title,
+            status: schema.workOrders.status,
+            priority: schema.workOrders.priority,
+            dueAt: schema.workOrders.dueAt,
+            billableDisposition: schema.workOrders.billableDisposition,
+          })
+          .from(schema.workOrders)
+          .where(eq(schema.workOrders.assetId, raw.asset_id))
+          .orderBy(desc(schema.workOrders.updatedAt))
+          .limit(50),
+      ]);
 
-  if (!operational || !raw) {
-    return null;
-  }
-
-  return {
-    summary: {
-      ...operational,
-      branchCode: raw.branchCode,
-      manufacturer: raw.manufacturer,
-      modelYear: raw.modelYear,
-      registrationNumber: raw.registrationNumber,
-      faClassCode: raw.faClassCode,
-      faSubclassCode: raw.faSubclassCode,
-      bcLocationCode: raw.bcLocationCode,
-      bcDimension1Code: raw.bcDimension1Code,
-      bcProductNo: raw.bcProductNo,
-      bcServiceItemNo: raw.bcServiceItemNo,
-      isBlocked: raw.isBlocked,
-      isInactive: raw.isInactive,
-      isDisposed: raw.isDisposed,
-      isOnRent: raw.isOnRent,
-      isInService: raw.isInService,
-      underMaintenance: raw.underMaintenance,
-      bookValue: numericToNumber(raw.bookValue, 0),
-      rawDimensions: raw.dimensions,
-      sourceProvider: bcMapping ? "business_central" : "internal",
-      sourcePayload: raw.sourcePayload,
-      externalId: bcMapping?.externalId ?? null,
-      sourceUpdatedAt: toIso(raw.updatedAt),
+      return {
+        summary: {
+          id: raw.asset_id,
+          assetNumber: raw.asset_number,
+          type: raw.asset_type,
+          subtype: raw.asset_subtype,
+          branch: raw.branch_name ?? raw.branch_code ?? "Unassigned",
+          branchCode: raw.branch_code,
+          status: raw.status ?? "available",
+          availability: raw.availability ?? "rentable",
+          maintenanceStatus: raw.maintenance_status ?? "clear",
+          serialNumber: raw.serial_number,
+          manufacturer: raw.manufacturer,
+          modelYear: raw.model_year,
+          registrationNumber: raw.registration_number,
+          faClassCode: raw.fa_class_code,
+          faSubclassCode: raw.fa_subclass_code,
+          bcLocationCode: raw.bc_location_code,
+          bcDimension1Code: raw.bc_dimension1_code,
+          bcProductNo: raw.bc_product_no,
+          bcServiceItemNo: raw.bc_service_item_no,
+          isBlocked: raw.is_blocked,
+          isInactive: raw.is_inactive,
+          isDisposed: raw.is_disposed,
+          isOnRent: raw.is_on_rent,
+          isInService: raw.is_in_service,
+          underMaintenance: raw.under_maintenance,
+          bookValue: numericToNumber(raw.book_value, 0),
+          custodyLocation: raw.branch_name ?? raw.branch_code ?? "Unassigned",
+          blockingReason: null,
+          activeContractNumber: raw.latest_lease_key,
+          activeCustomerName: raw.latest_customer_name,
+          rawDimensions: null,
+          sourceProvider: raw.source_provider ?? "internal",
+          sourcePayload: raw.source_payload_available ? { availableInAdminSource: true } : null,
+          externalId: raw.source_external_id,
+          sourceUpdatedAt: toIso(raw.refreshed_at),
+        },
+        contractHistory: contractLinks.map((row) => ({
+          ...row,
+          startDate: toIso(row.startDate),
+          endDate: toIso(row.endDate),
+        })),
+        inspections: inspections.map((row) => ({
+          ...row,
+          completedAt: toIso(row.completedAt),
+        })),
+        workOrders: workOrders.map((row) => ({
+          ...row,
+          dueAt: toIso(row.dueAt),
+        })),
+      };
     },
-    contractHistory: contractLinks.map((row) => ({
-      ...row,
-      startDate: toIso(row.startDate),
-      endDate: toIso(row.endDate),
-    })),
-    inspections: inspections.map((row) => ({
-      ...row,
-      completedAt: toIso(row.completedAt),
-    })),
-    workOrders: workOrders.map((row) => ({
-      ...row,
-      dueAt: toIso(row.dueAt),
-    })),
-  };
+  );
 }
 
 export async function getCustomerListView(filters?: CustomerListFilters) {
@@ -680,65 +694,142 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
 }
 
 export async function getCustomerDetailView(customerId: string) {
-  const customers = await listCustomers();
-  const customer = customers.find(
-    (entry) => entry.id === customerId || entry.customerNumber === customerId,
-  );
+  return getCachedView(
+    `customer-detail:v2:${customerId}`,
+    ["customers", `customer:${customerId}`],
+    300,
+    300,
+    async () => {
+      const summaryResult = await pool.query<{
+        customer_id: string;
+        customer_number: string;
+        name: string;
+        customer_type: string;
+        billing_city: string | null;
+        portal_enabled: boolean;
+        locations: Array<Record<string, unknown>>;
+        contract_count: number;
+        ar_balance: string | null;
+        source_provider: string | null;
+        source_external_id: string | null;
+        source_payload_available: boolean;
+      }>(
+        `
+          select *
+          from customer_detail_summary
+          where customer_id = $1 or customer_number = $1
+          limit 1
+        `,
+        [customerId],
+      );
+      const customer = summaryResult.rows[0];
+      if (!customer) {
+        return null;
+      }
 
-  if (!customer) {
-    return null;
-  }
-
-  const [contracts, invoices, receipts, bcMapping, sourceRow] = await Promise.all([
-    listContracts(),
-    listInvoices({ customerNumber: customer.customerNumber }),
-    db
-      .select({
-        id: schema.arReceipts.id,
-        receiptNumber: schema.arReceipts.receiptNumber,
-        receiptDate: schema.arReceipts.receiptDate,
-        amount: schema.arReceipts.amount,
-        unappliedAmount: schema.arReceipts.unappliedAmount,
-        status: schema.arReceipts.status,
-      })
-      .from(schema.arReceipts)
-      .where(eq(schema.arReceipts.customerId, customer.id))
-      .orderBy(desc(schema.arReceipts.receiptDate)),
-    db.query.externalEntityMappings.findFirst({
-      where: (table, { and: localAnd, eq: localEq, or: localOr }) =>
-        localAnd(
-          localEq(table.provider, "business_central"),
-          localEq(table.entityType, "bc_customer"),
-          localOr(localEq(table.internalId, customer.id), localEq(table.externalId, customerId)),
+      const [contracts, invoices, receipts] = await Promise.all([
+        db
+          .select({
+            id: schema.contracts.id,
+            contractNumber: schema.contracts.contractNumber,
+            branch: schema.branches.code,
+            status: schema.contracts.status,
+            startDate: schema.contracts.startDate,
+            endDate: schema.contracts.endDate,
+            value: sql<string>`0`,
+          })
+          .from(schema.contracts)
+          .innerJoin(schema.branches, eq(schema.contracts.branchId, schema.branches.id))
+          .where(eq(schema.contracts.customerId, customer.customer_id))
+          .orderBy(desc(schema.contracts.startDate))
+          .limit(50),
+        pool.query<{
+          id: string;
+          document_no: string;
+          lease_key: string | null;
+          status: string;
+          due_date: Date | null;
+          ar_balance: string | null;
+          total_amount: string | null;
+        }>(
+          `
+            select
+              id,
+              document_no,
+              previous_no as lease_key,
+              status,
+              due_date,
+              ar_balance,
+              total_amount
+            from invoice_register_summary
+            where customer_number = $1
+            order by posting_date desc nulls last, document_no desc
+            limit 50
+          `,
+          [customer.customer_number],
         ),
-    }),
-    db.query.customers.findFirst({
-      where: (table, { eq: localEq }) => localEq(table.id, customer.id),
-    }),
-  ]);
+        db
+          .select({
+            id: schema.arReceipts.id,
+            receiptNumber: schema.arReceipts.receiptNumber,
+            receiptDate: schema.arReceipts.receiptDate,
+            amount: schema.arReceipts.amount,
+            unappliedAmount: schema.arReceipts.unappliedAmount,
+            status: schema.arReceipts.status,
+          })
+          .from(schema.arReceipts)
+          .where(eq(schema.arReceipts.customerId, customer.customer_id))
+          .orderBy(desc(schema.arReceipts.receiptDate))
+          .limit(50),
+      ]);
 
-  const customerContracts = contracts.filter(
-    (contract) => contract.customerName === customer.name,
-  );
-
-  return {
-    summary: {
-      ...customer,
-      contractCount: customerContracts.length,
-      arBalance: invoices.reduce((sum, invoice) => sum + invoice.balanceAmount, 0),
-      sourceProvider: bcMapping ? "business_central" : "internal",
-      externalId: bcMapping?.externalId ?? null,
-      sourcePayload: sourceRow?.sourcePayload ?? null,
+      return {
+        summary: {
+          id: customer.customer_id,
+          customerNumber: customer.customer_number,
+          name: customer.name,
+          customerType: customer.customer_type,
+          billingCity: customer.billing_city,
+          portalEnabled: customer.portal_enabled,
+          locations: (customer.locations ?? []).map((location, index) => ({
+            id: String(location.id ?? `${customer.customer_id}:location:${index}`),
+            name: String(location.name ?? "Location"),
+            address: String(location.address ?? ""),
+            contactPerson:
+              location.contactPerson == null ? null : String(location.contactPerson),
+          })),
+          contractCount: customer.contract_count,
+          arBalance: numericToNumber(customer.ar_balance, 0),
+          sourceProvider: customer.source_provider ?? "internal",
+          externalId: customer.source_external_id,
+          sourcePayload: customer.source_payload_available
+            ? { availableInAdminSource: true }
+            : null,
+        },
+        contracts: contracts.map((contract) => ({
+          ...contract,
+          branch: contract.branch ?? "Unassigned",
+          startDate: toIso(contract.startDate),
+          endDate: toIso(contract.endDate),
+          value: numericToNumber(contract.value),
+        })),
+        invoices: invoices.rows.map((invoice) => ({
+          id: invoice.id,
+          invoiceNumber: invoice.document_no,
+          contractNumber: invoice.lease_key,
+          balanceAmount: numericToNumber(invoice.ar_balance ?? invoice.total_amount, 0),
+          status: invoice.status,
+          dueDate: toIso(invoice.due_date),
+        })),
+        receipts: receipts.map((row) => ({
+          ...row,
+          receiptDate: toIso(row.receiptDate),
+          amount: numericToNumber(row.amount),
+          unappliedAmount: numericToNumber(row.unappliedAmount),
+        })),
+      };
     },
-    contracts: customerContracts,
-    invoices,
-    receipts: receipts.map((row) => ({
-      ...row,
-      receiptDate: toIso(row.receiptDate),
-      amount: numericToNumber(row.amount),
-      unappliedAmount: numericToNumber(row.unappliedAmount),
-    })),
-  };
+  );
 }
 
 export async function getContractListView(filters?: ContractListFilters) {

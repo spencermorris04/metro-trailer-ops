@@ -6,6 +6,12 @@ type CacheEntry<T> = {
   tags: string[];
 };
 
+type CachedViewEnvelope<T> = {
+  value: T;
+  freshUntil: number;
+  staleUntil: number;
+};
+
 type CacheAdapter = {
   get<T>(key: string): Promise<T | null>;
   set<T>(key: string, value: T, ttlSeconds: number, tags: string[]): Promise<void>;
@@ -50,6 +56,7 @@ const memoryAdapter: CacheAdapter = {
 
 let redisAdapterPromise: Promise<CacheAdapter | null> | null = null;
 let upstashAdapterPromise: Promise<CacheAdapter | null> | null = null;
+const refreshingViewKeys = new Set<string>();
 
 type UpstashResponse<T = unknown> = {
   result?: T;
@@ -234,6 +241,60 @@ export async function getOrSetWorkspaceCache<T>(
 
   const value = await loader();
   await adapter.set(key, value, ttlSeconds, tags);
+  return value;
+}
+
+export async function getCachedView<T>(
+  key: string,
+  tags: string[],
+  ttlSeconds: number,
+  staleSeconds: number,
+  loader: () => Promise<T>,
+) {
+  const adapter = await getAdapter();
+  const now = Date.now();
+  const cached = await adapter.get<CachedViewEnvelope<T>>(key);
+
+  if (cached && cached.freshUntil > now) {
+    console.debug("workspace cache hit", { key });
+    return cached.value;
+  }
+
+  if (cached && cached.staleUntil > now) {
+    console.debug("workspace cache stale-hit", { key });
+    if (!refreshingViewKeys.has(key)) {
+      refreshingViewKeys.add(key);
+      void loader()
+        .then((value) =>
+          adapter.set(
+            key,
+            {
+              value,
+              freshUntil: Date.now() + ttlSeconds * 1000,
+              staleUntil: Date.now() + (ttlSeconds + staleSeconds) * 1000,
+            },
+            ttlSeconds + staleSeconds,
+            tags,
+          ),
+        )
+        .catch((error) => console.error("workspace cache refresh failed", error))
+        .finally(() => refreshingViewKeys.delete(key));
+    }
+    return cached.value;
+  }
+
+  console.debug("workspace cache miss", { key });
+  const value = await loader();
+  await adapter.set(
+    key,
+    {
+      value,
+      freshUntil: Date.now() + ttlSeconds * 1000,
+      staleUntil: Date.now() + (ttlSeconds + staleSeconds) * 1000,
+    },
+    ttlSeconds + staleSeconds,
+    tags,
+  );
   return value;
 }
 
