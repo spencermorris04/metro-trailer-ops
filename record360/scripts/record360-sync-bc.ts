@@ -265,7 +265,7 @@ function getRecord360ApiBaseUrl() {
   return normalized;
 }
 
-function getRecord360AuthHeaders() {
+function getRecord360AuthHeaders(): Record<string, string> {
   const keyId = process.env.RECORD360_API_KEY_ID?.trim();
   const keySecret = process.env.RECORD360_API_KEY_SECRET?.trim();
 
@@ -686,7 +686,9 @@ async function sleep(milliseconds: number) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function parseJsonResponse<TValue>(response: Response) {
+async function parseJsonResponse<TValue>(
+  response: Response,
+): Promise<{ text: string; value: TValue | null }> {
   const text = await response.text();
   return {
     text,
@@ -751,7 +753,7 @@ async function fetchIncrementalRecord360Inspections(options: {
   let nextUrl: string | null = new URL("inspections", apiBaseUrl).toString();
 
   while (nextUrl) {
-    const url = new URL(nextUrl);
+    const url: URL = new URL(nextUrl);
     if (!url.searchParams.has("per_page")) {
       url.searchParams.set("per_page", String(RECORD360_DEFAULT_PER_PAGE));
     }
@@ -764,7 +766,11 @@ async function fetchIncrementalRecord360Inspections(options: {
       url.searchParams.set("created_before", options.createdBefore);
     }
 
-    const payload = await fetchRecord360Json<Record360ListResponse<Record360InspectionSource>>(url.toString(), headers);
+    const payload: Record360ListResponse<Record360InspectionSource> =
+      await fetchRecord360Json<Record360ListResponse<Record360InspectionSource>>(
+        url.toString(),
+        headers,
+      );
     inspections.push(...(payload.data ?? []));
     nextUrl = typeof payload.paging?.next === "string" ? payload.paging.next : null;
   }
@@ -1161,7 +1167,7 @@ class BusinessCentralClient {
     let nextUrl: string | null = `${buildCustomApiBaseUrl(companyId)}/record360Inspections`;
 
     while (nextUrl) {
-      const url = new URL(nextUrl);
+      const url: URL = new URL(nextUrl);
       if (!url.searchParams.has("$filter")) {
         url.searchParams.set("$filter", `matchStatus eq '${escapeODataString(matchStatus)}'`);
       }
@@ -1169,7 +1175,10 @@ class BusinessCentralClient {
         url.searchParams.set("$select", "record360InspectionId");
       }
 
-      const payload = await this.requestJson<{
+      const payload: {
+        value?: Array<{ record360InspectionId?: string | null }>;
+        "@odata.nextLink"?: string;
+      } = await this.requestJson<{
         value?: Array<{ record360InspectionId?: string | null }>;
         "@odata.nextLink"?: string;
       }>(url.toString());

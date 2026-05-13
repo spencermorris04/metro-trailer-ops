@@ -874,7 +874,27 @@ async function applyContractLifecycleInTransaction(
   await refreshAssetStates(tx, assetIds);
 }
 
-type ContractLineFinanceRow = typeof schema.contractLines.$inferSelect & {
+type ContractLineFinanceRow = Pick<
+  typeof schema.contractLines.$inferSelect,
+  | "id"
+  | "contractId"
+  | "assetId"
+  | "description"
+  | "unitPrice"
+  | "unit"
+  | "quantity"
+  | "startDate"
+  | "endDate"
+  | "adjustments"
+  | "deliveryFee"
+  | "pickupFee"
+  | "sourceLineNo"
+  | "sourceItemNo"
+  | "sourceUomCode"
+  | "sourceSnapshot"
+  | "createdAt"
+  | "updatedAt"
+> & {
   assetType: AssetRecord["type"] | null;
 };
 
@@ -903,9 +923,9 @@ async function getContractFinanceRows(contractId: string) {
     })
     .from(schema.contractLines)
     .leftJoin(schema.assets, eq(schema.contractLines.assetId, schema.assets.id))
-    .where(eq(schema.contractLines.contractId, contractId)) as Promise<
-    ContractLineFinanceRow[]
-  >;
+    .where(eq(schema.contractLines.contractId, contractId)) as unknown as Promise<
+      ContractLineFinanceRow[]
+    >;
 }
 
 async function getApplicableRateCards(contract: typeof schema.contracts.$inferSelect) {

@@ -690,7 +690,7 @@ function combineSourceResults(results: SourceFetchResult[]): SourceFetchResult {
   };
 }
 
-function normalizeGroups(groups: SkyBitzGlsRecord["asset"] extends infer T ? T extends { groups?: infer TGroups } ? TGroups : never : never) {
+function normalizeGroups(groups: SkyBitzGlsRecord["asset"] extends infer T ? T extends { groups?: infer TGroups } ? TGroups | undefined : never : never) {
   return toArray(groups?.groupname).map((group) => normalizeText(group)).filter(Boolean);
 }
 

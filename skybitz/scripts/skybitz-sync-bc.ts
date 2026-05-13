@@ -528,7 +528,7 @@ function toArray<T>(value: T | T[] | null | undefined) {
 
 function normalizeGroups(groups: SkyBitzGlsRecord["asset"] extends infer T
   ? T extends { groups?: infer TGroups }
-    ? TGroups
+    ? TGroups | undefined
     : never
   : never) {
   const value = groups?.groupname;

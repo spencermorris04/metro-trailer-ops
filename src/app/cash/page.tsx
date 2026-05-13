@@ -22,7 +22,7 @@ export default async function CashPage() {
               <div className="mono text-[0.65rem] text-slate-500">{account.accountNumber}</div>
               <div className="text-[0.85rem] font-semibold text-slate-900">{account.name}</div>
               <div className="text-[0.7rem] text-slate-400">
-                {titleize(account.accountType)} / {account.currencyCode ?? "USD"}
+                {account.active ? "Active" : "Inactive"} / USD
               </div>
             </div>
           ))}

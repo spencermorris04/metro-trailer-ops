@@ -1617,7 +1617,7 @@ export const bcGlEntries = pgTable(
     amount: numeric({ precision: 14, scale: 2 }),
     debitAmount: numeric({ precision: 14, scale: 2 }),
     creditAmount: numeric({ precision: 14, scale: 2 }),
-    dimensionSetId: text().references(() => bcDimensionSets.id),
+    dimensionSetId: text(),
     payload: jsonb().$type<Record<string, unknown>>().notNull(),
     importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
@@ -1626,6 +1626,9 @@ export const bcGlEntries = pgTable(
       table.externalEntryNo,
     ),
     postingDateIdx: index("bc_gl_entries_posting_date_idx").on(table.postingDate),
+    dimensionSetIdx: index("bc_gl_entries_dimension_set_id_idx").on(
+      table.dimensionSetId,
+    ),
   }),
 );
 

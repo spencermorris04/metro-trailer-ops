@@ -678,7 +678,9 @@ async function withRetry<TValue>(
   throw new Error(`${label} failed after ${retries + 1} attempts: ${lastError?.message ?? "unknown error"}`);
 }
 
-async function parseJsonResponse<TValue>(response: Response) {
+async function parseJsonResponse<TValue>(
+  response: Response,
+): Promise<{ text: string; value: TValue | null }> {
   const text = await response.text();
   return {
     text,
@@ -812,6 +814,14 @@ class GraphClient {
     return this.accessToken;
   }
 
+  private async requestJson<TValue>(
+    resourcePathOrUrl: string,
+    allowNotFound?: false,
+  ): Promise<TValue>;
+  private async requestJson<TValue>(
+    resourcePathOrUrl: string,
+    allowNotFound: true,
+  ): Promise<TValue | null>;
   private async requestJson<TValue>(resourcePathOrUrl: string, allowNotFound = false) {
     const url = resourcePathOrUrl.startsWith("http")
       ? resourcePathOrUrl
@@ -916,7 +926,8 @@ class GraphClient {
         throw new Error(`Graph children page limit exceeded for path ${folderPath} (${maxPages} pages).`);
       }
 
-      const payload = await this.requestJson<GraphCollectionResponse<GraphDriveItem>>(nextUrl);
+      const payload: GraphCollectionResponse<GraphDriveItem> =
+        await this.requestJson<GraphCollectionResponse<GraphDriveItem>>(nextUrl);
       items.push(...payload.value);
       nextUrl = payload["@odata.nextLink"];
     }
@@ -942,7 +953,8 @@ class GraphClient {
         throw new Error(`Graph children page limit exceeded for item ${itemId} (${maxPages} pages).`);
       }
 
-      const payload = await this.requestJson<GraphCollectionResponse<GraphDriveItem>>(nextUrl);
+      const payload: GraphCollectionResponse<GraphDriveItem> =
+        await this.requestJson<GraphCollectionResponse<GraphDriveItem>>(nextUrl);
       items.push(...payload.value);
       nextUrl = payload["@odata.nextLink"];
     }
@@ -988,7 +1000,8 @@ class GraphClient {
     let latestDeltaLink = deltaLink;
 
     while (nextUrl && pages < maxPages) {
-      const payload = await this.requestJson<GraphCollectionResponse<GraphDriveItem>>(nextUrl);
+      const payload: GraphCollectionResponse<GraphDriveItem> =
+        await this.requestJson<GraphCollectionResponse<GraphDriveItem>>(nextUrl);
       pages += 1;
 
       for (const item of payload.value) {
@@ -1378,7 +1391,8 @@ class BusinessCentralClient {
     let nextUrl: string | null = `${buildODataBaseUrl()}/FixedAssets?$select=No,Description,Make,Vehicle_Year,Serial_No,Vehicle_Registration_No,RMI_Service_Item_No&$top=${pageSize}`;
 
     while (nextUrl) {
-      const payload = await this.requestJson<{ value?: FixedAssetRow[]; "@odata.nextLink"?: string }>(nextUrl);
+      const payload: { value?: FixedAssetRow[]; "@odata.nextLink"?: string } =
+        await this.requestJson<{ value?: FixedAssetRow[]; "@odata.nextLink"?: string }>(nextUrl);
       const batch = payload.value ?? [];
 
       for (const row of batch) {
@@ -1435,12 +1449,15 @@ class BusinessCentralClient {
 
     let nextUrl: string | null = `${buildCustomApiBaseUrl(companyId)}/trailerDocuments`;
     while (nextUrl) {
-      const url = new URL(nextUrl);
+      const url: URL = new URL(nextUrl);
       if (!url.searchParams.has("$top")) {
         url.searchParams.set("$top", "1000");
       }
 
-      const payload = await this.requestJson<{
+      const payload: {
+        value?: ExistingDocument[];
+        "@odata.nextLink"?: string;
+      } = await this.requestJson<{
         value?: ExistingDocument[];
         "@odata.nextLink"?: string;
       }>(url.toString());
@@ -1470,12 +1487,15 @@ class BusinessCentralClient {
 
     let nextUrl: string | null = `${buildCustomApiBaseUrl(companyId)}/trailerFolderStates`;
     while (nextUrl) {
-      const url = new URL(nextUrl);
+      const url: URL = new URL(nextUrl);
       if (!url.searchParams.has("$top")) {
         url.searchParams.set("$top", "1000");
       }
 
-      const payload = await this.requestJson<{
+      const payload: {
+        value?: ExistingFolderState[];
+        "@odata.nextLink"?: string;
+      } = await this.requestJson<{
         value?: ExistingFolderState[];
         "@odata.nextLink"?: string;
       }>(url.toString());
@@ -2669,11 +2689,12 @@ async function main() {
 
       const shouldHeartbeatBc =
         options.write &&
-        syncRunRecordId &&
+        syncRunRecordId !== null &&
         (forceBcHeartbeat || Date.now() - lastBcHeartbeatAt >= options.bcHeartbeatSeconds * 1000);
 
-      if (shouldHeartbeatBc) {
-        const heartbeatError = await bcClient.safeUpdateSyncRun(syncRunRecordId, {
+      const heartbeatSyncRunId = shouldHeartbeatBc ? syncRunRecordId : null;
+      if (heartbeatSyncRunId) {
+        const heartbeatError = await bcClient.safeUpdateSyncRun(heartbeatSyncRunId, {
           status: "Running",
           mode,
           foldersSeen: counters.foldersSeen,

@@ -156,7 +156,7 @@ function getApiBaseUrl() {
   return normalized;
 }
 
-function getAuthHeaders() {
+function getAuthHeaders(): Record<string, string> {
   const keyId = process.env.RECORD360_API_KEY_ID?.trim();
   const keySecret = process.env.RECORD360_API_KEY_SECRET?.trim();
 
@@ -208,7 +208,7 @@ async function fetchResource(
   let nextUrl: string | null = new URL(resource, apiBaseUrl).toString();
 
   while (nextUrl) {
-    const url = new URL(nextUrl);
+    const url: URL = new URL(nextUrl);
     if (!url.searchParams.has("per_page")) {
       url.searchParams.set("per_page", String(options.perPage));
     }
@@ -223,7 +223,8 @@ async function fetchResource(
       }
     }
 
-    const payload = await fetchJson<ResourceListResponse<Record<string, unknown>>>(url, headers);
+    const payload: ResourceListResponse<Record<string, unknown>> =
+      await fetchJson<ResourceListResponse<Record<string, unknown>>>(url, headers);
     items.push(...payload.data);
     pages += 1;
 

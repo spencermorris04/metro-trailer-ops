@@ -1538,6 +1538,13 @@ export async function getBusinessCentralOverviewView() {
       windowStart: toIso(row.windowStart),
       windowEnd: toIso(row.windowEnd),
       updatedAt: toIso(row.updatedAt),
+      status:
+        row.checkpointData &&
+        typeof row.checkpointData === "object" &&
+        "done" in row.checkpointData &&
+        row.checkpointData.done === true
+          ? "complete"
+          : "open",
     })),
     metrics: {
       assets: counts[0][0]?.count ?? 0,
@@ -1693,16 +1700,15 @@ export async function getSourceDocumentsView() {
             : null)) ??
       null,
     totalAmount:
-      (doc.payload &&
-      typeof doc.payload === "object" &&
-      (typeof doc.payload.totalAmount === "number"
-        ? doc.payload.totalAmount
-        : typeof doc.payload.amountIncludingVat === "number"
-          ? doc.payload.amountIncludingVat
-          : typeof doc.payload.amount === "number"
-            ? doc.payload.amount
-            : null)) ??
-      null,
+      doc.payload && typeof doc.payload === "object"
+        ? typeof doc.payload.totalAmount === "number"
+          ? doc.payload.totalAmount
+          : typeof doc.payload.amountIncludingVat === "number"
+            ? doc.payload.amountIncludingVat
+            : typeof doc.payload.amount === "number"
+              ? doc.payload.amount
+              : null
+        : null,
     linkedContracts: linkedContracts.filter(
       (contract) =>
         contract.sourceDocumentNo === doc.documentNo &&
