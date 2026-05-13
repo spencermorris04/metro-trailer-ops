@@ -85,6 +85,13 @@
       "when": 1778625600000,
       "tag": "0011_instant_erp_read_models",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1778634000000,
+      "tag": "0012_instant_serving_layer",
+      "breakpoints": true
     }
   ]
 }
