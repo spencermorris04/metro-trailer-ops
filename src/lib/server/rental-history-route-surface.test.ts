@@ -60,11 +60,22 @@ test("AR invoice routes use BC/RMI invoice register and detail read models", asy
   assert.match(detail, /Raw source snapshot/);
 });
 
-test("financial dashboard uses read-model rental history summaries", async () => {
-  const text = await source("src/app/financial/page.tsx");
+test("financial dashboard uses period accounting metrics instead of all-time rental history", async () => {
+  const [financial, revenue, arAging, glHistory, reconciliation] = await Promise.all([
+    source("src/app/financial/page.tsx"),
+    source("src/app/reports/revenue/page.tsx"),
+    source("src/app/reports/ar-aging/page.tsx"),
+    source("src/app/reports/gl-history/page.tsx"),
+    source("src/app/reports/reconciliation/page.tsx"),
+  ]);
 
-  assert.match(text, /getTrailerRevenueDashboardView/);
-  assert.doesNotMatch(text, /getFinancialDashboardView/);
-  assert.doesNotMatch(text, /getInvoiceRegisterView/);
-  assert.match(text, /Customer ledger aging/);
+  assert.match(financial, /getAccountingDashboardView/);
+  assert.doesNotMatch(financial, /getTrailerRevenueDashboardView/);
+  assert.match(financial, /PeriodSelector/);
+  assert.match(financial, /\/reports\/revenue/);
+  assert.match(financial, /\/reports\/ar-aging/);
+  assert.match(revenue, /getRevenueReportView/);
+  assert.match(arAging, /getArAgingReportView/);
+  assert.match(glHistory, /getGlHistoryReportView/);
+  assert.match(reconciliation, /getReconciliationReportView/);
 });

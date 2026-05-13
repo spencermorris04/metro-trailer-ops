@@ -2107,6 +2107,9 @@ export const rentalBillingFacts = pgTable(
       table.sourceProvider,
       table.sourceRowId,
     ),
+    postingDateIdx: index("rental_billing_facts_posting_date_idx").on(
+      table.postingDate,
+    ),
     assetActivityIdx: index("rental_billing_facts_asset_activity_idx").on(
       table.assetNumber,
       table.postingDate,
@@ -2170,6 +2173,9 @@ export const rentalInvoiceFacts = pgTable(
       table.customerNumber,
       table.postingDate,
     ),
+    postingDateIdx: index("rental_invoice_facts_posting_date_idx").on(
+      table.postingDate,
+    ),
     leaseActivityIdx: index("rental_invoice_facts_lease_activity_idx").on(
       table.leaseKey,
       table.postingDate,
@@ -2203,6 +2209,10 @@ export const arLedgerFacts = pgTable(
     sourceRowUnique: uniqueIndex("ar_ledger_facts_source_row_unique").on(
       table.sourceProvider,
       table.sourceRowId,
+    ),
+    openDueIdx: index("ar_ledger_facts_open_due_idx").on(
+      table.isOpen,
+      table.dueDate,
     ),
     customerActivityIdx: index("ar_ledger_facts_customer_activity_idx").on(
       table.customerNumber,

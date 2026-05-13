@@ -1,139 +1,120 @@
-import Link from "next/link";
-
-import { JsonActionButton } from "@/components/json-action-button";
 import { PageHeader } from "@/components/page-header";
+import { ExportPlaceholder, ReportKpiGrid } from "@/components/reporting";
 import { SectionCard } from "@/components/section-card";
-import { StatusPill } from "@/components/status-pill";
-import { formatCurrency } from "@/lib/format";
-import {
-  getFinancialDashboardView,
-  getReconciliationReportsView,
-  getReports,
-} from "@/lib/server/platform";
+import { WorkspaceLink } from "@/components/workspace-link";
+import { formatCompactNumber } from "@/lib/format";
+import { getAccountingDashboardView, getReconciliationReportView } from "@/lib/server/platform";
 
+const reportFamilies = [
+  {
+    title: "Revenue",
+    eyebrow: "Commercial",
+    description: "Period revenue by month, branch, equipment, customer, lease/order, and deal code.",
+    href: "/reports/revenue",
+  },
+  {
+    title: "AR aging",
+    eyebrow: "Receivables",
+    description: "Open receivables by due-date bucket, customer, document, and remaining balance.",
+    href: "/reports/ar-aging",
+  },
+  {
+    title: "Invoice register",
+    eyebrow: "Receivables",
+    description: "BC/RMI and Metro invoice facts with source, customer, lease, line count, and balance.",
+    href: "/reports/invoices",
+  },
+  {
+    title: "Equipment revenue",
+    eyebrow: "Fleet",
+    description: "Trailer-driven revenue attribution using equipment and service-period facts.",
+    href: "/reports/equipment-revenue",
+  },
+  {
+    title: "Customer revenue",
+    eyebrow: "Commercial",
+    description: "Customer revenue and invoice exposure across selected accounting periods.",
+    href: "/reports/customer-revenue",
+  },
+  {
+    title: "Branch revenue",
+    eyebrow: "Accounting",
+    description: "Service-branch revenue based on trailer/service context.",
+    href: "/reports/branch-revenue",
+  },
+  {
+    title: "Deal code revenue",
+    eyebrow: "Pricing",
+    description: "RMI deal-code revenue patterns for pricing and contract analysis.",
+    href: "/reports/deal-code-revenue",
+  },
+  {
+    title: "BC GL history",
+    eyebrow: "Ledger",
+    description: "Read-only imported Business Central GL entries with partial-import status.",
+    href: "/reports/gl-history",
+  },
+  {
+    title: "BC/RMI reconciliation",
+    eyebrow: "Admin",
+    description: "Import coverage, mapping gaps, stale read models, and unresolved errors.",
+    href: "/reports/reconciliation",
+  },
+];
 
 export default async function ReportsPage() {
-  const [reports, financial, reconciliation] = await Promise.all([
-    getReports(),
-    getFinancialDashboardView(),
-    getReconciliationReportsView(),
+  const [financial, reconciliation] = await Promise.all([
+    getAccountingDashboardView(),
+    getReconciliationReportView(),
   ]);
 
   return (
     <div className="space-y-2">
       <PageHeader
-        eyebrow="Admin"
-        title="Reports"
-        description="Operations, commercial, accounting, and BC reconciliation views."
-        actions={<JsonActionButton endpoint="/api/reports" method="POST" label="Prepare export" />}
+        eyebrow="Reports"
+        title="ERP reports"
+        description="Drilldownable accounting, revenue, receivables, GL history, and BC/RMI reconciliation."
+        actions={<ExportPlaceholder />}
       />
 
-      <div className="grid gap-2 xl:grid-cols-2">
-        <SectionCard eyebrow="Operations" title="Fleet and service">
-          <div className="grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
-            {reports.utilization.slice(0, 4).map((record) => (
-              <div key={record.branch} className="bg-white px-3 py-2">
-                <p className="workspace-metric-label">{record.branch}</p>
-                <p className="text-base font-semibold text-slate-900">
-                  {record.utilizationRate}%
-                </p>
-                <p className="text-[0.65rem] text-slate-400">
-                  {record.onRentCount}/{record.fleetCount} on rent
-                </p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
-            {[
-              ["Open work orders", reports.maintenanceSummary.openWorkOrders],
-              ["Verification queue", reports.maintenanceSummary.verificationQueue],
-              ["Failed inspections", reports.inspectionDamageSummary.failed],
-              ["Damaged assets", reports.inspectionDamageSummary.damagedAssets],
-            ].map(([label, value]) => (
-              <div key={label} className="bg-white px-3 py-2">
-                <p className="workspace-metric-label">{label}</p>
-                <p className="text-base font-semibold text-slate-900">{value}</p>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+      <ReportKpiGrid
+        metrics={[
+          {
+            label: "Current-month revenue",
+            value: `$${formatCompactNumber(financial.metrics.grossRevenue)}`,
+            href: "/reports/revenue",
+          },
+          {
+            label: "Open AR",
+            value: `$${formatCompactNumber(financial.metrics.openArBalance)}`,
+            href: "/reports/ar-aging",
+          },
+          {
+            label: "Invoice facts",
+            value: formatCompactNumber(reconciliation.coverage.rentalInvoiceFacts),
+            href: "/reports/invoices",
+          },
+          {
+            label: "BC GL entries",
+            value: formatCompactNumber(reconciliation.coverage.bcGlEntries),
+            href: "/reports/gl-history",
+          },
+        ]}
+      />
 
-        <SectionCard eyebrow="Commercial" title="Revenue and receivables">
-          <div className="grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
-            {reports.revenueSeries.map((point) => (
-              <div key={point.label} className="bg-white px-3 py-2">
-                <StatusPill label={point.label} />
-                <p className="mt-1 text-base font-semibold text-slate-900">
-                  {formatCurrency(point.revenue)}
-                </p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
-            {[
-              ["Uninvoiced events", financial.metrics.uninvoicedCommercialEvents],
-              ["Open AR invoices", financial.metrics.openArInvoices],
-              ["Unapplied receipts", financial.metrics.unappliedReceipts],
-              ["Open AP bills", financial.metrics.openApBills],
-            ].map(([label, value]) => (
-              <div key={label} className="bg-white px-3 py-2">
-                <p className="workspace-metric-label">{label}</p>
-                <p className="text-base font-semibold text-slate-900">{value}</p>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      </div>
-
-      <div className="grid gap-2 xl:grid-cols-2">
-        <SectionCard eyebrow="Accounting" title="Ledger posture">
-          <div className="grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
-            {[
-              ["Open AR balance", formatCurrency(financial.metrics.openArBalance)],
-              ["Open AP balance", formatCurrency(financial.metrics.openApBalance)],
-              [
-                "Unapplied receipt amount",
-                formatCurrency(financial.metrics.unappliedReceiptAmount),
-              ],
-              [
-                "Trial balance delta",
-                formatCurrency(financial.metrics.currentTrialBalanceDelta),
-              ],
-            ].map(([label, value]) => (
-              <div key={label} className="bg-white px-3 py-2">
-                <p className="workspace-metric-label">{label}</p>
-                <p className="text-base font-semibold text-slate-900">{value}</p>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-
-        <SectionCard eyebrow="BC Reconciliation" title="Seed and linkage health">
-          <div className="grid grid-cols-2 gap-px border border-[var(--line)] bg-[var(--line)]">
-            {[
-              ["Seeded assets", reconciliation.metrics.seededAssetsVisible],
-              ["Seeded contracts", reconciliation.metrics.seededContractsVisible],
-              ["Seeded invoices", reconciliation.metrics.seededInvoicesVisible],
-              ["Source docs", reconciliation.metrics.sourceDocuments],
-              ["Linked contracts", reconciliation.metrics.linkedContracts],
-              ["Linked invoices", reconciliation.metrics.linkedInvoices],
-              ["Import errors", reconciliation.metrics.importErrors],
-            ].map(([label, value]) => (
-              <div key={label} className="bg-white px-3 py-2">
-                <p className="workspace-metric-label">{label}</p>
-                <p className="text-base font-semibold text-slate-900">{value}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex gap-2">
-            <Link href="/source-documents" className="btn-secondary">
-              Source documents
-            </Link>
-            <Link href="/integrations/business-central/import-errors" className="btn-secondary">
-              Import errors
-            </Link>
-          </div>
-        </SectionCard>
+      <div className="grid gap-2 xl:grid-cols-3">
+        {reportFamilies.map((report) => (
+          <WorkspaceLink key={report.href} href={report.href} className="block">
+            <SectionCard
+              eyebrow={report.eyebrow}
+              title={report.title}
+              description={report.description}
+              className="h-full transition hover:border-[var(--brand)]"
+            >
+              <span className="btn-secondary">Open report</span>
+            </SectionCard>
+          </WorkspaceLink>
+        ))}
       </div>
     </div>
   );
