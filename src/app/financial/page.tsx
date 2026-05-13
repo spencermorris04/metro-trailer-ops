@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/page-header";
+import { ReportNavigation } from "@/components/report-navigation";
 import {
   ExportPlaceholder,
   PeriodSelector,
@@ -31,6 +32,8 @@ export default async function FinancialPage({ searchParams }: FinancialPageProps
 
   return (
     <div className="space-y-2">
+      <ReportNavigation />
+
       <PageHeader
         eyebrow="Accounting"
         title="Accounting command center"

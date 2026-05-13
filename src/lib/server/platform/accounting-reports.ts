@@ -262,29 +262,27 @@ export async function getAccountingDashboardView(input: ReportPeriodInput = {}) 
       tax_amount: string | null;
       damage_waiver_amount: string | null;
       invoice_count: string;
-      credit_memo_count: string;
       equipment_count: string;
       line_count: string;
     }>(
       `
         select
-          coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
           coalesce(sum(tax_amount), 0)::numeric(18,2) as tax_amount,
           coalesce(sum(damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
-          count(distinct document_no)::bigint as invoice_count,
-          count(distinct document_no) filter (where document_type ilike '%credit%')::bigint as credit_memo_count,
-          count(distinct asset_number) filter (where asset_number is not null)::bigint as equipment_count,
-          count(*)::bigint as line_count
-        from rental_billing_facts
-        where posting_date >= $1::date and posting_date < $2::date
+          coalesce(sum(invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(equipment_count), 0)::bigint as equipment_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
       `,
       [period.start, period.end],
     ),
     pool.query<{ gross_revenue: string | null }>(
       `
-        select coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue
-        from rental_billing_facts
-        where posting_date >= $1::date and posting_date < $2::date
+        select coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue
+        from revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
       `,
       [period.comparisonStart, period.comparisonEnd],
     ),
@@ -320,14 +318,14 @@ export async function getAccountingDashboardView(input: ReportPeriodInput = {}) 
     }>(
       `
         select
-          coalesce(branch_code, 'Unassigned') as branch_code,
-          coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
-          count(distinct document_no)::bigint as invoice_count,
-          count(*)::bigint as line_count
-        from rental_billing_facts
-        where posting_date >= $1::date and posting_date < $2::date
-        group by coalesce(branch_code, 'Unassigned')
-        order by coalesce(sum(gross_amount), 0) desc
+          branch_code,
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from branch_revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
+        group by branch_code
+        order by coalesce(sum(gross_revenue), 0) desc
         limit 8
       `,
       [period.start, period.end],
@@ -366,7 +364,7 @@ export async function getAccountingDashboardView(input: ReportPeriodInput = {}) 
       taxAmount: numericToNumber(revenue?.tax_amount),
       damageWaiverAmount: numericToNumber(revenue?.damage_waiver_amount),
       invoiceCount: Number(revenue?.invoice_count ?? invoiceResult.rows[0]?.invoice_count ?? 0),
-      creditMemoCount: Number(revenue?.credit_memo_count ?? 0),
+      creditMemoCount: 0,
       equipmentCount: Number(revenue?.equipment_count ?? 0),
       lineCount: Number(revenue?.line_count ?? 0),
       invoiceTotal: numericToNumber(invoiceResult.rows[0]?.total_amount),
@@ -416,49 +414,6 @@ export async function getAccountingDashboardView(input: ReportPeriodInput = {}) 
   };
 }
 
-function revenueGroupExpression(groupBy: RevenueGroupBy) {
-  if (groupBy === "branch") {
-    return {
-      key: "coalesce(branch_code, 'Unassigned')",
-      label: "coalesce(branch_code, 'Unassigned')",
-      hrefType: "branch",
-    };
-  }
-  if (groupBy === "equipment") {
-    return {
-      key: "coalesce(asset_number, 'Unassigned')",
-      label: "concat_ws(' / ', coalesce(asset_number, 'Unassigned'), max(asset_type))",
-      hrefType: "equipment",
-    };
-  }
-  if (groupBy === "customer") {
-    return {
-      key: "coalesce(customer_number, 'Unassigned')",
-      label: "concat_ws(' / ', coalesce(customer_number, 'Unassigned'), max(customer_name))",
-      hrefType: "customer",
-    };
-  }
-  if (groupBy === "lease") {
-    return {
-      key: "coalesce(lease_key, 'Unassigned')",
-      label: "coalesce(lease_key, 'Unassigned')",
-      hrefType: "lease",
-    };
-  }
-  if (groupBy === "deal_code") {
-    return {
-      key: "coalesce(deal_code, 'Unassigned')",
-      label: "coalesce(deal_code, 'Unassigned')",
-      hrefType: "deal_code",
-    };
-  }
-  return {
-    key: "to_char(date_trunc('month', posting_date), 'YYYY-MM')",
-    label: "to_char(date_trunc('month', posting_date), 'YYYY-MM')",
-    hrefType: "month",
-  };
-}
-
 export async function getRevenueReportView(
   input: PagedReportInput & { groupBy?: string } = {},
 ) {
@@ -471,21 +426,184 @@ export async function getRevenueReportView(
     input.groupBy === "deal_code"
       ? input.groupBy
       : "month";
+
+  if (groupBy === "lease") {
+    return getLeaseRevenueReportView(period, input);
+  }
+
+  return getRevenueRollupReportView(period, groupBy, input);
+}
+
+async function getLeaseRevenueReportView(period: ReportPeriod, input: PagedReportInput) {
   const page = pageNumber(input.page);
   const pageSize = pageSizeNumber(input.pageSize);
   const offset = (page - 1) * pageSize;
-  const group = revenueGroupExpression(groupBy);
-  const filters = ["posting_date >= $1::date", "posting_date < $2::date"];
+  const filters = [
+    "posting_date >= $1::date",
+    "posting_date < $2::date",
+    "lease_key is not null",
+  ];
   const params: SqlValue[] = [period.start, period.end];
   if (input.q?.trim()) {
     params.push(likePattern(input.q));
     filters.push(
-      `(search_text ilike $${params.length} escape '\\' or document_no ilike $${params.length} escape '\\')`,
+      `(search_text ilike $${params.length} escape '\\' or document_no ilike $${params.length} escape '\\' or lease_key ilike $${params.length} escape '\\')`,
     );
   }
   const where = filters.join(" and ");
-
   const [rowsResult, totalResult, summaryResult] = await Promise.all([
+    pool.query<{
+      group_key: string;
+      label: string;
+      gross_revenue: string | null;
+      invoice_count: string;
+      equipment_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          lease_key as group_key,
+          lease_key as label,
+          coalesce(sum(total_amount), 0)::numeric(18,2) as gross_revenue,
+          count(*)::bigint as invoice_count,
+          coalesce(sum(equipment_count), 0)::bigint as equipment_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from rental_invoice_facts
+        where ${where}
+        group by lease_key
+        order by coalesce(sum(total_amount), 0) desc
+        limit $${params.length + 1} offset $${params.length + 2}
+      `,
+      [...params, pageSize, offset],
+    ),
+    pool.query<{ count: string }>(
+      `
+        select count(*)::bigint as count
+        from (
+          select lease_key
+          from rental_invoice_facts
+          where ${where}
+          group by lease_key
+        ) grouped
+      `,
+      params,
+    ),
+    pool.query<{
+      gross_revenue: string | null;
+      invoice_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(sum(total_amount), 0)::numeric(18,2) as gross_revenue,
+          count(*)::bigint as invoice_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from rental_invoice_facts
+        where ${where}
+      `,
+      params,
+    ),
+  ]);
+
+  return {
+    period,
+    groupBy: "lease" as const,
+    page,
+    pageSize,
+    total: Number(totalResult.rows[0]?.count ?? 0),
+    summary: {
+      grossRevenue: numericToNumber(summaryResult.rows[0]?.gross_revenue),
+      invoiceCount: Number(summaryResult.rows[0]?.invoice_count ?? 0),
+      lineCount: Number(summaryResult.rows[0]?.line_count ?? 0),
+    },
+    data: rowsResult.rows.map((row) => ({
+      groupKey: row.group_key,
+      label: row.label,
+      hrefType: "lease",
+      grossRevenue: numericToNumber(row.gross_revenue),
+      taxAmount: 0,
+      damageWaiverAmount: 0,
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+      lineCount: Number(row.line_count),
+    })),
+    refreshState: await latestRefreshState(),
+  };
+}
+
+async function getRevenueRollupReportView(
+  period: ReportPeriod,
+  groupBy: Exclude<RevenueGroupBy, "lease">,
+  input: PagedReportInput,
+) {
+  const page = pageNumber(input.page);
+  const pageSize = pageSizeNumber(input.pageSize);
+  const offset = (page - 1) * pageSize;
+  const config = {
+    month: {
+      table: "revenue_rollup_monthly",
+      key: "to_char(month, 'YYYY-MM')",
+      label: "to_char(month, 'YYYY-MM')",
+      tax: "coalesce(sum(tax_amount), 0)::numeric(18,2)",
+      damageWaiver: "coalesce(sum(damage_waiver_amount), 0)::numeric(18,2)",
+      invoiceCount: "coalesce(sum(invoice_count), 0)::bigint",
+      equipmentCount: "coalesce(sum(equipment_count), 0)::bigint",
+      lineCount: "coalesce(sum(line_count), 0)::bigint",
+      hrefType: "month",
+    },
+    branch: {
+      table: "branch_revenue_rollup_monthly",
+      key: "branch_code",
+      label: "branch_code",
+      tax: "0::numeric(18,2)",
+      damageWaiver: "0::numeric(18,2)",
+      invoiceCount: "coalesce(sum(invoice_count), 0)::bigint",
+      equipmentCount: "0::bigint",
+      lineCount: "coalesce(sum(line_count), 0)::bigint",
+      hrefType: "branch",
+    },
+    equipment: {
+      table: "equipment_revenue_rollup_monthly",
+      key: "asset_number",
+      label: "asset_number",
+      tax: "0::numeric(18,2)",
+      damageWaiver: "0::numeric(18,2)",
+      invoiceCount: "coalesce(sum(invoice_count), 0)::bigint",
+      equipmentCount: "1::bigint",
+      lineCount: "coalesce(sum(line_count), 0)::bigint",
+      hrefType: "equipment",
+    },
+    customer: {
+      table: "customer_revenue_rollup_monthly",
+      key: "customer_number",
+      label: "customer_number",
+      tax: "0::numeric(18,2)",
+      damageWaiver: "0::numeric(18,2)",
+      invoiceCount: "coalesce(sum(invoice_count), 0)::bigint",
+      equipmentCount: "coalesce(sum(equipment_count), 0)::bigint",
+      lineCount: "coalesce(sum(invoice_count), 0)::bigint",
+      hrefType: "customer",
+    },
+    deal_code: {
+      table: "deal_code_revenue_rollup_monthly",
+      key: "deal_code",
+      label: "deal_code",
+      tax: "0::numeric(18,2)",
+      damageWaiver: "0::numeric(18,2)",
+      invoiceCount: "coalesce(sum(invoice_count), 0)::bigint",
+      equipmentCount: "0::bigint",
+      lineCount: "coalesce(sum(line_count), 0)::bigint",
+      hrefType: "deal_code",
+    },
+  }[groupBy];
+  const filters = ["month >= $1::date", "month < $2::date"];
+  const params: SqlValue[] = [period.start, period.end];
+  if (input.q?.trim()) {
+    params.push(likePattern(input.q));
+    filters.push(`${config.key} ilike $${params.length} escape '\\'`);
+  }
+  const where = filters.join(" and ");
+  const [rowsResult, totalResult, summaryResult, refreshState] = await Promise.all([
     pool.query<{
       group_key: string;
       label: string;
@@ -498,18 +616,18 @@ export async function getRevenueReportView(
     }>(
       `
         select
-          ${group.key} as group_key,
-          ${group.label} as label,
-          coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
-          coalesce(sum(tax_amount), 0)::numeric(18,2) as tax_amount,
-          coalesce(sum(damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
-          count(distinct document_no)::bigint as invoice_count,
-          count(distinct asset_number) filter (where asset_number is not null)::bigint as equipment_count,
-          count(*)::bigint as line_count
-        from rental_billing_facts
+          ${config.key} as group_key,
+          ${config.label} as label,
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          ${config.tax} as tax_amount,
+          ${config.damageWaiver} as damage_waiver_amount,
+          ${config.invoiceCount} as invoice_count,
+          ${config.equipmentCount} as equipment_count,
+          ${config.lineCount} as line_count
+        from ${config.table}
         where ${where}
-        group by ${group.key}
-        order by coalesce(sum(gross_amount), 0) desc
+        group by ${config.key}
+        order by coalesce(sum(gross_revenue), 0) desc
         limit $${params.length + 1} offset $${params.length + 2}
       `,
       [...params, pageSize, offset],
@@ -518,10 +636,10 @@ export async function getRevenueReportView(
       `
         select count(*)::bigint as count
         from (
-          select ${group.key}
-          from rental_billing_facts
+          select ${config.key}
+          from ${config.table}
           where ${where}
-          group by ${group.key}
+          group by ${config.key}
         ) grouped
       `,
       params,
@@ -533,14 +651,15 @@ export async function getRevenueReportView(
     }>(
       `
         select
-          coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
-          count(distinct document_no)::bigint as invoice_count,
-          count(*)::bigint as line_count
-        from rental_billing_facts
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          ${config.invoiceCount} as invoice_count,
+          ${config.lineCount} as line_count
+        from ${config.table}
         where ${where}
       `,
       params,
     ),
+    latestRefreshState(),
   ]);
 
   return {
@@ -557,7 +676,7 @@ export async function getRevenueReportView(
     data: rowsResult.rows.map((row) => ({
       groupKey: row.group_key,
       label: row.label,
-      hrefType: group.hrefType,
+      hrefType: config.hrefType,
       grossRevenue: numericToNumber(row.gross_revenue),
       taxAmount: numericToNumber(row.tax_amount),
       damageWaiverAmount: numericToNumber(row.damage_waiver_amount),
@@ -565,7 +684,7 @@ export async function getRevenueReportView(
       equipmentCount: Number(row.equipment_count),
       lineCount: Number(row.line_count),
     })),
-    refreshState: await latestRefreshState(),
+    refreshState,
   };
 }
 
