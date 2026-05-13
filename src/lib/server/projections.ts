@@ -672,7 +672,7 @@ async function rebuildCustomerDetailSummary() {
               'id', id,
               'name', name,
               'address', coalesce(address->>'line1', address->>'city', ''),
-              'contactPerson', coalesce(contact_info->>'name', contact_info->>'contactPerson', '')
+              'contactPerson', coalesce(contact_person->>'name', contact_person->>'contactPerson', '')
             )
             order by name
           ) as locations
