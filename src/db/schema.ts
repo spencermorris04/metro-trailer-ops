@@ -1705,6 +1705,364 @@ export const bcFaLedgerEntries = pgTable(
   }),
 );
 
+export const readModelRefreshRuns = pgTable(
+  "read_model_refresh_runs",
+  {
+    id: text().primaryKey(),
+    status: text().notNull(),
+    startedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp({ withTimezone: true }),
+    summaryVersion: text().notNull(),
+    errorMessage: text(),
+    rowCounts: jsonb().$type<Record<string, number>>().default({}).notNull(),
+    timingsMs: jsonb().$type<Record<string, number>>().default({}).notNull(),
+  },
+  (table) => ({
+    statusStartedIdx: index("read_model_refresh_runs_status_started_idx").on(
+      table.status,
+      table.startedAt,
+    ),
+  }),
+);
+
+export const equipmentSummary = pgTable(
+  "equipment_summary",
+  {
+    assetId: text().primaryKey(),
+    assetNumber: text().notNull(),
+    assetType: text().notNull(),
+    assetSubtype: text(),
+    faClassCode: text(),
+    faSubclassCode: text(),
+    manufacturer: text(),
+    modelYear: integer(),
+    serialNumber: text(),
+    registrationNumber: text(),
+    branchId: text(),
+    branchCode: text(),
+    branchName: text(),
+    status: text(),
+    availability: text(),
+    maintenanceStatus: text(),
+    bcLocationCode: text(),
+    bcDimension1Code: text(),
+    bcProductNo: text(),
+    bcServiceItemNo: text(),
+    isBlocked: boolean().default(false).notNull(),
+    isInactive: boolean().default(false).notNull(),
+    isDisposed: boolean().default(false).notNull(),
+    isOnRent: boolean().default(false).notNull(),
+    isInService: boolean().default(true).notNull(),
+    underMaintenance: boolean().default(false).notNull(),
+    bookValue: numeric({ precision: 14, scale: 2 }),
+    invoiceLineCount: integer().default(0).notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    leaseCount: integer().default(0).notNull(),
+    lifetimeRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    last12mRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    latestInvoiceNo: text(),
+    latestLeaseKey: text(),
+    latestCustomerNo: text(),
+    latestCustomerName: text(),
+    latestBilledFrom: timestamp({ withTimezone: true }),
+    latestBilledThru: timestamp({ withTimezone: true }),
+    latestActivityAt: timestamp({ withTimezone: true }),
+    sourceProvider: integrationProviderEnum(),
+    sourcePayloadAvailable: boolean().default(false).notNull(),
+    searchText: text().notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    assetNumberIdx: index("equipment_summary_asset_number_idx").on(
+      table.assetNumber,
+    ),
+    activityIdx: index("equipment_summary_activity_idx").on(
+      table.latestActivityAt,
+    ),
+    typeBranchIdx: index("equipment_summary_type_branch_idx").on(
+      table.assetType,
+      table.branchCode,
+    ),
+    branchActivityIdx: index("equipment_summary_branch_activity_idx").on(
+      table.branchCode,
+      table.latestActivityAt,
+    ),
+  }),
+);
+
+export const customerSummary = pgTable(
+  "customer_summary",
+  {
+    customerId: text().primaryKey(),
+    customerNumber: text().notNull(),
+    name: text().notNull(),
+    customerType: text().notNull(),
+    parentCustomerNumber: text(),
+    responsibilityCenter: text(),
+    blocked: boolean().default(false).notNull(),
+    portalEnabled: boolean().default(false).notNull(),
+    branchCoverage: jsonb().$type<string[]>().default([]).notNull(),
+    billingCity: text(),
+    locationCount: integer().default(0).notNull(),
+    locationNames: jsonb().$type<string[]>().default([]).notNull(),
+    contractCount: integer().default(0).notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    leaseCount: integer().default(0).notNull(),
+    equipmentCount: integer().default(0).notNull(),
+    lifetimeRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    last12mRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    arBalance: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    openInvoiceCount: integer().default(0).notNull(),
+    lastInvoiceDate: timestamp({ withTimezone: true }),
+    lastActivityDate: timestamp({ withTimezone: true }),
+    sourceProvider: integrationProviderEnum(),
+    sourcePayloadAvailable: boolean().default(false).notNull(),
+    searchText: text().notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    customerNumberIdx: index("customer_summary_customer_number_idx").on(
+      table.customerNumber,
+    ),
+    activityIdx: index("customer_summary_activity_idx").on(
+      table.lastActivityDate,
+    ),
+    typeActivityIdx: index("customer_summary_type_activity_idx").on(
+      table.customerType,
+      table.lastActivityDate,
+    ),
+  }),
+);
+
+export const invoiceRegisterSummary = pgTable(
+  "invoice_register_summary",
+  {
+    id: text().primaryKey(),
+    source: text().notNull(),
+    documentType: text(),
+    documentNo: text().notNull(),
+    customerNumber: text(),
+    customerName: text(),
+    previousNo: text(),
+    previousDocumentType: text(),
+    postingDate: timestamp({ withTimezone: true }),
+    dueDate: timestamp({ withTimezone: true }),
+    status: text().notNull(),
+    lineCount: integer().default(0).notNull(),
+    fixedAssetLineCount: integer().default(0).notNull(),
+    equipmentCount: integer().default(0).notNull(),
+    grossAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    taxAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    damageWaiverAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    totalAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    arBalance: numeric({ precision: 18, scale: 2 }),
+    latestActivityAt: timestamp({ withTimezone: true }),
+    amountSource: text().notNull(),
+    searchText: text().notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    documentUnique: uniqueIndex("invoice_register_summary_source_doc_unique").on(
+      table.source,
+      table.documentNo,
+    ),
+    activityIdx: index("invoice_register_summary_activity_idx").on(
+      table.postingDate,
+      table.documentNo,
+    ),
+    customerActivityIdx: index("invoice_register_summary_customer_activity_idx").on(
+      table.customerNumber,
+      table.postingDate,
+    ),
+    previousActivityIdx: index("invoice_register_summary_previous_activity_idx").on(
+      table.previousNo,
+      table.postingDate,
+    ),
+  }),
+);
+
+export const leaseSummary = pgTable(
+  "lease_summary",
+  {
+    leaseKey: text().primaryKey(),
+    source: text().notNull(),
+    customerNumber: text(),
+    customerName: text(),
+    firstInvoiceDate: timestamp({ withTimezone: true }),
+    latestInvoiceDate: timestamp({ withTimezone: true }),
+    invoiceCount: integer().default(0).notNull(),
+    lineCount: integer().default(0).notNull(),
+    equipmentCount: integer().default(0).notNull(),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    latestActivityAt: timestamp({ withTimezone: true }),
+    status: text().notNull(),
+    searchText: text().notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    activityIdx: index("lease_summary_activity_idx").on(
+      table.latestInvoiceDate,
+      table.leaseKey,
+    ),
+    customerActivityIdx: index("lease_summary_customer_activity_idx").on(
+      table.customerNumber,
+      table.latestInvoiceDate,
+    ),
+  }),
+);
+
+export const financeDashboardSnapshot = pgTable(
+  "finance_dashboard_snapshot",
+  {
+    snapshotKey: text().primaryKey(),
+    periodStart: timestamp({ withTimezone: true }),
+    periodEnd: timestamp({ withTimezone: true }),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    taxAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    damageWaiverAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    creditMemoCount: integer().default(0).notNull(),
+    equipmentCount: integer().default(0).notNull(),
+    leaseCount: integer().default(0).notNull(),
+    arBalance: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    openArBalance: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    unappliedReceipts: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    revenueByMonth: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    revenueByEquipmentType: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    revenueByBranch: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    revenueByCustomer: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    revenueByLease: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    revenueByDealCode: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    arAging: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    recentActivity: jsonb().$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    exceptions: jsonb().$type<Record<string, unknown>>().default({}).notNull(),
+    sourceRowCounts: jsonb().$type<Record<string, number>>().default({}).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
+export const revenueRollupMonthly = pgTable(
+  "revenue_rollup_monthly",
+  {
+    month: timestamp({ withTimezone: true }).primaryKey(),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    taxAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    damageWaiverAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    equipmentCount: integer().default(0).notNull(),
+    lineCount: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
+export const equipmentRevenueRollupMonthly = pgTable(
+  "equipment_revenue_rollup_monthly",
+  {
+    id: text().primaryKey(),
+    month: timestamp({ withTimezone: true }).notNull(),
+    assetNumber: text().notNull(),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    lineCount: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    assetMonthUnique: uniqueIndex("equipment_revenue_rollup_asset_month_unique").on(
+      table.assetNumber,
+      table.month,
+    ),
+    monthIdx: index("equipment_revenue_rollup_month_idx").on(table.month),
+  }),
+);
+
+export const customerRevenueRollupMonthly = pgTable(
+  "customer_revenue_rollup_monthly",
+  {
+    id: text().primaryKey(),
+    month: timestamp({ withTimezone: true }).notNull(),
+    customerNumber: text().notNull(),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    equipmentCount: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    customerMonthUnique: uniqueIndex("customer_revenue_rollup_customer_month_unique").on(
+      table.customerNumber,
+      table.month,
+    ),
+    monthIdx: index("customer_revenue_rollup_month_idx").on(table.month),
+  }),
+);
+
+export const branchRevenueRollupMonthly = pgTable(
+  "branch_revenue_rollup_monthly",
+  {
+    id: text().primaryKey(),
+    month: timestamp({ withTimezone: true }).notNull(),
+    branchCode: text().notNull(),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    lineCount: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    branchMonthUnique: uniqueIndex("branch_revenue_rollup_branch_month_unique").on(
+      table.branchCode,
+      table.month,
+    ),
+    monthIdx: index("branch_revenue_rollup_month_idx").on(table.month),
+  }),
+);
+
+export const dealCodeRevenueRollupMonthly = pgTable(
+  "deal_code_revenue_rollup_monthly",
+  {
+    id: text().primaryKey(),
+    month: timestamp({ withTimezone: true }).notNull(),
+    dealCode: text().notNull(),
+    grossRevenue: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    invoiceCount: integer().default(0).notNull(),
+    lineCount: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    dealMonthUnique: uniqueIndex("deal_code_revenue_rollup_deal_month_unique").on(
+      table.dealCode,
+      table.month,
+    ),
+    monthIdx: index("deal_code_revenue_rollup_month_idx").on(table.month),
+  }),
+);
+
+export const arCustomerSummary = pgTable(
+  "ar_customer_summary",
+  {
+    customerNumber: text().primaryKey(),
+    arBalance: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    openInvoiceCount: integer().default(0).notNull(),
+    entryCount: integer().default(0).notNull(),
+    latestPostingDate: timestamp({ withTimezone: true }),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    balanceIdx: index("ar_customer_summary_balance_idx").on(table.arBalance),
+    activityIdx: index("ar_customer_summary_activity_idx").on(
+      table.latestPostingDate,
+    ),
+  }),
+);
+
+export const arAgingSnapshot = pgTable(
+  "ar_aging_snapshot",
+  {
+    bucket: text().primaryKey(),
+    balance: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    entryCount: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
 export const glAccounts = pgTable(
   "gl_accounts",
   {

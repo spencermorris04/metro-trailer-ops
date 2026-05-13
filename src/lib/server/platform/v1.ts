@@ -433,6 +433,97 @@ export async function getAssetDetailView(assetId: string) {
 export async function getCustomerListView(filters?: CustomerListFilters) {
   const page = Math.max(1, filters?.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, filters?.pageSize ?? 30));
+  const offset = (page - 1) * pageSize;
+  const summaryParams: Array<string | number | boolean> = [];
+  const summaryConditions: string[] = [];
+  if (filters?.q?.trim()) {
+    summaryParams.push(`%${filters.q.trim().replace(/[%_]/g, "\\$&")}%`);
+    summaryConditions.push(`search_text ilike $${summaryParams.length}`);
+  }
+  if (filters?.customerType) {
+    summaryParams.push(filters.customerType);
+    summaryConditions.push(`customer_type = $${summaryParams.length}`);
+  }
+  if (filters?.portalEnabled === "true" || filters?.portalEnabled === "false") {
+    summaryParams.push(filters.portalEnabled === "true");
+    summaryConditions.push(`portal_enabled = $${summaryParams.length}`);
+  }
+  if (filters?.sourceProvider) {
+    summaryParams.push(filters.sourceProvider);
+    summaryConditions.push(`coalesce(source_provider::text, 'internal') = $${summaryParams.length}`);
+  }
+  const summaryWhere = summaryConditions.length
+    ? `where ${summaryConditions.join(" and ")}`
+    : "";
+  summaryParams.push(pageSize);
+  const limitParam = summaryParams.length;
+  summaryParams.push(offset);
+  const offsetParam = summaryParams.length;
+  const [summaryRows, summaryCount] = await Promise.all([
+    pool.query<{
+      customer_id: string;
+      customer_number: string;
+      name: string;
+      customer_type: string;
+      portal_enabled: boolean;
+      branch_coverage: string[];
+      billing_city: string | null;
+      location_count: number;
+      location_names: string[];
+      contract_count: number;
+      invoice_count: number;
+      lease_count: number;
+      equipment_count: number;
+      lifetime_revenue: string | null;
+      ar_balance: string | null;
+      last_activity_date: Date | null;
+      source_provider: string | null;
+      source_payload_available: boolean;
+    }>(
+      `
+        select *
+        from customer_summary
+        ${summaryWhere}
+        order by last_activity_date desc nulls last, name
+        limit $${limitParam}
+        offset $${offsetParam}
+      `,
+      summaryParams,
+    ),
+    pool.query<{ count: string }>(
+      `select count(*)::text as count from customer_summary ${summaryWhere}`,
+      summaryParams.slice(0, -2),
+    ),
+  ]);
+
+  return {
+    data: summaryRows.rows.map((customer) => ({
+      id: customer.customer_id,
+      customerNumber: customer.customer_number,
+      name: customer.name,
+      customerType: customer.customer_type,
+      portalEnabled: customer.portal_enabled,
+      branchCoverage: customer.branch_coverage ?? [],
+      billingCity: customer.billing_city,
+      locations: (customer.location_names ?? []).map((name, index) => ({
+        id: `${customer.customer_id}:summary-location:${index}`,
+        name,
+      })),
+      contractCount: Number(customer.contract_count ?? 0),
+      arBalance: numericToNumber(customer.ar_balance, 0),
+      sourceProvider: customer.source_provider ?? "internal",
+      sourcePayloadAvailable: customer.source_payload_available,
+      bcInvoiceCount: Number(customer.invoice_count ?? 0),
+      bcLeaseCount: Number(customer.lease_count ?? 0),
+      bcEquipmentCount: Number(customer.equipment_count ?? 0),
+      bcRevenue: numericToNumber(customer.lifetime_revenue),
+      latestActivityDate: toIso(customer.last_activity_date),
+    })),
+    total: Number(summaryCount.rows[0]?.count ?? 0),
+    page,
+    pageSize,
+  };
+
   const customers = await listCustomers({
     q: filters?.q,
     customerType: filters?.customerType,

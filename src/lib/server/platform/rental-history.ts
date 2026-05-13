@@ -6,6 +6,7 @@ import {
   payloadText,
   readLineImportState,
 } from "@/lib/server/rental-history-core";
+import { getOrSetWorkspaceCache } from "@/lib/server/workspace-cache";
 import { getAssetListView, getContractDetailView } from "@/lib/server/platform/v1";
 
 type SqlValue = string | number | boolean | null;
@@ -313,116 +314,171 @@ export async function getFleetListView(filters?: Parameters<typeof getAssetListV
 }
 
 export async function getEquipmentListView(filters?: Parameters<typeof getAssetListView>[0]) {
-  const base = await getFleetListView(filters);
-  const assetNumbers = base.data.map((asset) => asset.assetNumber);
-  if (assetNumbers.length === 0) {
-    return {
-      ...base,
-      data: base.data.map((asset) => ({
-        ...asset,
-        invoiceLineCount: 0,
-        invoiceCount: 0,
-        leaseCount: 0,
-        lifetimeRevenue: 0,
-        latestInvoiceNo: null,
-        latestLeaseKey: null,
-        latestCustomerNo: null,
-        latestCustomerName: null,
-        latestBilledFrom: null,
-        latestBilledThru: null,
-      })),
-    };
+  const page = pageNumber(filters?.page);
+  const pageSize = pageSizeNumber(filters?.pageSize, 25);
+  const offset = (page - 1) * pageSize;
+  const params: SqlValue[] = [];
+  const conditions: string[] = [];
+  const boolFilters = [
+    ["blocked", "is_blocked"],
+    ["inactive", "is_inactive"],
+    ["disposed", "is_disposed"],
+    ["onRent", "is_on_rent"],
+    ["inService", "is_in_service"],
+    ["underMaintenance", "under_maintenance"],
+  ] as const;
+
+  const typedFilters = filters as
+    | (Parameters<typeof getAssetListView>[0] & Record<string, string | undefined>)
+    | undefined;
+
+  if (typedFilters?.q?.trim()) {
+    params.push(likePattern(typedFilters.q));
+    conditions.push(`search_text ilike $${params.length}`);
+  }
+  if (typedFilters?.branch) {
+    params.push(typedFilters.branch);
+    conditions.push(`branch_code = $${params.length}`);
+  }
+  if (typedFilters?.status) {
+    params.push(typedFilters.status);
+    conditions.push(`status = $${params.length}`);
+  }
+  if (typedFilters?.availability) {
+    params.push(typedFilters.availability);
+    conditions.push(`availability = $${params.length}`);
+  }
+  if (typedFilters?.maintenanceStatus) {
+    params.push(typedFilters.maintenanceStatus);
+    conditions.push(`maintenance_status = $${params.length}`);
+  }
+  if (typedFilters?.type) {
+    params.push(typedFilters.type);
+    conditions.push(`asset_type = $${params.length}`);
+  }
+  if (typedFilters?.faClassCode) {
+    params.push(typedFilters.faClassCode);
+    conditions.push(`fa_class_code = $${params.length}`);
+  }
+  if (typedFilters?.faSubclassCode) {
+    params.push(typedFilters.faSubclassCode);
+    conditions.push(`fa_subclass_code = $${params.length}`);
+  }
+  for (const [filterKey, column] of boolFilters) {
+    const value = typedFilters?.[filterKey];
+    if (value === "true" || value === "false") {
+      params.push(value === "true");
+      conditions.push(`${column} = $${params.length}`);
+    }
   }
 
-  const revenueResult = await pool.query<{
-    asset_number: string;
-    invoice_line_count: string;
-    invoice_count: string;
-    lease_count: string;
-    lifetime_revenue: string | null;
-    latest_invoice_no: string | null;
-    latest_lease_key: string | null;
-    latest_customer_no: string | null;
-    latest_customer_name: string | null;
-    latest_billed_from: Date | null;
-    latest_billed_thru: Date | null;
-  }>(
-    `
-      with scoped_lines as (
-        select
-          l.*,
-          coalesce(l.invoice_thru_date, l.invoice_from_date, l.posting_date) as activity_date
-        from bc_rmi_posted_rental_lines l
-        where l.type = 'Fixed Asset'
-          and l.item_no = any($1::text[])
-      ),
-      latest as (
-        select *
-        from (
-          select
-            l.item_no,
-            l.document_type,
-            l.document_no,
-            l.previous_no,
-            l.invoice_from_date,
-            l.invoice_thru_date,
-            h.bill_to_customer_no,
-            h.sell_to_customer_no,
-            c.name as customer_name,
-            row_number() over (
-              partition by l.item_no
-              order by l.activity_date desc nulls last, l.document_no desc, l.line_no desc
-            ) as rn
-          from scoped_lines l
-          left join bc_rmi_posted_rental_invoice_headers h
-            on h.document_type = l.document_type
-           and h.document_no = l.document_no
-          left join customers c
-            on c.customer_number = coalesce(h.bill_to_customer_no, h.sell_to_customer_no)
-        ) ranked
-        where rn = 1
-      )
-      select
-        l.item_no as asset_number,
-        count(*)::bigint as invoice_line_count,
-        count(distinct l.document_no)::bigint as invoice_count,
-        count(distinct l.previous_no) filter (where l.previous_no is not null)::bigint as lease_count,
-        coalesce(sum(l.gross_amount), 0)::numeric(18,2) as lifetime_revenue,
-        max(latest.document_no) as latest_invoice_no,
-        max(latest.previous_no) as latest_lease_key,
-        max(coalesce(latest.bill_to_customer_no, latest.sell_to_customer_no)) as latest_customer_no,
-        max(latest.customer_name) as latest_customer_name,
-        max(latest.invoice_from_date) as latest_billed_from,
-        max(latest.invoice_thru_date) as latest_billed_thru
-      from scoped_lines l
-      left join latest on latest.item_no = l.item_no
-      group by l.item_no
-    `,
-    [assetNumbers],
-  );
+  const where = conditions.length ? `where ${conditions.join(" and ")}` : "";
+  params.push(pageSize);
+  const limitParam = params.length;
+  params.push(offset);
+  const offsetParam = params.length;
 
-  const revenueByAsset = new Map(
-    revenueResult.rows.map((row) => [row.asset_number, row]),
-  );
+  const [rowsResult, countResult] = await Promise.all([
+    pool.query<{
+      asset_id: string;
+      asset_number: string;
+      asset_type: string;
+      asset_subtype: string | null;
+      fa_class_code: string | null;
+      fa_subclass_code: string | null;
+      manufacturer: string | null;
+      model_year: number | null;
+      serial_number: string | null;
+      registration_number: string | null;
+      branch_code: string | null;
+      branch_name: string | null;
+      status: string | null;
+      availability: string | null;
+      maintenance_status: string | null;
+      bc_location_code: string | null;
+      bc_dimension1_code: string | null;
+      bc_product_no: string | null;
+      bc_service_item_no: string | null;
+      is_blocked: boolean;
+      is_inactive: boolean;
+      is_disposed: boolean;
+      is_on_rent: boolean;
+      is_in_service: boolean;
+      under_maintenance: boolean;
+      book_value: string | null;
+      invoice_line_count: number;
+      invoice_count: number;
+      lease_count: number;
+      lifetime_revenue: string | null;
+      latest_invoice_no: string | null;
+      latest_lease_key: string | null;
+      latest_customer_no: string | null;
+      latest_customer_name: string | null;
+      latest_billed_from: Date | null;
+      latest_billed_thru: Date | null;
+      source_provider: string | null;
+      source_payload_available: boolean;
+    }>(
+      `
+        select *
+        from equipment_summary
+        ${where}
+        order by latest_activity_at desc nulls last, asset_number
+        limit $${limitParam}
+        offset $${offsetParam}
+      `,
+      params,
+    ),
+    pool.query<{ count: string }>(
+      `select count(*)::text as count from equipment_summary ${where}`,
+      params.slice(0, -2),
+    ),
+  ]);
 
   return {
-    ...base,
-    data: base.data.map((asset) => {
-      const revenue = revenueByAsset.get(asset.assetNumber);
-      return {
-        ...asset,
-        invoiceLineCount: Number(revenue?.invoice_line_count ?? 0),
-        invoiceCount: Number(revenue?.invoice_count ?? 0),
-        leaseCount: Number(revenue?.lease_count ?? 0),
-        lifetimeRevenue: numericToNumber(revenue?.lifetime_revenue),
-        latestInvoiceNo: revenue?.latest_invoice_no ?? null,
-        latestLeaseKey: revenue?.latest_lease_key ?? null,
-        latestCustomerNo: revenue?.latest_customer_no ?? null,
-        latestCustomerName: revenue?.latest_customer_name ?? null,
-        latestBilledFrom: toIso(revenue?.latest_billed_from ?? null),
-        latestBilledThru: toIso(revenue?.latest_billed_thru ?? null),
-      };
-    }),
+    data: rowsResult.rows.map((asset) => ({
+      id: asset.asset_id,
+      assetNumber: asset.asset_number,
+      type: asset.asset_type,
+      subtype: asset.asset_subtype,
+      branch: asset.branch_name ?? asset.branch_code ?? "Unassigned",
+      branchCode: asset.branch_code,
+      status: asset.status ?? "available",
+      availability: asset.availability ?? "rentable",
+      maintenanceStatus: asset.maintenance_status ?? "clear",
+      serialNumber: asset.serial_number,
+      manufacturer: asset.manufacturer,
+      modelYear: asset.model_year,
+      registrationNumber: asset.registration_number,
+      faClassCode: asset.fa_class_code,
+      faSubclassCode: asset.fa_subclass_code,
+      bcLocationCode: asset.bc_location_code,
+      bcDimension1Code: asset.bc_dimension1_code,
+      bcProductNo: asset.bc_product_no,
+      bcServiceItemNo: asset.bc_service_item_no,
+      isBlocked: asset.is_blocked,
+      isInactive: asset.is_inactive,
+      isDisposed: asset.is_disposed,
+      isOnRent: asset.is_on_rent,
+      isInService: asset.is_in_service,
+      underMaintenance: asset.under_maintenance,
+      bookValue: numericToNumber(asset.book_value),
+      sourceProvider: asset.source_provider ?? "internal",
+      sourcePayloadAvailable: asset.source_payload_available,
+      invoiceLineCount: Number(asset.invoice_line_count ?? 0),
+      invoiceCount: Number(asset.invoice_count ?? 0),
+      leaseCount: Number(asset.lease_count ?? 0),
+      lifetimeRevenue: numericToNumber(asset.lifetime_revenue),
+      latestInvoiceNo: asset.latest_invoice_no,
+      latestLeaseKey: asset.latest_lease_key,
+      latestCustomerNo: asset.latest_customer_no,
+      latestCustomerName: asset.latest_customer_name,
+      latestBilledFrom: toIso(asset.latest_billed_from),
+      latestBilledThru: toIso(asset.latest_billed_thru),
+    })),
+    total: Number(countResult.rows[0]?.count ?? 0),
+    page,
+    pageSize,
   };
 }
 
@@ -500,76 +556,140 @@ function emptyTrailerRevenueDashboardView() {
 }
 
 export async function getTrailerRevenueDashboardView() {
+  return getOrSetWorkspaceCache(
+    "finance-dashboard:current",
+    ["read-models", "finance-dashboard"],
+    300,
+    async () => {
   try {
-    const [metrics, recentActivityResult] = await Promise.all([
-      getRentalHistoryMetricSnapshot(),
-      pool.query<{
-        entry_no: string;
-        document_no: string | null;
-        order_no: string | null;
-        equipment_no: string | null;
-        customer_no: string | null;
-        posting_date: Date | null;
-        gross_amount: string | null;
-        deal_code: string | null;
-      }>(
-        `
-          select
-            h.document_no as entry_no,
-            h.document_no,
-            h.previous_no as order_no,
-            null::text as equipment_no,
-            coalesce(h.bill_to_customer_no, h.sell_to_customer_no) as customer_no,
-            h.posting_date,
-            null::numeric as gross_amount,
-            null::text as deal_code
-          from bc_rmi_posted_rental_invoice_headers h
-          order by h.posting_date desc nulls last, h.document_no desc
-          limit 20
-        `,
-      ),
-    ]);
+    const result = await pool.query<{
+      gross_revenue: string;
+      tax_amount: string;
+      damage_waiver_amount: string;
+      invoice_count: number;
+      credit_memo_count: number;
+      equipment_count: number;
+      lease_count: number;
+      revenue_by_month: Array<Record<string, unknown>>;
+      revenue_by_equipment_type: Array<Record<string, unknown>>;
+      revenue_by_branch: Array<Record<string, unknown>>;
+      revenue_by_customer: Array<Record<string, unknown>>;
+      revenue_by_lease: Array<Record<string, unknown>>;
+      revenue_by_deal_code: Array<Record<string, unknown>>;
+      ar_aging: Array<Record<string, unknown>>;
+      recent_activity: Array<Record<string, unknown>>;
+      exceptions: Record<string, unknown>;
+    }>(
+      `
+        select
+          gross_revenue,
+          tax_amount,
+          damage_waiver_amount,
+          invoice_count,
+          credit_memo_count,
+          equipment_count,
+          lease_count,
+          revenue_by_month,
+          revenue_by_equipment_type,
+          revenue_by_branch,
+          revenue_by_customer,
+          revenue_by_lease,
+          revenue_by_deal_code,
+          ar_aging,
+          recent_activity,
+          exceptions
+        from finance_dashboard_snapshot
+        where snapshot_key = 'current'
+        limit 1
+      `,
+    );
+    const snapshot = result.rows[0];
+    if (!snapshot) {
+      return {
+        ...emptyTrailerRevenueDashboardView(),
+        degraded: true,
+        rollupsDeferred: false,
+      };
+    }
 
     return {
       metrics: {
-        grossRevenue: 0,
-        taxAmount: 0,
-        damageWaiverAmount: 0,
-        invoiceCount: metrics.bcInvoiceHeaders,
-        creditMemoCount: metrics.bcCreditMemos,
-        equipmentCount: metrics.totalAssets,
-        leaseCount: metrics.bcDistinctOrderKeys,
+        grossRevenue: numericToNumber(snapshot.gross_revenue),
+        taxAmount: numericToNumber(snapshot.tax_amount),
+        damageWaiverAmount: numericToNumber(snapshot.damage_waiver_amount),
+        invoiceCount: Number(snapshot.invoice_count ?? 0),
+        creditMemoCount: Number(snapshot.credit_memo_count ?? 0),
+        equipmentCount: Number(snapshot.equipment_count ?? 0),
+        leaseCount: Number(snapshot.lease_count ?? 0),
         unmatchedAssetLines: 0,
       },
-      revenueByMonth: [],
-      revenueByEquipmentType: [],
-      revenueByBranch: [],
-      revenueByCustomer: [],
-      revenueByLease: [],
-      revenueByDealCode: [],
-      arAging: [],
-      recentRentalActivity: recentActivityResult.rows.map((row) => ({
-        entryNo: row.entry_no,
-        documentNo: row.document_no,
-        orderNo: row.order_no,
-        equipmentNo: row.equipment_no,
-        customerNo: row.customer_no,
-        postingDate: toIso(row.posting_date),
-        grossAmount: numericToNumber(row.gross_amount),
-        dealCode: row.deal_code,
+      revenueByMonth: snapshot.revenue_by_month.map((row) => ({
+        month: String(row.month ?? ""),
+        grossRevenue: Number(row.grossRevenue ?? 0),
+        invoiceCount: Number(row.invoiceCount ?? 0),
+        equipmentCount: Number(row.equipmentCount ?? 0),
+      })),
+      revenueByEquipmentType: snapshot.revenue_by_equipment_type.map((row) => ({
+        equipmentType: String(row.equipmentType ?? "Unmatched"),
+        grossRevenue: Number(row.grossRevenue ?? 0),
+        lineCount: Number(row.lineCount ?? 0),
+        equipmentCount: Number(row.equipmentCount ?? 0),
+      })),
+      revenueByBranch: snapshot.revenue_by_branch.map((row) => ({
+        branchCode: String(row.branchCode ?? "Unassigned"),
+        grossRevenue: Number(row.grossRevenue ?? 0),
+        lineCount: Number(row.lineCount ?? 0),
+      })),
+      revenueByCustomer: snapshot.revenue_by_customer.map((row) => ({
+        customerNumber: row.customerNumber == null ? null : String(row.customerNumber),
+        customerName: row.customerName == null ? null : String(row.customerName),
+        grossRevenue: Number(row.grossRevenue ?? 0),
+        invoiceCount: Number(row.invoiceCount ?? 0),
+      })),
+      revenueByLease: snapshot.revenue_by_lease.map((row) => ({
+        leaseKey: String(row.leaseKey ?? ""),
+        customerNumber: row.customerNumber == null ? null : String(row.customerNumber),
+        customerName: row.customerName == null ? null : String(row.customerName),
+        grossRevenue: Number(row.grossRevenue ?? 0),
+        invoiceCount: Number(row.invoiceCount ?? 0),
+        equipmentCount: Number(row.equipmentCount ?? 0),
+      })),
+      revenueByDealCode: snapshot.revenue_by_deal_code.map((row) => ({
+        dealCode: String(row.dealCode ?? "Unassigned"),
+        grossRevenue: Number(row.grossRevenue ?? 0),
+        lineCount: Number(row.lineCount ?? 0),
+      })),
+      arAging: snapshot.ar_aging.map((row) => ({
+        bucket: String(row.bucket ?? "Unknown"),
+        balance: Number(row.balance ?? 0),
+        entryCount: Number(row.entryCount ?? 0),
+      })),
+      recentRentalActivity: snapshot.recent_activity.map((row) => ({
+        entryNo: String(row.entryNo ?? row.documentNo ?? ""),
+        documentNo: row.documentNo == null ? null : String(row.documentNo),
+        orderNo: row.orderNo == null ? null : String(row.orderNo),
+        equipmentNo: row.equipmentNo == null ? null : String(row.equipmentNo),
+        customerNo: row.customerNo == null ? null : String(row.customerNo),
+        postingDate: row.postingDate == null ? null : String(row.postingDate),
+        grossAmount: Number(row.grossAmount ?? 0),
+        dealCode: row.dealCode == null ? null : String(row.dealCode),
       })),
       exceptions: {
-        unmatchedAssetLines: 0,
-        unmatchedCustomerInvoices: metrics.bcInvoiceHeadersUnmatchedToCustomers,
-        missingDimensionLines: 0,
+        unmatchedAssetLines: Number(snapshot.exceptions.unmatchedAssetLines ?? 0),
+        unmatchedCustomerInvoices: Number(
+          snapshot.exceptions.unmatchedCustomerInvoices ?? 0,
+        ),
+        missingDimensionLines: Number(snapshot.exceptions.missingDimensionLines ?? 0),
       },
       degraded: false,
-      rollupsDeferred: true,
+      rollupsDeferred: false,
     };
   } catch (error) {
     console.error("Failed to load trailer revenue dashboard", error);
     return emptyTrailerRevenueDashboardView();
   }
+    },
+  );
 }
 
 async function getTrailerRevenueDashboardViewBounded() {
@@ -820,7 +940,10 @@ async function getTrailerRevenueDashboardViewBounded() {
       })),
       exceptions: {
         unmatchedAssetLines: 0,
-        unmatchedCustomerInvoices: metrics.bcInvoiceHeadersUnmatchedToCustomers,
+        unmatchedCustomerInvoices: Math.max(
+          0,
+          metrics.bcInvoiceHeaders - metrics.bcInvoiceHeadersMatchedToCustomers,
+        ),
         missingDimensionLines: 0,
       },
       degraded: false,
@@ -2145,12 +2268,111 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
   const page = pageNumber(filters?.page);
   const pageSize = pageSizeNumber(filters?.pageSize, 50);
   const offset = (page - 1) * pageSize;
+  const summaryParams: SqlValue[] = [];
+  const summaryConditions: string[] = [];
+  if (source !== "all") {
+    summaryParams.push(source);
+    summaryConditions.push(`source = $${summaryParams.length}`);
+  }
+  if (filters?.q?.trim()) {
+    summaryParams.push(likePattern(filters.q));
+    summaryConditions.push(`search_text ilike $${summaryParams.length}`);
+  }
+  const summaryWhere = summaryConditions.length
+    ? `where ${summaryConditions.join(" and ")}`
+    : "";
+  summaryParams.push(pageSize);
+  const summaryLimitParam = summaryParams.length;
+  summaryParams.push(offset);
+  const summaryOffsetParam = summaryParams.length;
+  const [summaryLineImport, summaryResult, countResult] = await Promise.all([
+    getLineImportState(),
+    pool.query<{
+      id: string;
+      source: string;
+      document_type: string | null;
+      document_no: string;
+      customer_number: string | null;
+      customer_name: string | null;
+      previous_no: string | null;
+      previous_document_type: string | null;
+      posting_date: Date | null;
+      due_date: Date | null;
+      status: string;
+      line_count: number;
+      fixed_asset_line_count: number;
+      gross_amount: string | null;
+      tax_amount: string | null;
+      total_amount: string | null;
+      ar_balance: string | null;
+      amount_source: string;
+    }>(
+      `
+        select *
+        from invoice_register_summary
+        ${summaryWhere}
+        order by posting_date desc nulls last, document_no desc
+        limit $${summaryLimitParam}
+        offset $${summaryOffsetParam}
+      `,
+      summaryParams,
+    ),
+    pool.query<{ count: string }>(
+      `select count(*)::text as count from invoice_register_summary ${summaryWhere}`,
+      summaryParams.slice(0, -2),
+    ),
+  ]);
+
+  return {
+    data: summaryResult.rows.map((row) => ({
+      id: row.id,
+      source: row.source === "business_central" ? "business_central" as const : "app" as const,
+      invoiceNumber: row.document_no,
+      customerNumber: row.customer_number,
+      customerName: row.customer_name ?? "Unknown customer",
+      leaseKey: row.previous_no,
+      status:
+        row.source === "business_central"
+          ? getBusinessCentralInvoiceStatus({
+              documentType: row.document_type ?? row.status,
+              lineCount: Number(row.line_count ?? 0),
+              lineImportComplete: summaryLineImport.done,
+            })
+          : row.status,
+      invoiceDate: toIso(row.posting_date),
+      dueDate: toIso(row.due_date),
+      totalAmount: numericToNumber(row.total_amount),
+      balanceAmount: row.ar_balance === null ? null : numericToNumber(row.ar_balance),
+      balanceStatus:
+        row.ar_balance === null
+          ? ("No ledger balance" as const)
+          : numericToNumber(row.ar_balance) !== 0
+            ? ("Open in BC customer ledger" as const)
+            : ("Closed or no open BC ledger entry" as const),
+      amountSource: row.amount_source,
+      sourceDocumentType: row.document_type,
+      sourceDocumentNo: row.document_no,
+      previousDocumentType: row.previous_document_type,
+      previousDocumentNo: row.previous_no,
+      lineCount: Number(row.line_count ?? 0),
+      fixedAssetLineCount: Number(row.fixed_asset_line_count ?? 0),
+      lineTax: numericToNumber(row.tax_amount),
+      assetNumbers: "",
+    })),
+    total: Number(countResult.rows[0]?.count ?? 0),
+    page,
+    pageSize,
+    source,
+    lineImport: summaryLineImport,
+    openBalanceAvailable: true,
+  };
+
   const [lineImport, metrics] = await Promise.all([
     getLineImportState(),
     getRentalHistoryMetricSnapshot(),
   ]);
 
-  if (source !== "app" && (!filters?.q?.trim() || exactSearchToken(filters.q))) {
+  if (source !== "app" && (!filters?.q?.trim() || exactSearchToken(filters?.q))) {
     return getBusinessCentralInvoiceRegisterFast(
       { ...filters, source, page, pageSize },
       lineImport,
@@ -2893,6 +3115,87 @@ export async function getLeaseRegisterView(filters?: PagedRentalFilters) {
   const page = pageNumber(filters?.page);
   const pageSize = pageSizeNumber(filters?.pageSize, 50);
   const offset = (page - 1) * pageSize;
+  const summaryParams: SqlValue[] = [];
+  const summaryConditions: string[] = [];
+  if (source !== "all") {
+    summaryParams.push(source);
+    summaryConditions.push(`source = $${summaryParams.length}`);
+  }
+  if (filters?.q?.trim()) {
+    summaryParams.push(likePattern(filters.q));
+    summaryConditions.push(`search_text ilike $${summaryParams.length}`);
+  }
+  const summaryWhere = summaryConditions.length
+    ? `where ${summaryConditions.join(" and ")}`
+    : "";
+  summaryParams.push(pageSize);
+  const summaryLimitParam = summaryParams.length;
+  summaryParams.push(offset);
+  const summaryOffsetParam = summaryParams.length;
+  const [summaryLineImport, summaryResult, countResult] = await Promise.all([
+    getLineImportState(),
+    pool.query<{
+      lease_key: string;
+      source: string;
+      customer_number: string | null;
+      customer_name: string | null;
+      first_invoice_date: Date | null;
+      latest_invoice_date: Date | null;
+      invoice_count: number;
+      line_count: number;
+      equipment_count: number;
+      gross_revenue: string | null;
+      latest_activity_at: Date | null;
+      status: string;
+    }>(
+      `
+        select *
+        from lease_summary
+        ${summaryWhere}
+        order by latest_invoice_date desc nulls last, lease_key desc
+        limit $${summaryLimitParam}
+        offset $${summaryOffsetParam}
+      `,
+      summaryParams,
+    ),
+    pool.query<{ count: string }>(
+      `select count(*)::text as count from lease_summary ${summaryWhere}`,
+      summaryParams.slice(0, -2),
+    ),
+  ]);
+
+  return {
+    data: summaryResult.rows.map((row) => ({
+      id: row.lease_key,
+      source: row.source === "business_central" ? "business_central" : "app",
+      leaseKey: row.lease_key,
+      customerNumber: row.customer_number,
+      customerName: row.customer_name ?? "Unknown customer",
+      status: row.status,
+      startDate: toIso(row.first_invoice_date),
+      endDate: toIso(row.latest_invoice_date),
+      branchCode: null,
+      branchName: null,
+      invoiceCount: Number(row.invoice_count ?? 0),
+      assetCount: Number(row.equipment_count ?? 0),
+      lineCount: Number(row.line_count ?? 0),
+      grossAmount: numericToNumber(row.gross_revenue),
+      latestInvoiceDate: toIso(row.latest_invoice_date),
+      firstInvoiceDate: toIso(row.first_invoice_date),
+      sourceDocumentType:
+        row.source === "business_central" ? "RMI Posted Rental Order" : "Metro Lease",
+      completeness:
+        row.source === "business_central" && !summaryLineImport.done
+          ? "Lines partial"
+          : "Lines imported",
+    })),
+    total: Number(countResult.rows[0]?.count ?? 0),
+    page,
+    pageSize,
+    source,
+    lineImport: summaryLineImport,
+  };
+
   const [lineImport, metrics] = await Promise.all([
     getLineImportState(),
     getRentalHistoryMetricSnapshot(),
@@ -2901,7 +3204,7 @@ export async function getLeaseRegisterView(filters?: PagedRentalFilters) {
   if (
     source !== "app" &&
     (!filters?.q?.trim() ||
-      exactSearchToken(filters.q)?.toUpperCase().startsWith("RO"))
+      exactSearchToken(filters?.q)?.toUpperCase().startsWith("RO"))
   ) {
     return getBusinessCentralLeaseRegisterFast(
       { ...filters, source, page, pageSize },

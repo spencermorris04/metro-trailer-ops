@@ -78,6 +78,13 @@
       "when": 1778340112240,
       "tag": "0010_bc_rmi_hot_path_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778625600000,
+      "tag": "0011_instant_erp_read_models",
+      "breakpoints": true
     }
   ]
 }
