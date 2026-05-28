@@ -249,7 +249,7 @@ export class MetroSyncBackendStack extends Stack {
         ORBCOMM_REQUEST_TIMEOUT_SECONDS: "300",
         ORBCOMM_CONCURRENT_REQUEST_MAX_RETRIES: "10",
         ORBCOMM_CONCURRENT_REQUEST_RETRY_SECONDS: "90",
-        BC_RAW_HISTORY_DATASETS: "all",
+        BC_INCREMENTAL_WINDOW_HOURS: "36",
         BC_RAW_HISTORY_PAGE_SIZE: "1000",
       },
       secrets: {
@@ -378,11 +378,11 @@ export class MetroSyncBackendStack extends Stack {
       targets: [runTaskTarget("daily:trailer-documents")],
     });
 
-    new events.Rule(this, "BusinessCentralRawHistorySchedule", {
-      ruleName: "metro-trailer-bc-raw-history-sync",
-      enabled: false,
+    new events.Rule(this, "BusinessCentralNightlySchedule", {
+      ruleName: "metro-trailer-bc-nightly-sync",
+      enabled: true,
       schedule: events.Schedule.cron({ minute: "0", hour: "3" }),
-      targets: [runTaskTarget("daily:bc-raw-history")],
+      targets: [runTaskTarget("daily:bc-nightly")],
     });
 
     const handler = new lambdaNode.NodejsFunction(this, "ApiHandler", {

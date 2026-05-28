@@ -11,7 +11,7 @@ type Integration =
   | "trailerDocuments"
   | "orbcomm"
   | "telematics"
-  | "bcRawHistory";
+  | "bcNightly";
 type Mode = "daily" | "ondemand";
 
 type SyncRequest = {
@@ -126,8 +126,15 @@ function normalizeIntegration(value: string): Integration {
   if (value === "telematics") {
     return "telematics";
   }
-  if (value === "business-central-raw-history" || value === "bc-raw-history" || value === "bcRawHistory") {
-    return "bcRawHistory";
+  if (
+    value === "business-central" ||
+    value === "business-central-nightly" ||
+    value === "business-central-raw-history" ||
+    value === "bc-nightly" ||
+    value === "bc-raw-history" ||
+    value === "bcRawHistory"
+  ) {
+    return "bcNightly";
   }
 
   throw new Error(`Unsupported integration: ${value}`);
@@ -198,19 +205,9 @@ function buildCommands(request: SyncRequest): string[][] {
         ],
       ];
     }
-    if (request.integration === "bcRawHistory") {
+    if (request.integration === "bcNightly") {
       return [
-        [
-          "npm",
-          "run",
-          "bc:seed:raw-history",
-          "--",
-          `--datasets=${process.env.BC_RAW_HISTORY_DATASETS ?? "all"}`,
-          `--page-size=${process.env.BC_RAW_HISTORY_PAGE_SIZE ?? "1000"}`,
-          `--concurrency=${process.env.BC_RAW_HISTORY_CONCURRENCY ?? "1"}`,
-          `--max-retries=${process.env.BC_RAW_HISTORY_MAX_RETRIES ?? "8"}`,
-          `--request-timeout-ms=${process.env.BC_RAW_HISTORY_REQUEST_TIMEOUT_MS ?? "90000"}`,
-        ],
+        ["npm", "run", "bc:sync:nightly"],
       ];
     }
   }
