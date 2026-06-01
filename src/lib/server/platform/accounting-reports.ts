@@ -195,12 +195,12 @@ async function latestGlImportState() {
         limit 1
       `,
     ),
-    getTableEstimates(["bc_gl_entries"]),
+    getTableEstimates(["gl_entry_facts"]),
   ]);
 
   return {
     latestRun: runResult.rows[0] ?? null,
-    rowCount: countResult.get("bc_gl_entries") ?? 0,
+    rowCount: countResult.get("gl_entry_facts") ?? 0,
   };
 }
 
@@ -209,13 +209,13 @@ async function importCoverage() {
     "rental_billing_facts",
     "rental_invoice_facts",
     "ar_ledger_facts",
-    "bc_gl_entries",
+    "gl_entry_facts",
   ]);
   return {
     rentalBillingFacts: estimates.get("rental_billing_facts") ?? 0,
     rentalInvoiceFacts: estimates.get("rental_invoice_facts") ?? 0,
     arLedgerFacts: estimates.get("ar_ledger_facts") ?? 0,
-    bcGlEntries: estimates.get("bc_gl_entries") ?? 0,
+    bcGlEntries: estimates.get("gl_entry_facts") ?? 0,
   };
 }
 
@@ -1076,6 +1076,7 @@ export async function getGlHistoryReportView(input: PagedReportInput & {
       posting_date: Date | null;
       document_no: string | null;
       account_no: string | null;
+      account_name: string | null;
       description: string | null;
       amount: string | null;
       debit_amount: string | null;
@@ -1083,9 +1084,9 @@ export async function getGlHistoryReportView(input: PagedReportInput & {
       dimension_set_id: string | null;
     }>(
       `
-        select id, external_entry_no, posting_date, document_no, account_no, description,
+        select id, external_entry_no, posting_date, document_no, account_no, account_name, description,
                amount, debit_amount, credit_amount, dimension_set_id
-        from bc_gl_entries
+        from gl_entry_facts
         where ${where}
         order by posting_date desc nulls last, external_entry_no desc
         limit $${params.length + 1} offset $${params.length + 2}
@@ -1093,7 +1094,7 @@ export async function getGlHistoryReportView(input: PagedReportInput & {
       [...params, pageSize, offset],
     ),
     pool.query<{ count: string }>(
-      `select count(*)::bigint as count from bc_gl_entries where ${where}`,
+      `select count(*)::bigint as count from gl_entry_facts where ${where}`,
       params,
     ),
     pool.query<{
@@ -1106,7 +1107,7 @@ export async function getGlHistoryReportView(input: PagedReportInput & {
           coalesce(sum(debit_amount), 0)::numeric(18,2) as debit_amount,
           coalesce(sum(credit_amount), 0)::numeric(18,2) as credit_amount,
           coalesce(sum(amount), 0)::numeric(18,2) as net_amount
-        from bc_gl_entries
+        from gl_entry_facts
         where ${where}
       `,
       params,
@@ -1131,7 +1132,7 @@ export async function getGlHistoryReportView(input: PagedReportInput & {
       postingDate: toIso(row.posting_date),
       documentNo: row.document_no,
       accountNo: row.account_no,
-      description: row.description,
+      description: row.account_name ? `${row.account_name} - ${row.description ?? ""}`.trim() : row.description,
       amount: numericToNumber(row.amount),
       debitAmount: numericToNumber(row.debit_amount),
       creditAmount: numericToNumber(row.credit_amount),

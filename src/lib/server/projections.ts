@@ -296,6 +296,153 @@ async function rebuildArLedgerFacts() {
   );
 }
 
+async function rebuildRentalActivityFacts() {
+  await replaceFromTemp(
+    "rental_activity_facts",
+    "create temp table tmp_rental_activity_facts (like rental_activity_facts including defaults) on commit preserve rows",
+    `
+      insert into tmp_rental_activity_facts (
+        id,
+        source_provider,
+        source_row_id,
+        external_entry_no,
+        document_type,
+        document_no,
+        lease_key,
+        customer_number,
+        customer_id,
+        customer_name,
+        asset_number,
+        asset_id,
+        asset_type,
+        activity_type,
+        posting_date,
+        service_period_start,
+        service_period_end,
+        quantity,
+        rental_days,
+        unit_price,
+        gross_amount,
+        branch_code,
+        deal_code,
+        source_imported_at,
+        search_text,
+        refreshed_at
+      )
+      select
+        'bc_ws_rental_ledger:' || e.id,
+        'business_central',
+        e.id,
+        e.external_entry_no,
+        e.document_type,
+        e.document_no,
+        e.order_no,
+        e.bill_to_customer_no,
+        c.id,
+        c.name,
+        case when e.type_shipped = 'Fixed Asset' then e.no_shipped else null end,
+        a.id,
+        a.type::text,
+        coalesce(nullif(e.document_type, ''), 'rental_ledger_entry'),
+        e.posting_date,
+        e.from_date,
+        e.thru_date,
+        e.quantity,
+        e.rental_days,
+        e.unit_price,
+        coalesce(e.gross_amount, 0)::numeric(18,2),
+        e.shortcut_dimension1_code,
+        e.deal_code,
+        e.imported_at,
+        concat_ws(
+          ' ',
+          e.external_entry_no,
+          e.document_no,
+          e.order_no,
+          e.bill_to_customer_no,
+          c.name,
+          e.no_shipped,
+          e.serial_no_shipped,
+          e.deal_code,
+          e.shortcut_dimension1_code
+        ),
+        now()
+      from bc_rmi_ws_rental_ledger_entries e
+      left join customers c on c.customer_number = e.bill_to_customer_no
+      left join assets a
+        on a.asset_number = e.no_shipped
+       and e.type_shipped = 'Fixed Asset'
+    `,
+  );
+}
+
+async function rebuildGlEntryFacts() {
+  await replaceFromTemp(
+    "gl_entry_facts",
+    "create temp table tmp_gl_entry_facts (like gl_entry_facts including defaults) on commit preserve rows",
+    `
+      insert into tmp_gl_entry_facts (
+        id,
+        source_provider,
+        source_row_id,
+        external_entry_no,
+        posting_date,
+        document_no,
+        account_no,
+        account_name,
+        account_category,
+        description,
+        amount,
+        debit_amount,
+        credit_amount,
+        dimension_set_id,
+        dimension_values,
+        source_imported_at,
+        search_text,
+        refreshed_at
+      )
+      with dimensions as (
+        select
+          dimension_set_id,
+          jsonb_object_agg(dimension_code, dimension_value_code order by dimension_code) as dimension_values
+        from bc_dimension_set_entries
+        group by dimension_set_id
+      )
+      select
+        'bc_gl_entry:' || e.id,
+        'business_central',
+        e.id,
+        e.external_entry_no,
+        e.posting_date,
+        e.document_no,
+        e.account_no,
+        a.name,
+        coalesce(a.category, a.account_type),
+        e.description,
+        coalesce(e.amount, 0)::numeric(18,2),
+        coalesce(e.debit_amount, 0)::numeric(18,2),
+        coalesce(e.credit_amount, 0)::numeric(18,2),
+        e.dimension_set_id,
+        coalesce(dimensions.dimension_values, '{}'::jsonb),
+        e.imported_at,
+        concat_ws(
+          ' ',
+          e.external_entry_no,
+          e.document_no,
+          e.account_no,
+          a.name,
+          a.category,
+          e.description,
+          dimensions.dimension_values::text
+        ),
+        now()
+      from bc_gl_entries e
+      left join bc_gl_accounts a on a.account_no = e.account_no
+      left join dimensions on dimensions.dimension_set_id = e.dimension_set_id
+    `,
+  );
+}
+
 async function rebuildRentalInvoiceFacts() {
   await replaceFromTemp(
     "rental_invoice_facts",
@@ -912,6 +1059,82 @@ async function rebuildEntityActivityFacts() {
         now()
       from rental_billing_facts
       where customer_id is not null
+      union all
+      select
+        'lease_invoice:' || id,
+        'lease',
+        lease_key,
+        'invoice',
+        document_no,
+        'invoice_line',
+        posting_date,
+        document_no,
+        concat_ws(' / ', customer_name, asset_number),
+        gross_amount,
+        '/ar/invoices/' || document_no,
+        source_provider,
+        source_row_id,
+        search_text,
+        now()
+      from rental_billing_facts
+      where lease_key is not null
+      union all
+      select
+        'asset_rental_activity:' || id,
+        'asset',
+        asset_id,
+        'rental_activity',
+        external_entry_no,
+        activity_type,
+        posting_date,
+        coalesce(document_no, external_entry_no),
+        concat_ws(' / ', customer_name, lease_key, asset_number),
+        gross_amount,
+        case when document_no is not null then '/ar/invoices/' || document_no else '/equipment/' || asset_id end,
+        source_provider,
+        source_row_id,
+        search_text,
+        now()
+      from rental_activity_facts
+      where asset_id is not null
+      union all
+      select
+        'customer_rental_activity:' || id,
+        'customer',
+        customer_id,
+        'rental_activity',
+        external_entry_no,
+        activity_type,
+        posting_date,
+        coalesce(document_no, external_entry_no),
+        concat_ws(' / ', asset_number, lease_key),
+        gross_amount,
+        case when document_no is not null then '/ar/invoices/' || document_no else '/customers/' || customer_id end,
+        source_provider,
+        source_row_id,
+        search_text,
+        now()
+      from rental_activity_facts
+      where customer_id is not null
+      union all
+      select
+        'lease_rental_activity:' || id,
+        'lease',
+        lease_key,
+        'rental_activity',
+        external_entry_no,
+        activity_type,
+        posting_date,
+        coalesce(document_no, external_entry_no),
+        concat_ws(' / ', customer_name, asset_number),
+        gross_amount,
+        case when document_no is not null then '/ar/invoices/' || document_no else '/leases/' || lease_key end,
+        source_provider,
+        source_row_id,
+        search_text,
+        now()
+      from rental_activity_facts
+      where lease_key is not null
     `,
   );
 }
@@ -937,6 +1160,12 @@ export async function rebuildServingFacts(): Promise<ProjectionRunResult> {
 
     await timed("arLedgerFacts", timingsMs, rebuildArLedgerFacts);
     rowCounts.arLedgerFacts = await countRows("ar_ledger_facts");
+
+    await timed("rentalActivityFacts", timingsMs, rebuildRentalActivityFacts);
+    rowCounts.rentalActivityFacts = await countRows("rental_activity_facts");
+
+    await timed("glEntryFacts", timingsMs, rebuildGlEntryFacts);
+    rowCounts.glEntryFacts = await countRows("gl_entry_facts");
 
     await timed("rentalInvoiceFacts", timingsMs, rebuildRentalInvoiceFacts);
     rowCounts.rentalInvoiceFacts = await countRows("rental_invoice_facts");
@@ -971,6 +1200,7 @@ export async function rebuildServingFacts(): Promise<ProjectionRunResult> {
       "customers",
       "invoices",
       "leases",
+      "gl",
       "search",
     ]);
 
@@ -1014,8 +1244,9 @@ export async function processProjectionEvents(limit = 500): Promise<ProjectionRu
     return { id, rowCounts: { processedEvents: 0 }, timingsMs };
   }
 
-  // The incremental event envelope is in place; until import writers emit enough
-  // affected keys, processing a batch safely refreshes the serving layer.
+  // This is intentionally a coalesced rebuild, not a per-row incremental projector.
+  // Import jobs can enqueue thousands of raw-table changes; rebuilding once keeps
+  // the serving layer correct without pretending affected-key refresh is complete.
   await timed("servingRebuild", timingsMs, rebuildServingFacts);
 
   await pool.query(
@@ -1031,21 +1262,6 @@ export async function processProjectionEvents(limit = 500): Promise<ProjectionRu
   );
 
   rowCounts.processedEvents = events.rows.length;
+  rowCounts.coalescedServingRebuilds = 1;
   return { id, rowCounts, timingsMs };
-}
-
-export async function refreshAffectedEquipment() {
-  return rebuildServingFacts();
-}
-
-export async function refreshAffectedCustomer() {
-  return rebuildServingFacts();
-}
-
-export async function refreshAffectedInvoice() {
-  return rebuildServingFacts();
-}
-
-export async function refreshAffectedLease() {
-  return rebuildServingFacts();
 }

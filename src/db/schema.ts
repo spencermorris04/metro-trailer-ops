@@ -2222,6 +2222,100 @@ export const arLedgerFacts = pgTable(
   }),
 );
 
+export const rentalActivityFacts = pgTable(
+  "rental_activity_facts",
+  {
+    id: text().primaryKey(),
+    sourceProvider: text().notNull(),
+    sourceRowId: text().notNull(),
+    externalEntryNo: text().notNull(),
+    documentType: text(),
+    documentNo: text(),
+    leaseKey: text(),
+    customerNumber: text(),
+    customerId: text(),
+    customerName: text(),
+    assetNumber: text(),
+    assetId: text(),
+    assetType: text(),
+    activityType: text().notNull(),
+    postingDate: timestamp({ withTimezone: true }),
+    servicePeriodStart: timestamp({ withTimezone: true }),
+    servicePeriodEnd: timestamp({ withTimezone: true }),
+    quantity: numeric({ precision: 14, scale: 4 }),
+    rentalDays: numeric({ precision: 14, scale: 4 }),
+    unitPrice: numeric({ precision: 14, scale: 2 }),
+    grossAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    branchCode: text(),
+    dealCode: text(),
+    sourceImportedAt: timestamp({ withTimezone: true }),
+    searchText: text().notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    sourceRowUnique: uniqueIndex("rental_activity_facts_source_row_unique").on(
+      table.sourceProvider,
+      table.sourceRowId,
+    ),
+    assetActivityIdx: index("rental_activity_facts_asset_activity_idx").on(
+      table.assetNumber,
+      table.postingDate,
+    ),
+    customerActivityIdx: index("rental_activity_facts_customer_activity_idx").on(
+      table.customerNumber,
+      table.postingDate,
+    ),
+    leaseActivityIdx: index("rental_activity_facts_lease_activity_idx").on(
+      table.leaseKey,
+      table.postingDate,
+    ),
+    documentIdx: index("rental_activity_facts_document_idx").on(table.documentNo),
+  }),
+);
+
+export const glEntryFacts = pgTable(
+  "gl_entry_facts",
+  {
+    id: text().primaryKey(),
+    sourceProvider: text().notNull(),
+    sourceRowId: text().notNull(),
+    externalEntryNo: text().notNull(),
+    postingDate: timestamp({ withTimezone: true }),
+    documentNo: text(),
+    accountNo: text(),
+    accountName: text(),
+    accountCategory: text(),
+    description: text(),
+    amount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    debitAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    creditAmount: numeric({ precision: 18, scale: 2 }).default("0").notNull(),
+    dimensionSetId: text(),
+    dimensionValues: jsonb().$type<Record<string, string>>().default({}).notNull(),
+    sourceImportedAt: timestamp({ withTimezone: true }),
+    searchText: text().notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    sourceRowUnique: uniqueIndex("gl_entry_facts_source_row_unique").on(
+      table.sourceProvider,
+      table.sourceRowId,
+    ),
+    externalEntryUnique: uniqueIndex("gl_entry_facts_external_entry_unique").on(
+      table.sourceProvider,
+      table.externalEntryNo,
+    ),
+    postingDateIdx: index("gl_entry_facts_posting_date_idx").on(table.postingDate),
+    accountActivityIdx: index("gl_entry_facts_account_activity_idx").on(
+      table.accountNo,
+      table.postingDate,
+    ),
+    documentActivityIdx: index("gl_entry_facts_document_activity_idx").on(
+      table.documentNo,
+      table.postingDate,
+    ),
+  }),
+);
+
 export const entityActivityFacts = pgTable(
   "entity_activity_facts",
   {

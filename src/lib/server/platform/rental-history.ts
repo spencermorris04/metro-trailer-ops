@@ -1118,13 +1118,10 @@ async function getTrailerRevenueDashboardViewHeavy() {
       `
         with normalized as (
           select
-            lower(coalesce(payload->>'Open', 'false')) = 'true' as is_open,
-            coalesce(nullif(payload->>'Due_Date', '')::date, posting_date::date) as due_date,
-            coalesce(
-              nullif(regexp_replace(coalesce(payload->>'Remaining_Amount', payload->>'Remaining_Amt_LCY', amount::text, '0'), '[^0-9.-]', '', 'g'), '')::numeric,
-              0
-            ) as remaining_amount
-          from bc_customer_ledger_entries
+            is_open,
+            coalesce(due_date::date, posting_date::date) as due_date,
+            remaining_amount
+          from ar_ledger_facts
         ),
         bucketed as (
           select
@@ -1169,13 +1166,13 @@ async function getTrailerRevenueDashboardViewHeavy() {
         select
           external_entry_no as entry_no,
           document_no,
-          order_no,
-          no_shipped as equipment_no,
-          bill_to_customer_no as customer_no,
+          lease_key as order_no,
+          asset_number as equipment_no,
+          customer_number as customer_no,
           posting_date,
           gross_amount,
           deal_code
-        from bc_rmi_ws_rental_ledger_entries
+        from rental_activity_facts
         order by posting_date desc nulls last, external_entry_no desc
         limit 20
       `,
@@ -1579,7 +1576,8 @@ export async function getAssetRentalDetailView(assetId: string) {
         return null;
       }
 
-      const [recentLinesResult, revenueByMonthResult, leaseResult] = await Promise.all([
+      const [recentLinesResult, revenueByMonthResult, leaseResult, activityResult] =
+        await Promise.all([
         pool.query<{
           id: string;
           document_type: string | null;
@@ -1660,6 +1658,43 @@ export async function getAssetRentalDetailView(assetId: string) {
           `,
           [asset.asset_number],
         ),
+        pool.query<{
+          id: string;
+          external_entry_no: string;
+          document_no: string | null;
+          lease_key: string | null;
+          customer_number: string | null;
+          customer_name: string | null;
+          activity_type: string;
+          posting_date: Date | null;
+          service_period_start: Date | null;
+          service_period_end: Date | null;
+          quantity: string | null;
+          gross_amount: string | null;
+          deal_code: string | null;
+        }>(
+          `
+            select
+              id,
+              external_entry_no,
+              document_no,
+              lease_key,
+              customer_number,
+              customer_name,
+              activity_type,
+              posting_date,
+              service_period_start,
+              service_period_end,
+              quantity,
+              gross_amount,
+              deal_code
+            from rental_activity_facts
+            where asset_number = $1
+            order by posting_date desc nulls last, external_entry_no desc
+            limit 40
+          `,
+          [asset.asset_number],
+        ),
       ]);
 
       return {
@@ -1703,6 +1738,21 @@ export async function getAssetRentalDetailView(assetId: string) {
           lastPeriod: toIso(row.latest_billed_at),
           customerNumber: row.customer_number,
           customerName: row.customer_name,
+        })),
+        recentActivity: activityResult.rows.map((row) => ({
+          id: row.id,
+          entryNo: row.external_entry_no,
+          invoiceNumber: row.document_no,
+          leaseKey: row.lease_key,
+          customerNumber: row.customer_number,
+          customerName: row.customer_name,
+          activityType: row.activity_type,
+          postingDate: toIso(row.posting_date),
+          servicePeriodStart: toIso(row.service_period_start),
+          servicePeriodEnd: toIso(row.service_period_end),
+          quantity: numericToNumber(row.quantity),
+          grossAmount: numericToNumber(row.gross_amount),
+          dealCode: row.deal_code,
         })),
       };
     },
@@ -1763,21 +1813,9 @@ async function getBusinessCentralInvoiceRegisterFast(
         with ledger as (
           select
             document_no,
-            coalesce(
-              sum(
-                case
-                  when lower(coalesce(payload->>'Open', 'false')) = 'true' then
-                    coalesce(
-                      nullif(regexp_replace(coalesce(payload->>'Remaining_Amount', payload->>'Remaining_Amt_LCY', amount::text, '0'), '[^0-9.-]', '', 'g'), '')::numeric,
-                      0
-                    )
-                  else 0
-                end
-              ),
-              0
-            )::numeric(18,2) as ledger_balance,
-            count(*) filter (where lower(coalesce(payload->>'Open', 'false')) = 'true')::bigint as ledger_open_count
-          from bc_customer_ledger_entries
+            coalesce(sum(remaining_amount) filter (where is_open), 0)::numeric(18,2) as ledger_balance,
+            count(*) filter (where is_open)::bigint as ledger_open_count
+          from ar_ledger_facts
           where document_no is not null
           group by document_no
         )
@@ -2147,12 +2185,26 @@ export async function getCustomerArLedgerView(customerId: string) {
     posting_date: Date | null;
     document_no: string | null;
     amount: string | null;
-    payload: Record<string, unknown>;
+    remaining_amount: string | null;
+    document_type: string | null;
+    description: string | null;
+    due_date: Date | null;
+    is_open: boolean;
   }>(
     `
-      select id, external_entry_no, posting_date, document_no, amount, payload
-      from bc_customer_ledger_entries
-      where customer_no = $1
+      select
+        id,
+        external_entry_no,
+        posting_date,
+        document_no,
+        amount,
+        remaining_amount,
+        document_type,
+        description,
+        due_date,
+        is_open
+      from ar_ledger_facts
+      where customer_number = $1
       order by posting_date desc nulls last, external_entry_no desc
       limit 100
     `,
@@ -2165,13 +2217,11 @@ export async function getCustomerArLedgerView(customerId: string) {
     postingDate: toIso(row.posting_date),
     documentNo: row.document_no,
     amount: numericToNumber(row.amount),
-    documentType: payloadText(row.payload, ["Document_Type"]),
-    description: payloadText(row.payload, ["Description"]),
-    dueDate: payloadText(row.payload, ["Due_Date"]),
-    remainingAmount: numericToNumber(
-      payloadText(row.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]),
-    ),
-    open: payloadText(row.payload, ["Open"]) === "true",
+    documentType: row.document_type,
+    description: row.description,
+    dueDate: toIso(row.due_date),
+    remainingAmount: numericToNumber(row.remaining_amount),
+    open: row.is_open,
   }));
 }
 
@@ -2331,21 +2381,9 @@ export async function getInvoiceRegisterView(filters?: PagedRentalFilters) {
       with ledger as (
         select
           document_no,
-          coalesce(
-            sum(
-              case
-                when lower(coalesce(payload->>'Open', 'false')) = 'true' then
-                  coalesce(
-                    nullif(regexp_replace(coalesce(payload->>'Remaining_Amount', payload->>'Remaining_Amt_LCY', amount::text, '0'), '[^0-9.-]', '', 'g'), '')::numeric,
-                    0
-                  )
-                else 0
-              end
-            ),
-            0
-          )::numeric(18,2) as ledger_balance,
-          count(*) filter (where lower(coalesce(payload->>'Open', 'false')) = 'true')::bigint as ledger_open_count
-        from bc_customer_ledger_entries
+          coalesce(sum(remaining_amount) filter (where is_open), 0)::numeric(18,2) as ledger_balance,
+          count(*) filter (where is_open)::bigint as ledger_open_count
+        from ar_ledger_facts
         where document_no is not null
         group by document_no
       ),
@@ -2787,14 +2825,29 @@ export async function getInvoiceDetailView(invoiceNo: string) {
         id: string;
         external_entry_no: string;
         posting_date: Date | null;
-        customer_no: string | null;
+        customer_number: string | null;
         document_no: string | null;
         amount: string | null;
-        payload: Record<string, unknown>;
+        remaining_amount: string | null;
+        document_type: string | null;
+        description: string | null;
+        due_date: Date | null;
+        is_open: boolean;
       }>(
         `
-          select id, external_entry_no, posting_date, customer_no, document_no, amount, payload
-          from bc_customer_ledger_entries
+          select
+            id,
+            external_entry_no,
+            posting_date,
+            customer_number,
+            document_no,
+            amount,
+            remaining_amount,
+            document_type,
+            description,
+            due_date,
+            is_open
+          from ar_ledger_facts
           where document_no = $1
           order by posting_date desc nulls last, external_entry_no desc
         `,
@@ -2843,16 +2896,14 @@ export async function getInvoiceDetailView(invoiceNo: string) {
         id: entry.id,
         entryNo: entry.external_entry_no,
         postingDate: toIso(entry.posting_date),
-        customerNo: entry.customer_no,
+        customerNo: entry.customer_number,
         documentNo: entry.document_no,
         amount: numericToNumber(entry.amount),
-        remainingAmount: numericToNumber(
-          payloadText(entry.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]),
-        ),
-        documentType: payloadText(entry.payload, ["Document_Type"]),
-        description: payloadText(entry.payload, ["Description"]),
-        dueDate: payloadText(entry.payload, ["Due_Date"]),
-        open: payloadText(entry.payload, ["Open"]) === "true",
+        remainingAmount: numericToNumber(entry.remaining_amount),
+        documentType: entry.document_type,
+        description: entry.description,
+        dueDate: toIso(entry.due_date),
+        open: entry.is_open,
       })),
       lineImport,
     };
@@ -2989,14 +3040,29 @@ export async function getInvoiceDetailView(invoiceNo: string) {
       id: string;
       external_entry_no: string;
       posting_date: Date | null;
-      customer_no: string | null;
+      customer_number: string | null;
       document_no: string | null;
       amount: string | null;
-      payload: Record<string, unknown>;
+      remaining_amount: string | null;
+      document_type: string | null;
+      description: string | null;
+      due_date: Date | null;
+      is_open: boolean;
     }>(
       `
-        select id, external_entry_no, posting_date, customer_no, document_no, amount, payload
-        from bc_customer_ledger_entries
+        select
+          id,
+          external_entry_no,
+          posting_date,
+          customer_number,
+          document_no,
+          amount,
+          remaining_amount,
+          document_type,
+          description,
+          due_date,
+          is_open
+        from ar_ledger_facts
         where document_no = $1
         order by posting_date desc nulls last, external_entry_no desc
       `,
@@ -3015,16 +3081,7 @@ export async function getInvoiceDetailView(invoiceNo: string) {
     sourcePayload: header.source_payload,
   });
   const ledgerBalance = ledgerResult.rows.reduce((sum, entry) => {
-    if (payloadText(entry.payload, ["Open"]) !== "true") {
-      return sum;
-    }
-    return (
-      sum +
-      numericToNumber(
-        payloadText(entry.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]) ??
-          entry.amount,
-      )
-    );
+    return entry.is_open ? sum + numericToNumber(entry.remaining_amount ?? entry.amount) : sum;
   }, 0);
 
   return {
@@ -3049,7 +3106,7 @@ export async function getInvoiceDetailView(invoiceNo: string) {
       totalAmount: amount.amount,
       balanceAmount: ledgerBalance,
       balanceStatus:
-        ledgerResult.rows.some((entry) => payloadText(entry.payload, ["Open"]) === "true")
+        ledgerResult.rows.some((entry) => entry.is_open)
           ? ("Open in BC customer ledger" as const)
           : ("Closed or no open BC ledger entry" as const),
       amountSource: amount.source,
@@ -3097,16 +3154,14 @@ export async function getInvoiceDetailView(invoiceNo: string) {
       id: entry.id,
       entryNo: entry.external_entry_no,
       postingDate: toIso(entry.posting_date),
-      customerNo: entry.customer_no,
+      customerNo: entry.customer_number,
       documentNo: entry.document_no,
       amount: numericToNumber(entry.amount),
-      remainingAmount: numericToNumber(
-        payloadText(entry.payload, ["Remaining_Amount", "Remaining_Amt_LCY"]),
-      ),
-      documentType: payloadText(entry.payload, ["Document_Type"]),
-      description: payloadText(entry.payload, ["Description"]),
-      dueDate: payloadText(entry.payload, ["Due_Date"]),
-      open: payloadText(entry.payload, ["Open"]) === "true",
+      remainingAmount: numericToNumber(entry.remaining_amount),
+      documentType: entry.document_type,
+      description: entry.description,
+      dueDate: toIso(entry.due_date),
+      open: entry.is_open,
     })),
     lineImport,
   };

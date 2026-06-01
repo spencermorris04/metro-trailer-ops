@@ -268,6 +268,75 @@ async function AssetDetailContent({ params }: AssetDetailPageProps) {
             </SectionCard>
           </div>
 
+          <SectionCard
+            eyebrow="RMI activity"
+            title="Rental activity timeline"
+            description="Operational rental ledger activity projected from RMI, separate from invoice totals."
+          >
+            <div className="data-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Entry</th>
+                    <th>Type</th>
+                    <th>Customer / lease</th>
+                    <th>Period</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rentalHistory.recentActivity.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="text-slate-400">
+                        No projected RMI rental activity is attached to this asset yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    rentalHistory.recentActivity.slice(0, 12).map((entry) => (
+                      <tr key={entry.id}>
+                        <td>
+                          <span className="font-semibold text-slate-900">
+                            {entry.invoiceNumber ?? entry.entryNo}
+                          </span>
+                          <br />
+                          <span className="text-[0.65rem] text-slate-400">
+                            {entry.postingDate ? formatDate(entry.postingDate) : "No posting date"}
+                          </span>
+                        </td>
+                        <td>
+                          <StatusPill label={titleize(entry.activityType)} />
+                          <div className="mt-1 text-[0.65rem] text-slate-400">
+                            {entry.dealCode ?? "No deal code"}
+                          </div>
+                        </td>
+                        <td>
+                          <div>{entry.customerName ?? entry.customerNumber ?? "Unknown"}</div>
+                          {entry.leaseKey ? (
+                            <WorkspaceLink href={`/leases/${entry.leaseKey}`} className="text-[var(--brand)]">
+                              {entry.leaseKey}
+                            </WorkspaceLink>
+                          ) : (
+                            <span className="text-[0.65rem] text-slate-400">No lease key</span>
+                          )}
+                        </td>
+                        <td>
+                          {entry.servicePeriodStart ? formatDate(entry.servicePeriodStart) : "Unknown"}
+                          <br />
+                          <span className="text-[0.65rem] text-slate-400">
+                            {entry.servicePeriodEnd ? formatDate(entry.servicePeriodEnd) : "Open"}
+                          </span>
+                        </td>
+                        <td className="font-semibold text-slate-900">
+                          {formatCurrency(entry.grossAmount)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
           <SectionCard eyebrow="Leases" title="Imported BC/RMI leases for this asset">
             <div className="data-table">
               <table>

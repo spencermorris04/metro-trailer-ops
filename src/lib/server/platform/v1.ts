@@ -646,11 +646,11 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
             ),
             ar_stats as (
               select
-                customer_no as customer_number,
-                coalesce(sum(amount), 0)::numeric(18,2) as bc_ar_balance
-              from bc_customer_ledger_entries
-              where customer_no = any($1::text[])
-              group by customer_no
+                customer_number,
+                coalesce(sum(remaining_amount) filter (where is_open), 0)::numeric(18,2) as bc_ar_balance
+              from ar_ledger_facts
+              where customer_number = any($1::text[])
+              group by customer_number
             )
             select
               coalesce(ls.customer_number, ar.customer_number) as customer_number,
