@@ -5,9 +5,10 @@ import { usePathname } from "next/navigation";
 import { WorkspaceLink } from "@/components/workspace-link";
 
 const primaryReports = [
-  { href: "/financial", label: "Accounting home" },
+  { href: "/revenue", label: "Revenue dashboard" },
+  { href: "/financial", label: "Accounting" },
   { href: "/reports", label: "Report library" },
-  { href: "/reports/revenue", label: "Revenue" },
+  { href: "/reports/revenue", label: "Revenue drilldown" },
   { href: "/reports/invoices", label: "Invoices" },
   { href: "/reports/ar-aging", label: "AR aging" },
   { href: "/reports/equipment-revenue", label: "Equipment" },
@@ -50,8 +51,11 @@ export function ReportNavigation() {
           ))}
         </div>
         <div className="flex flex-wrap gap-1">
+          <WorkspaceLink href="/revenue" className="btn-secondary">
+            Revenue dashboard
+          </WorkspaceLink>
           <WorkspaceLink href="/financial" className="btn-secondary">
-            Exit drilldown
+            Accounting
           </WorkspaceLink>
           <WorkspaceLink href="/reports" className="btn-secondary">
             All reports

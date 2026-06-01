@@ -61,8 +61,9 @@ test("AR invoice routes use BC/RMI invoice register and detail read models", asy
 });
 
 test("financial dashboard uses period accounting metrics instead of all-time rental history", async () => {
-  const [financial, revenue, arAging, glHistory, reconciliation] = await Promise.all([
+  const [financial, revenueDashboard, revenue, arAging, glHistory, reconciliation] = await Promise.all([
     source("src/app/financial/page.tsx"),
+    source("src/app/revenue/page.tsx"),
     source("src/app/reports/revenue/page.tsx"),
     source("src/app/reports/ar-aging/page.tsx"),
     source("src/app/reports/gl-history/page.tsx"),
@@ -74,6 +75,9 @@ test("financial dashboard uses period accounting metrics instead of all-time ren
   assert.match(financial, /PeriodSelector/);
   assert.match(financial, /\/reports\/revenue/);
   assert.match(financial, /\/reports\/ar-aging/);
+  assert.match(revenueDashboard, /getRevenueDashboardView/);
+  assert.match(revenueDashboard, /Trailer revenue dashboard/);
+  assert.doesNotMatch(revenueDashboard, /SourceCoverageBadge/);
   assert.match(revenue, /getRevenueReportView/);
   assert.match(arAging, /getArAgingReportView/);
   assert.match(glHistory, /getGlHistoryReportView/);

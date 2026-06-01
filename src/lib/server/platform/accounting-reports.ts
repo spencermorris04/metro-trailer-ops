@@ -1,5 +1,7 @@
 import { pool } from "@/lib/db";
+import { cacheTags } from "@/lib/server/cache-tags";
 import { numericToNumber, toIso } from "@/lib/server/production-utils";
+import { getCachedView } from "@/lib/server/workspace-cache";
 
 export type ReportPeriodKey =
   | "this_month"
@@ -39,6 +41,8 @@ export type ReportPeriod = {
 };
 
 type SqlValue = string | number | boolean | Date | null;
+
+export type RevenueDashboardView = Awaited<ReturnType<typeof getRevenueDashboardView>>;
 
 const PERIOD_LABELS: Record<ReportPeriodKey, string> = {
   this_month: "This month",
@@ -412,6 +416,384 @@ export async function getAccountingDashboardView(input: ReportPeriodInput = {}) 
     },
     coverage,
   };
+}
+
+export async function getRevenueDashboardView(input: ReportPeriodInput = {}) {
+  const period = resolveReportPeriod({
+    ...input,
+    period: input.period ?? "trailing_12",
+  });
+
+  return getCachedView(
+    [
+      "revenue-dashboard",
+      "v2",
+      period.key,
+      period.start,
+      period.end,
+      period.comparisonStart,
+      period.comparisonEnd,
+    ].join(":"),
+    [
+      cacheTags.revenue,
+      cacheTags.reports,
+      cacheTags.dashboard,
+      cacheTags.financeDashboard,
+      cacheTags.readModels,
+    ],
+    5 * 60,
+    15 * 60,
+    () => getRevenueDashboardViewUncached(period),
+  );
+}
+
+async function getRevenueDashboardViewUncached(period: ReportPeriod) {
+  const [summaryResult, comparisonResult] = await Promise.all([
+    pool.query<{
+      gross_revenue: string | null;
+      tax_amount: string | null;
+      damage_waiver_amount: string | null;
+      invoice_count: string;
+      equipment_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(tax_amount), 0)::numeric(18,2) as tax_amount,
+          coalesce(sum(damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
+          coalesce(sum(invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(equipment_count), 0)::bigint as equipment_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{ gross_revenue: string | null }>(
+      `
+        select coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue
+        from revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
+      `,
+      [period.comparisonStart, period.comparisonEnd],
+    ),
+  ]);
+
+  const [
+    monthResult,
+    equipmentTypeResult,
+    locationResult,
+    customerResult,
+    leaseResult,
+    equipmentResult,
+    dealCodeResult,
+    lineMixResult,
+    exceptionResult,
+  ] = await Promise.all([
+    pool.query<{
+      month: Date;
+      gross_revenue: string | null;
+      tax_amount: string | null;
+      damage_waiver_amount: string | null;
+      invoice_count: number;
+      equipment_count: number;
+      line_count: number;
+    }>(
+      `
+        select month, gross_revenue, tax_amount, damage_waiver_amount, invoice_count, equipment_count, line_count
+        from revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
+        order by month
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      asset_type: string;
+      gross_revenue: string | null;
+      invoice_count: string;
+      equipment_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(eq.asset_type, 'Unclassified') as asset_type,
+          coalesce(sum(er.gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(er.invoice_count), 0)::bigint as invoice_count,
+          count(distinct er.asset_number)::bigint as equipment_count,
+          coalesce(sum(er.line_count), 0)::bigint as line_count
+        from equipment_revenue_rollup_monthly er
+        left join equipment_summary eq on eq.asset_number = er.asset_number
+        where er.month >= $1::date and er.month < $2::date
+        group by coalesce(eq.asset_type, 'Unclassified')
+        order by coalesce(sum(er.gross_revenue), 0) desc
+        limit 12
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      location_code: string;
+      gross_revenue: string | null;
+      invoice_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(branch_code, 'Unassigned') as location_code,
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from branch_revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
+        group by coalesce(branch_code, 'Unassigned')
+        order by coalesce(sum(gross_revenue), 0) desc
+        limit 12
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      customer_number: string;
+      customer_name: string | null;
+      gross_revenue: string | null;
+      invoice_count: string;
+      equipment_count: string;
+    }>(
+      `
+        select
+          cr.customer_number,
+          max(cs.name) as customer_name,
+          coalesce(sum(cr.gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(cr.invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(cr.equipment_count), 0)::bigint as equipment_count
+        from customer_revenue_rollup_monthly cr
+        left join customer_summary cs on cs.customer_number = cr.customer_number
+        where cr.month >= $1::date and cr.month < $2::date
+        group by cr.customer_number
+        order by coalesce(sum(cr.gross_revenue), 0) desc
+        limit 12
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      lease_key: string;
+      customer_number: string | null;
+      customer_name: string | null;
+      gross_revenue: string | null;
+      invoice_count: string;
+      equipment_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          lease_key,
+          max(customer_number) as customer_number,
+          max(customer_name) as customer_name,
+          coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+          count(distinct document_no)::bigint as invoice_count,
+          count(distinct asset_number) filter (where asset_number is not null)::bigint as equipment_count,
+          count(*)::bigint as line_count
+        from rental_billing_facts
+        where posting_date >= $1::date
+          and posting_date < $2::date
+          and lease_key is not null
+        group by lease_key
+        order by coalesce(sum(gross_amount), 0) desc
+        limit 12
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      asset_number: string;
+      asset_id: string | null;
+      asset_type: string | null;
+      latest_customer_name: string | null;
+      gross_revenue: string | null;
+      invoice_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          er.asset_number,
+          max(eq.asset_id) as asset_id,
+          max(eq.asset_type) as asset_type,
+          max(eq.latest_customer_name) as latest_customer_name,
+          coalesce(sum(er.gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(er.invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(er.line_count), 0)::bigint as line_count
+        from equipment_revenue_rollup_monthly er
+        left join equipment_summary eq on eq.asset_number = er.asset_number
+        where er.month >= $1::date and er.month < $2::date
+        group by er.asset_number
+        order by coalesce(sum(er.gross_revenue), 0) desc
+        limit 12
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      deal_code: string;
+      gross_revenue: string | null;
+      invoice_count: string;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(deal_code, 'Unassigned') as deal_code,
+          coalesce(sum(gross_revenue), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(invoice_count), 0)::bigint as invoice_count,
+          coalesce(sum(line_count), 0)::bigint as line_count
+        from deal_code_revenue_rollup_monthly
+        where month >= $1::date and month < $2::date
+        group by coalesce(deal_code, 'Unassigned')
+        order by coalesce(sum(gross_revenue), 0) desc
+        limit 12
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      line_kind: string;
+      gross_revenue: string | null;
+      tax_amount: string | null;
+      damage_waiver_amount: string | null;
+      total_amount: string | null;
+      line_count: string;
+    }>(
+      `
+        select
+          coalesce(line_kind, 'Unclassified') as line_kind,
+          coalesce(sum(gross_amount), 0)::numeric(18,2) as gross_revenue,
+          coalesce(sum(tax_amount), 0)::numeric(18,2) as tax_amount,
+          coalesce(sum(damage_waiver_amount), 0)::numeric(18,2) as damage_waiver_amount,
+          coalesce(sum(total_amount), 0)::numeric(18,2) as total_amount,
+          count(*)::bigint as line_count
+        from rental_billing_facts
+        where posting_date >= $1::date and posting_date < $2::date
+        group by coalesce(line_kind, 'Unclassified')
+        order by coalesce(sum(total_amount), 0) desc
+        limit 10
+      `,
+      [period.start, period.end],
+    ),
+    pool.query<{
+      unmatched_asset_lines: string;
+      unmatched_customer_lines: string;
+      missing_location_lines: string;
+      non_equipment_revenue: string | null;
+      fixed_asset_revenue: string | null;
+    }>(
+      `
+        select
+          count(*) filter (where asset_number is not null and asset_id is null)::bigint as unmatched_asset_lines,
+          count(*) filter (where customer_number is not null and customer_id is null)::bigint as unmatched_customer_lines,
+          count(*) filter (where branch_code is null or branch_code = '')::bigint as missing_location_lines,
+          coalesce(sum(gross_amount) filter (where asset_number is null), 0)::numeric(18,2) as non_equipment_revenue,
+          coalesce(sum(gross_amount) filter (where asset_number is not null), 0)::numeric(18,2) as fixed_asset_revenue
+        from rental_billing_facts
+        where posting_date >= $1::date and posting_date < $2::date
+      `,
+      [period.start, period.end],
+    ),
+  ]);
+
+  const summary = summaryResult.rows[0];
+  const currentRevenue = numericToNumber(summary?.gross_revenue);
+  const comparisonRevenue = numericToNumber(comparisonResult.rows[0]?.gross_revenue);
+  const revenueDeltaPercent =
+    comparisonRevenue === 0 ? null : ((currentRevenue - comparisonRevenue) / comparisonRevenue) * 100;
+  const exceptions = exceptionResult.rows[0];
+
+  return {
+    period,
+    metrics: {
+      grossRevenue: currentRevenue,
+      comparisonGrossRevenue: comparisonRevenue,
+      revenueDeltaPercent,
+      taxAmount: numericToNumber(summary?.tax_amount),
+      damageWaiverAmount: numericToNumber(summary?.damage_waiver_amount),
+      invoiceCount: Number(summary?.invoice_count ?? 0),
+      equipmentCount: Number(summary?.equipment_count ?? 0),
+      lineCount: Number(summary?.line_count ?? 0),
+      fixedAssetRevenue: numericToNumber(exceptions?.fixed_asset_revenue),
+      nonEquipmentRevenue: numericToNumber(exceptions?.non_equipment_revenue),
+      averageMonthlyRevenue:
+        monthResult.rows.length === 0 ? 0 : currentRevenue / monthResult.rows.length,
+    },
+    revenueByMonth: monthResult.rows.map((row) => ({
+      month: toIso(row.month),
+      grossRevenue: numericToNumber(row.gross_revenue),
+      taxAmount: numericToNumber(row.tax_amount),
+      damageWaiverAmount: numericToNumber(row.damage_waiver_amount),
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+      lineCount: Number(row.line_count),
+    })),
+    revenueByEquipmentType: equipmentTypeResult.rows.map((row) => ({
+      assetType: row.asset_type,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+      lineCount: Number(row.line_count),
+    })),
+    revenueByLocation: locationResult.rows.map((row) => ({
+      locationCode: row.location_code,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      lineCount: Number(row.line_count),
+    })),
+    topCustomers: customerResult.rows.map((row) => ({
+      customerNumber: row.customer_number,
+      customerName: row.customer_name,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+    })),
+    topLeases: leaseResult.rows.map((row) => ({
+      leaseKey: row.lease_key,
+      customerNumber: row.customer_number,
+      customerName: row.customer_name,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      equipmentCount: Number(row.equipment_count),
+      lineCount: Number(row.line_count),
+    })),
+    topEquipment: equipmentResult.rows.map((row) => ({
+      assetNumber: row.asset_number,
+      assetId: row.asset_id,
+      assetType: row.asset_type,
+      latestCustomerName: row.latest_customer_name,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      lineCount: Number(row.line_count),
+    })),
+    revenueByDealCode: dealCodeResult.rows.map((row) => ({
+      dealCode: row.deal_code,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      invoiceCount: Number(row.invoice_count),
+      lineCount: Number(row.line_count),
+    })),
+    lineMix: lineMixResult.rows.map((row) => ({
+      lineKind: row.line_kind,
+      grossRevenue: numericToNumber(row.gross_revenue),
+      taxAmount: numericToNumber(row.tax_amount),
+      damageWaiverAmount: numericToNumber(row.damage_waiver_amount),
+      totalAmount: numericToNumber(row.total_amount),
+      lineCount: Number(row.line_count),
+    })),
+    exceptions: {
+      unmatchedAssetLines: Number(exceptions?.unmatched_asset_lines ?? 0),
+      unmatchedCustomerLines: Number(exceptions?.unmatched_customer_lines ?? 0),
+      missingLocationLines: Number(exceptions?.missing_location_lines ?? 0),
+    },
+  };
+}
+
+export async function prewarmRevenueDashboardCache() {
+  await Promise.all([
+    getRevenueDashboardView({ period: "trailing_12" }),
+    getRevenueDashboardView({ period: "this_month" }),
+    getRevenueDashboardView({ period: "last_month" }),
+    getRevenueDashboardView({ period: "quarter" }),
+    getRevenueDashboardView({ period: "ytd" }),
+  ]);
 }
 
 export async function getRevenueReportView(

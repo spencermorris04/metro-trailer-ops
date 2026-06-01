@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import { pool } from "@/lib/db";
+import { cacheTags } from "@/lib/server/cache-tags";
+import { prewarmRevenueDashboardCache } from "@/lib/server/platform/accounting-reports";
 import { rebuildGlobalSearchIndex } from "@/lib/server/search-index";
 import { syncTypesenseDocuments } from "@/lib/server/search/search-provider";
 import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
@@ -1194,15 +1196,21 @@ export async function rebuildServingFacts(): Promise<ProjectionRunResult> {
 
     await setWatermark("serving_layer", "ready", projectionVersion);
     await invalidateWorkspaceCache([
-      "read-models",
-      "finance-dashboard",
+      cacheTags.readModels,
+      cacheTags.revenue,
+      cacheTags.reports,
+      cacheTags.dashboard,
+      cacheTags.financeDashboard,
+      cacheTags.assets,
+      cacheTags.customers,
+      cacheTags.invoices,
+      cacheTags.search,
       "equipment",
-      "customers",
-      "invoices",
       "leases",
       "gl",
-      "search",
     ]);
+
+    await timed("revenueCachePrewarm", timingsMs, prewarmRevenueDashboardCache);
 
     return {
       id,

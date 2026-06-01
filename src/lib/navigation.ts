@@ -86,9 +86,15 @@ export const navigationGroups: NavGroup[] = [
     label: "Accounting",
     items: [
       {
+        href: "/revenue",
+        label: "Revenue",
+        description: "Trailer-based revenue by month, equipment type, location, customer, lease, and deal code",
+        icon: "bar-chart",
+      },
+      {
         href: "/financial",
         label: "Finance",
-        description: "Commercial, subledger, GL, and BC reconciliation overview",
+        description: "Accounting health, receivables posture, and general-ledger workspace",
         icon: "dollar",
       },
       {

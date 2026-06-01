@@ -7,9 +7,15 @@ import { getAccountingDashboardView, getReconciliationReportView } from "@/lib/s
 
 const reportFamilies = [
   {
-    title: "Revenue",
+    title: "Revenue dashboard",
     eyebrow: "Commercial",
-    description: "Period revenue by month, branch, equipment, customer, lease/order, and deal code.",
+    description: "Trailer revenue by month, equipment type, location, customer, lease/order, and deal code.",
+    href: "/revenue",
+  },
+  {
+    title: "Revenue drilldown",
+    eyebrow: "Commercial",
+    description: "Searchable line-backed revenue groups for deeper period analysis.",
     href: "/reports/revenue",
   },
   {
@@ -82,7 +88,7 @@ export default async function ReportsPage() {
           {
             label: "Current-month revenue",
             value: `$${formatCompactNumber(financial.metrics.grossRevenue)}`,
-            href: "/reports/revenue",
+            href: "/revenue",
           },
           {
             label: "Open AR",

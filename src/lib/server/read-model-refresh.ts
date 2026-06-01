@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import { pool } from "@/lib/db";
+import { cacheTags } from "@/lib/server/cache-tags";
+import { prewarmRevenueDashboardCache } from "@/lib/server/platform/accounting-reports";
 import { rebuildGlobalSearchIndex } from "@/lib/server/search-index";
 import { invalidateWorkspaceCache } from "@/lib/server/workspace-cache";
 
@@ -794,14 +796,22 @@ export async function refreshAllReadModels(): Promise<RefreshResult> {
 
     await timed("cacheInvalidation", timingsMs, async () => {
       await invalidateWorkspaceCache([
-        "read-models",
+        cacheTags.readModels,
+        cacheTags.revenue,
+        cacheTags.reports,
+        cacheTags.dashboard,
+        cacheTags.financeDashboard,
+        cacheTags.assets,
+        cacheTags.customers,
+        cacheTags.invoices,
         "equipment-summary",
         "customer-summary",
-        "finance-dashboard",
         "invoice-register",
         "lease-summary",
       ]);
     });
+
+    await timed("revenueCachePrewarm", timingsMs, prewarmRevenueDashboardCache);
 
     await pool.query(
       `

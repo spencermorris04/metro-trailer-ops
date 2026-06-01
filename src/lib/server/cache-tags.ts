@@ -1,6 +1,10 @@
 export const cacheTags = {
   branches: "branches",
   dashboard: "dashboard",
+  readModels: "read-models",
+  reports: "reports",
+  revenue: "revenue",
+  financeDashboard: "finance-dashboard",
   search: "search",
   assets: "assets",
   asset: (id: string) => `asset:${id}`,
