@@ -1,6 +1,9 @@
 import { pool } from "@/lib/db";
 import type { GlobalSearchResult } from "@/lib/search-core";
-import { queryGlobalSearchIndex } from "@/lib/server/search-index";
+import {
+  queryGlobalSearchIndex,
+  queryIdentifierSearchIndex,
+} from "@/lib/server/search-index";
 import {
   getTypesenseConfig,
   importTypesenseDocuments,
@@ -43,10 +46,19 @@ export async function searchWorkspaceEntities(
   }
 
   return getOrSetWorkspaceCache(
-    `search:v1:${store ?? "all"}:${trimmed.toLowerCase()}`,
+    `search:v2:${store ?? "all"}:${trimmed.toLowerCase()}`,
     ["search"],
     45,
     async () => {
+      const identifierResults = await queryIdentifierSearchIndex(trimmed, store);
+      if (identifierResults.length > 0) {
+        return identifierResults.map((result) => ({
+          ...result,
+          entityId: result.id,
+          entityType: result.type,
+        }));
+      }
+
       const config = getTypesenseConfig();
       if (config) {
         try {

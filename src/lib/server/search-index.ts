@@ -86,6 +86,33 @@ export async function ensureGlobalSearchIndexSchema() {
     CREATE INDEX IF NOT EXISTS global_search_documents_search_text_trgm_idx
       ON global_search_documents USING gin (search_text gin_trgm_ops)
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS global_search_identifier_keys (
+      id text PRIMARY KEY,
+      key_text text NOT NULL,
+      key_kind text NOT NULL,
+      entity_type text NOT NULL,
+      entity_id text NOT NULL,
+      title text NOT NULL,
+      subtitle text,
+      href text NOT NULL,
+      source text NOT NULL,
+      branch_id text,
+      updated_at timestamp with time zone NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS global_search_identifier_keys_key_prefix_idx
+      ON global_search_identifier_keys USING btree (key_text text_pattern_ops)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS global_search_identifier_keys_entity_idx
+      ON global_search_identifier_keys USING btree (entity_type, entity_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS global_search_identifier_keys_branch_idx
+      ON global_search_identifier_keys USING btree (branch_id)
+  `);
 }
 
 async function upsertFromSelect(sqlText: string) {
@@ -364,6 +391,222 @@ export async function rebuildGlobalSearchIndex() {
   const { rows } = await pool.query<{ count: string }>(
     "SELECT count(*)::text AS count FROM global_search_documents",
   );
+  await rebuildGlobalSearchIdentifierKeys();
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function rebuildGlobalSearchIdentifierKeys() {
+  await ensureGlobalSearchIndexSchema();
+  await pool.query("TRUNCATE global_search_identifier_keys");
+  await pool.query(`
+    INSERT INTO global_search_identifier_keys (
+      id, key_text, key_kind, entity_type, entity_id, title, subtitle, href, source, branch_id, updated_at
+    )
+    SELECT *
+    FROM (
+      SELECT
+        'asset-number:' || asset_id,
+        upper(asset_number),
+        'asset_number',
+        'asset',
+        asset_id,
+        asset_number,
+        concat_ws(' / ', branch_code, asset_type, nullif(serial_number, ''), nullif(registration_number, '')),
+        '/equipment/' || asset_id,
+        'assets',
+        branch_id,
+        refreshed_at
+      FROM equipment_summary
+      WHERE nullif(asset_number, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'asset-serial:' || asset_id,
+        upper(serial_number),
+        'serial_number',
+        'asset',
+        asset_id,
+        asset_number,
+        concat_ws(' / ', branch_code, asset_type, serial_number),
+        '/equipment/' || asset_id,
+        'assets',
+        branch_id,
+        refreshed_at
+      FROM equipment_summary
+      WHERE nullif(serial_number, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'asset-registration:' || asset_id,
+        upper(registration_number),
+        'registration_number',
+        'asset',
+        asset_id,
+        asset_number,
+        concat_ws(' / ', branch_code, asset_type, registration_number),
+        '/equipment/' || asset_id,
+        'assets',
+        branch_id,
+        refreshed_at
+      FROM equipment_summary
+      WHERE nullif(registration_number, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'asset-service-item:' || asset_id,
+        upper(bc_service_item_no),
+        'service_item',
+        'asset',
+        asset_id,
+        asset_number,
+        concat_ws(' / ', branch_code, asset_type, bc_service_item_no),
+        '/equipment/' || asset_id,
+        'assets',
+        branch_id,
+        refreshed_at
+      FROM equipment_summary
+      WHERE nullif(bc_service_item_no, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'customer-number:' || customer_id,
+        upper(customer_number),
+        'customer_number',
+        'customer',
+        customer_id,
+        name,
+        concat_ws(' / ', customer_number, customer_type, responsibility_center),
+        '/customers/' || customer_id,
+        'customers',
+        null::text,
+        refreshed_at
+      FROM customer_summary
+      WHERE nullif(customer_number, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'customer-name:' || customer_id,
+        upper(name),
+        'customer_name',
+        'customer',
+        customer_id,
+        name,
+        concat_ws(' / ', customer_number, customer_type, responsibility_center),
+        '/customers/' || customer_id,
+        'customers',
+        null::text,
+        refreshed_at
+      FROM customer_summary
+      WHERE nullif(name, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'invoice-number:' || id,
+        upper(document_no),
+        'invoice_number',
+        CASE WHEN source = 'business_central' THEN 'bc_rmi_invoice' ELSE 'invoice' END,
+        id,
+        document_no,
+        concat_ws(' / ', document_type, customer_name, previous_no),
+        '/ar/invoices/' || document_no,
+        CASE WHEN source = 'business_central' THEN 'business_central' ELSE 'invoices' END,
+        null::text,
+        refreshed_at
+      FROM invoice_register_summary
+      WHERE nullif(document_no, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'invoice-previous:' || id,
+        upper(previous_no),
+        'lease_key',
+        CASE WHEN source = 'business_central' THEN 'bc_rmi_invoice' ELSE 'invoice' END,
+        id,
+        document_no,
+        concat_ws(' / ', document_type, customer_name, previous_no),
+        '/ar/invoices/' || document_no,
+        CASE WHEN source = 'business_central' THEN 'business_central' ELSE 'invoices' END,
+        null::text,
+        refreshed_at
+      FROM invoice_register_summary
+      WHERE nullif(previous_no, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'invoice-customer:' || id,
+        upper(customer_number),
+        'customer_number',
+        CASE WHEN source = 'business_central' THEN 'bc_rmi_invoice' ELSE 'invoice' END,
+        id,
+        document_no,
+        concat_ws(' / ', document_type, customer_name, previous_no),
+        '/ar/invoices/' || document_no,
+        CASE WHEN source = 'business_central' THEN 'business_central' ELSE 'invoices' END,
+        null::text,
+        refreshed_at
+      FROM invoice_register_summary
+      WHERE nullif(customer_number, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'lease-key:' || lease_key,
+        upper(lease_key),
+        'lease_key',
+        'bc_rmi_lease',
+        lease_key,
+        lease_key,
+        concat_ws(' / ', customer_name, customer_number, invoice_count::text || ' invoices'),
+        '/leases/' || lease_key,
+        'business_central',
+        null::text,
+        refreshed_at
+      FROM lease_summary
+      WHERE nullif(lease_key, '') IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        'lease-customer:' || lease_key,
+        upper(customer_number),
+        'customer_number',
+        'bc_rmi_lease',
+        lease_key,
+        lease_key,
+        concat_ws(' / ', customer_name, customer_number, invoice_count::text || ' invoices'),
+        '/leases/' || lease_key,
+        'business_central',
+        null::text,
+        refreshed_at
+      FROM lease_summary
+      WHERE nullif(customer_number, '') IS NOT NULL
+    ) keys (
+      id, key_text, key_kind, entity_type, entity_id, title, subtitle, href, source, branch_id, updated_at
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      key_text = excluded.key_text,
+      key_kind = excluded.key_kind,
+      entity_type = excluded.entity_type,
+      entity_id = excluded.entity_id,
+      title = excluded.title,
+      subtitle = excluded.subtitle,
+      href = excluded.href,
+      source = excluded.source,
+      branch_id = excluded.branch_id,
+      updated_at = excluded.updated_at
+  `);
+
+  const { rows } = await pool.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM global_search_identifier_keys",
+  );
   return Number(rows[0]?.count ?? 0);
 }
 
@@ -373,7 +616,6 @@ export async function queryGlobalSearchIndex(query: string, store?: string | nul
     return [];
   }
 
-  await ensureGlobalSearchIndexSchema();
   const pattern = `%${trimmed.replace(/[%_]/g, "\\$&")}%`;
   const storePattern = store && store !== "all" ? `%${store.replace(/[%_]/g, "\\$&")}%` : null;
   const { rows } = await pool.query<SearchIndexRow>(
@@ -407,6 +649,89 @@ export async function queryGlobalSearchIndex(query: string, store?: string | nul
       LIMIT 36
     `,
     [trimmed, pattern, store && store !== "all" ? store : null, storePattern],
+  );
+
+  return rows.map((row): GlobalSearchResult => {
+    const entity = entityLabels[row.entity_type] ?? {
+      type: row.entity_type,
+      source: "workspace",
+    };
+    return {
+      id: row.id,
+      type: entity.type,
+      title: row.title,
+      subtitle: row.subtitle ?? compactText(row.keywords),
+      href: row.href,
+      badge: entity.badge,
+      source: entity.source,
+      score: Number(row.score ?? 0),
+    };
+  });
+}
+
+export async function queryIdentifierSearchIndex(query: string, store?: string | null) {
+  const trimmed = query.trim();
+  if (!/^[a-z0-9][a-z0-9._/-]{1,119}$/i.test(trimmed)) {
+    return [];
+  }
+
+  const branchFilter = store && store !== "all" ? store : null;
+  const exact = trimmed.toUpperCase();
+  const prefix = `${exact}%`;
+  const { rows } = await pool.query<SearchIndexRow>(
+    `
+      WITH ranked AS (
+        SELECT
+          id,
+          entity_type,
+          entity_id,
+          title,
+          subtitle,
+          href,
+          branch_id,
+          jsonb_build_array(key_text) AS keywords,
+          CASE
+            WHEN key_text = $1 THEN 120
+            WHEN key_text LIKE $2 THEN 100
+            ELSE 60
+          END
+          + CASE key_kind
+              WHEN 'asset_number' THEN 20
+              WHEN 'customer_number' THEN 18
+              WHEN 'invoice_number' THEN 18
+              WHEN 'lease_key' THEN 18
+              ELSE 0
+            END AS score,
+          row_number() OVER (
+            PARTITION BY entity_type, entity_id
+            ORDER BY
+              CASE
+                WHEN key_text = $1 THEN 0
+                WHEN key_text LIKE $2 THEN 1
+                ELSE 2
+              END,
+              updated_at DESC
+          ) AS rank
+        FROM global_search_identifier_keys
+        WHERE key_text LIKE $2
+          AND ($3::text IS NULL OR branch_id = $3 OR branch_id IS NULL)
+      )
+      SELECT
+        id,
+        entity_type,
+        entity_id,
+        title,
+        subtitle,
+        href,
+        branch_id,
+        keywords,
+        score
+      FROM ranked
+      WHERE rank = 1
+      ORDER BY score DESC, title
+      LIMIT 32
+    `,
+    [exact, prefix, branchFilter],
   );
 
   return rows.map((row): GlobalSearchResult => {
