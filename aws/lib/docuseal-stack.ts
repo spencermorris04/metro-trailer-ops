@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import { Duration, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as cloudtrail from "aws-cdk-lib/aws-cloudtrail";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
@@ -11,6 +12,8 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
@@ -21,6 +24,13 @@ export class DocusealRuntimeStack extends Stack {
 
     const imageTag = String(this.node.tryGetContext("docusealImageTag") ?? "latest");
     const useCustomImage = String(this.node.tryGetContext("docusealUseCustomImage") ?? "false") === "true";
+    const domainName = String(this.node.tryGetContext("docusealDomainName") ?? "").trim();
+    const certificateArn = String(this.node.tryGetContext("docusealCertificateArn") ?? "").trim();
+    const hostedZoneDomainName = String(
+      this.node.tryGetContext("docusealHostedZoneDomainName") ??
+        domainName.split(".").slice(-2).join("."),
+    ).trim();
+    const appUrl = domainName ? `https://${domainName}` : undefined;
 
     const vpc = new ec2.Vpc(this, "Vpc", {
       maxAzs: 2,
@@ -45,6 +55,9 @@ export class DocusealRuntimeStack extends Stack {
       description: "Public HTTP access to DocuSeal.",
     });
     loadBalancerSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), "Allow public HTTP.");
+    if (domainName) {
+      loadBalancerSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "Allow public HTTPS.");
+    }
 
     const appSecurityGroup = new ec2.SecurityGroup(this, "AppSecurityGroup", {
       vpc,
@@ -222,10 +235,23 @@ export class DocusealRuntimeStack extends Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
     });
 
-    const listener = loadBalancer.addListener("HttpListener", {
+    const httpListener = loadBalancer.addListener("HttpListener", {
       port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
     });
+
+    const hostedZone = domainName && !certificateArn
+      ? route53.HostedZone.fromLookup(this, "HostedZone", { domainName: hostedZoneDomainName })
+      : null;
+    const certificate =
+      certificateArn
+        ? acm.Certificate.fromCertificateArn(this, "HttpsCertificate", certificateArn)
+        : domainName && hostedZone
+        ? new acm.Certificate(this, "HttpsCertificate", {
+            domainName,
+            validation: acm.CertificateValidation.fromDns(hostedZone),
+          })
+        : null;
 
     const container = taskDefinition.addContainer("app", {
       image: useCustomImage
@@ -240,12 +266,20 @@ export class DocusealRuntimeStack extends Stack {
         DATABASE_NAME: "docuseal",
         DATABASE_PORT: "5432",
         DATABASE_USER: "docuseal",
-        FORCE_SSL: "false",
-        HOST: loadBalancer.loadBalancerDnsName,
+        ...(domainName
+          ? {
+              APP_URL: appUrl!,
+              EMAIL_HOST: domainName,
+              FORCE_SSL: "true",
+              HOST: domainName,
+            }
+          : {
+              EMAIL_HOST: loadBalancer.loadBalancerDnsName,
+              HOST: loadBalancer.loadBalancerDnsName,
+            }),
         RAILS_ENV: "production",
         RAILS_LOG_TO_STDOUT: "true",
         AWS_REGION: this.region,
-        EMAIL_HOST: loadBalancer.loadBalancerDnsName,
         S3_ATTACHMENTS_BUCKET: attachmentsBucket.bucketName,
         SMTP_ADDRESS: "smtp.resend.com",
         SMTP_AUTHENTICATION: "plain",
@@ -290,11 +324,39 @@ export class DocusealRuntimeStack extends Stack {
       },
       deregistrationDelay: Duration.seconds(30),
     });
-    listener.addTargetGroups("DefaultTargetGroup", { targetGroups: [targetGroup] });
+
+    if (certificate) {
+      httpListener.addAction("RedirectToHttps", {
+        action: elbv2.ListenerAction.redirect({
+          protocol: "HTTPS",
+          port: "443",
+          permanent: true,
+        }),
+      });
+
+      loadBalancer
+        .addListener("HttpsListener", {
+          port: 443,
+          protocol: elbv2.ApplicationProtocol.HTTPS,
+          certificates: [certificate],
+        })
+        .addTargetGroups("DefaultTargetGroup", { targetGroups: [targetGroup] });
+    } else {
+      httpListener.addTargetGroups("DefaultTargetGroup", { targetGroups: [targetGroup] });
+    }
+
     service.attachToApplicationTargetGroup(targetGroup);
 
+    if (domainName && hostedZone) {
+      new route53.ARecord(this, "AliasRecord", {
+        zone: hostedZone,
+        recordName: domainName,
+        target: route53.RecordTarget.fromAlias(new targets.LoadBalancerTarget(loadBalancer)),
+      });
+    }
+
     new cdk.CfnOutput(this, "DocusealUrl", {
-      value: `http://${loadBalancer.loadBalancerDnsName}`,
+      value: appUrl ?? `http://${loadBalancer.loadBalancerDnsName}`,
     });
     new cdk.CfnOutput(this, "DocusealDatabaseSecretName", {
       value: database.secret!.secretName,

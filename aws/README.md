@@ -116,22 +116,24 @@ Deployed stacks:
 
 DocuSeal runtime:
 
-- Public URL: `http://MetroT-LoadB-LalZP5zYG7S5-765696422.us-east-2.elb.amazonaws.com`
+- Public URL: `https://esign.lumpkindevelopment.com`
+- Public ALB DNS: `MetroT-LoadB-LalZP5zYG7S5-765696422.us-east-2.elb.amazonaws.com`
+- ACM certificate: `arn:aws:acm:us-east-2:452391802972:certificate/dbc186a4-eed8-4b21-8dd1-ece6a1ebdedd`
 - ECS cluster: `metro-trailer-docuseal`
 - ECR repository: `452391802972.dkr.ecr.us-east-2.amazonaws.com/metro-trailer-docuseal`
-- Current branded image tag: `branded-20260603-mpycekt6`
+- Current branded image tag: `branded-20260603-emailtemplate-png`
 - Active Storage bucket: `metro-trailer-docuseal-attachments-452391802972-us-east-2`
 - Secrets:
   - `metro-trailer/docuseal/app`
   - `metro-trailer/docuseal/database`
   - `metro-trailer/docuseal/smtp`
 
-DocuSeal email is configured through Resend SMTP using the already verified `lumpkindevelopment.com` domain. The ECS task reads `SMTP_PASSWORD` and `SMTP_FROM` from `metro-trailer/docuseal/smtp`; the current sender is `Metro Trailer E-Sign <documents@lumpkindevelopment.com>`. Email invitation links use `EMAIL_HOST`, which is currently the public ALB DNS name and should be updated when a real DocuSeal app domain is attached.
+DocuSeal email is configured through Resend SMTP using the already verified `lumpkindevelopment.com` domain. The ECS task reads `SMTP_PASSWORD` and `SMTP_FROM` from `metro-trailer/docuseal/smtp`; the current sender is `Metro Trailer E-Sign <documents@lumpkindevelopment.com>`. Email invitation links use `EMAIL_HOST=esign.lumpkindevelopment.com`, and DocuSeal runs with `APP_URL=https://esign.lumpkindevelopment.com` and `FORCE_SSL=true`.
 
 Metro Trailer branding is maintained in the local clone at `C:\Users\NewOwner\Software\docuseal` and deployed as a custom ECR image. Upload a ZIP of that repo to `s3://metro-trailer-docuseal-source-452391802972-us-east-2/source/docuseal.zip`, run the CodeBuild project `metro-trailer-docuseal-image`, then deploy the resulting tag:
 
 ```bash
-npm run docuseal:deploy -- MetroTrailerDocuseal --require-approval never -c docusealUseCustomImage=true -c docusealImageTag=<image-tag>
+npm run docuseal:deploy -- MetroTrailerDocuseal --require-approval never -c docusealDomainName=esign.lumpkindevelopment.com -c docusealCertificateArn=arn:aws:acm:us-east-2:452391802972:certificate/dbc186a4-eed8-4b21-8dd1-ece6a1ebdedd -c docusealUseCustomImage=true -c docusealImageTag=<image-tag>
 ```
 
 Completed lease evidence archive:

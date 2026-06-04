@@ -1,19 +1,63 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import type {
   DocusealFieldDefinition,
   DocusealTemplateDefinition,
 } from "@/lib/docuseal/templates";
-import type { DocusealDraft } from "@/lib/server/docuseal-prefill";
+import type {
+  DocusealDefaultScope,
+  DocusealDraft,
+  DocusealPrefillDefault,
+} from "@/lib/server/docuseal-prefill";
 import { formatDate } from "@/lib/format";
 
 type ApiResult<T> = {
   data?: T;
   message?: string;
   error?: string;
+};
+
+type EquipmentSearchResult = {
+  id: string;
+  assetNumber: string;
+  type: string;
+  subtype: string | null;
+  branch: string;
+  branchCode: string | null;
+  serialNumber: string | null;
+  registrationNumber: string | null;
+  bcLocationCode: string | null;
+};
+
+type CustomerSearchResult = {
+  id: string;
+  customerNumber: string;
+  name: string;
+  customerType: string;
+  billingCity: string;
+  branchCoverage: string[];
+  locations: Array<{
+    id: string;
+    name: string;
+    address?: string;
+    contactPerson?: string;
+  }>;
+};
+
+const signingLinkVariable = "{submitter.link}";
+const signingLinkMarkdown = `[Review and Submit](${signingLinkVariable})`;
+const defaultSections = new Set([
+  "Rates and terms",
+  "Execution",
+  "Special instructions",
+]);
+const defaultScopeLabels: Record<DocusealDefaultScope, string> = {
+  global: "Company",
+  location: "Store",
+  trailer_type: "Trailer type",
 };
 
 function emptyValues(template: DocusealTemplateDefinition) {
@@ -30,6 +74,168 @@ function sectionFields(template: DocusealTemplateDefinition) {
 
 function getFilledCount(template: DocusealTemplateDefinition, values: Record<string, string>) {
   return template.fields.filter((field) => values[field.name]?.trim()).length;
+}
+
+function includesSigningLink(value: string) {
+  return /\{+submitter\.link\}+/i.test(value);
+}
+
+function getSectionDefaultFieldNames(
+  template: DocusealTemplateDefinition,
+  section: string,
+) {
+  if (!defaultSections.has(section)) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    template.fields.filter((field) => field.section === section).map((field) => field.name),
+  );
+}
+
+function extractDefaultValuesForSection(
+  template: DocusealTemplateDefinition,
+  values: Record<string, string>,
+  section: string,
+) {
+  const defaultFieldNames = getSectionDefaultFieldNames(template, section);
+
+  return Object.fromEntries(
+    Object.entries(values).filter(([name]) => defaultFieldNames.has(name)),
+  );
+}
+
+function countDefaultValuesForSection(
+  template: DocusealTemplateDefinition,
+  defaultValue: DocusealPrefillDefault | null | undefined,
+  section: string,
+) {
+  if (!defaultValue) {
+    return 0;
+  }
+
+  return Object.keys(
+    extractDefaultValuesForSection(template, defaultValue.values, section),
+  ).length;
+}
+
+function findDefault(
+  defaults: DocusealPrefillDefault[],
+  template: DocusealTemplateDefinition,
+  scopeType: DocusealDefaultScope,
+  scopeKey: string,
+) {
+  return defaults.find(
+    (item) =>
+      item.templateKey === template.key &&
+      item.scopeType === scopeType &&
+      item.scopeKey.toLowerCase() === scopeKey.toLowerCase(),
+  );
+}
+
+function resolveDefaultValues(
+  defaults: DocusealPrefillDefault[],
+  template: DocusealTemplateDefinition,
+  values: Record<string, string>,
+  storeKey?: string,
+) {
+  const trailerType = values.unit_type?.trim();
+  const locationKey = storeKey?.trim();
+
+  return [
+    findDefault(defaults, template, "global", "global"),
+    locationKey ? findDefault(defaults, template, "location", locationKey) : null,
+    trailerType ? findDefault(defaults, template, "trailer_type", trailerType) : null,
+  ].reduce<Record<string, string>>(
+    (merged, item) => (item ? { ...merged, ...item.values } : merged),
+    {},
+  );
+}
+
+function getEquipmentStoreKey(equipment: EquipmentSearchResult | null) {
+  return (
+    equipment?.branchCode?.trim() ||
+    equipment?.bcLocationCode?.trim() ||
+    equipment?.branch?.trim() ||
+    ""
+  );
+}
+
+function getEquipmentType(equipment: EquipmentSearchResult) {
+  return equipment.subtype?.trim() || equipment.type;
+}
+
+function getEquipmentLabel(equipment: EquipmentSearchResult) {
+  const details = [
+    getEquipmentType(equipment),
+    equipment.branch,
+    equipment.serialNumber ? `VIN ${equipment.serialNumber}` : null,
+    equipment.registrationNumber ? `Tag ${equipment.registrationNumber}` : null,
+  ].filter(Boolean);
+
+  return `${equipment.assetNumber} - ${details.join(" / ")}`;
+}
+
+function applyEquipmentToValues(
+  current: Record<string, string>,
+  equipment: EquipmentSearchResult,
+) {
+  return {
+    ...current,
+    unit_number: equipment.assetNumber,
+    unit_type: getEquipmentType(equipment),
+    vin_number: equipment.serialNumber ?? "",
+    tag_number: equipment.registrationNumber ?? "",
+  };
+}
+
+function getPrimaryCustomerLocation(customer: CustomerSearchResult) {
+  return customer.locations[0] ?? null;
+}
+
+function getCustomerLocationText(customer: CustomerSearchResult) {
+  const location = getPrimaryCustomerLocation(customer);
+
+  return location?.address?.trim() || location?.name?.trim() || customer.billingCity || "";
+}
+
+function getCustomerLabel(customer: CustomerSearchResult) {
+  const details = [
+    customer.customerNumber,
+    customer.billingCity || null,
+    customer.locations.length > 0 ? `${customer.locations.length} site${customer.locations.length === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+
+  return `${customer.name} - ${details.join(" / ")}`;
+}
+
+function applyCustomerToValues(
+  current: Record<string, string>,
+  customer: CustomerSearchResult,
+) {
+  const primaryLocation = getPrimaryCustomerLocation(customer);
+
+  return {
+    ...current,
+    customer_number: customer.customerNumber,
+    ordered_by: primaryLocation?.contactPerson?.trim() || current.ordered_by || "",
+    lessee_name: customer.name,
+    lessee_company_name: customer.name,
+    lessee_location: getCustomerLocationText(customer),
+  };
+}
+
+function fillBlankDefaults(
+  defaults: Record<string, string>,
+  values: Record<string, string>,
+) {
+  return Object.entries(defaults).reduce<Record<string, string>>(
+    (merged, [name, value]) => ({
+      ...merged,
+      [name]: merged[name]?.trim() ? merged[name] : value,
+    }),
+    { ...values },
+  );
 }
 
 function getInitialTemplate(
@@ -264,13 +470,17 @@ function buildRandomTestData(template: DocusealTemplateDefinition) {
 export function DocusealPrefillWorkspace({
   templates,
   drafts: initialDrafts,
+  defaults: initialDefaults,
 }: {
   templates: DocusealTemplateDefinition[];
   drafts: DocusealDraft[];
+  defaults: DocusealPrefillDefault[];
 }) {
   const router = useRouter();
+  const messageTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [pending, startTransition] = useTransition();
   const [drafts, setDrafts] = useState(initialDrafts);
+  const [defaults, setDefaults] = useState(initialDefaults);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState(
     getInitialTemplate(templates, initialDrafts)?.key ?? "",
   );
@@ -286,15 +496,126 @@ export function DocusealPrefillWorkspace({
   );
   const [message, setMessage] = useState(
     selectedDraft?.message ??
-      "Please review the prepared Metro Trailer document and complete any remaining fields.",
+      `Please review the prepared Metro Trailer document and complete any remaining fields.\n\n${signingLinkMarkdown}`,
   );
+  const [, setSelectedCustomer] = useState<CustomerSearchResult | null>(null);
+  const [customerQuery, setCustomerQuery] = useState(selectedDraft?.customerName ?? "");
+  const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [selectedEquipment, setSelectedEquipment] = useState<EquipmentSearchResult | null>(null);
+  const [equipmentQuery, setEquipmentQuery] = useState(selectedDraft?.values.unit_number ?? "");
+  const [equipmentResults, setEquipmentResults] = useState<EquipmentSearchResult[]>([]);
+  const [equipmentLoading, setEquipmentLoading] = useState(false);
   const [values, setValues] = useState<Record<string, string>>(
-    selectedDraft?.values ?? emptyValues(selectedTemplate),
+    selectedDraft?.values ?? {
+      ...emptyValues(selectedTemplate),
+      ...resolveDefaultValues(initialDefaults, selectedTemplate, {}, selectedDraft?.location),
+    },
   );
   const [feedback, setFeedback] = useState<string | null>(null);
-
   const groupedFields = useMemo(() => sectionFields(selectedTemplate), [selectedTemplate]);
   const filledCount = getFilledCount(selectedTemplate, values);
+  const messageHasSigningLink = includesSigningLink(message);
+  const selectedDraftIsSent = selectedDraft?.status === "sent";
+  const selectedStoreKey =
+    getEquipmentStoreKey(selectedEquipment) || selectedDraft?.location?.trim() || "";
+
+  useEffect(() => {
+    if (selectedDraftIsSent) {
+      return;
+    }
+
+    const query = customerQuery.trim();
+    if (query.length < 2) {
+      setCustomerResults([]);
+      setCustomerLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setCustomerLoading(true);
+      try {
+        const params = new URLSearchParams({ q: query, pageSize: "8" });
+        const response = await fetch(`/api/docuseal/customers?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          setCustomerResults([]);
+          return;
+        }
+        const payload = (await response.json()) as { data?: CustomerSearchResult[] };
+        setCustomerResults(payload.data ?? []);
+      } catch {
+        if (!controller.signal.aborted) {
+          setCustomerResults([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setCustomerLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [customerQuery, selectedDraftIsSent]);
+
+  useEffect(() => {
+    if (selectedDraftIsSent) {
+      return;
+    }
+
+    const query = equipmentQuery.trim();
+    if (query.length < 2) {
+      setEquipmentResults([]);
+      setEquipmentLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setEquipmentLoading(true);
+      try {
+        const params = new URLSearchParams({ q: query, pageSize: "8" });
+        const response = await fetch(`/api/docuseal/equipment?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          setEquipmentResults([]);
+          return;
+        }
+        const payload = (await response.json()) as { data?: EquipmentSearchResult[] };
+        setEquipmentResults(payload.data ?? []);
+      } catch {
+        if (!controller.signal.aborted) {
+          setEquipmentResults([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setEquipmentLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [equipmentQuery, selectedDraftIsSent]);
+
+  function getDefaultScopeKey(scopeType: DocusealDefaultScope) {
+    if (scopeType === "global") {
+      return "global";
+    }
+    if (scopeType === "location") {
+      return selectedStoreKey;
+    }
+
+    return values.unit_type?.trim();
+  }
 
   function loadDraft(draft: DocusealDraft) {
     const draftTemplate =
@@ -307,11 +628,42 @@ export function DocusealPrefillWorkspace({
     setSubject(draft.subject);
     setMessage(draft.message);
     setValues({ ...emptyValues(draftTemplate), ...draft.values });
+    setCustomerQuery(draft.customerName);
+    setSelectedCustomer(null);
+    setEquipmentQuery(draft.values.unit_number ?? "");
+    setSelectedEquipment(null);
     setFeedback(null);
   }
 
   function updateValue(name: string, value: string) {
     setValues((current) => ({ ...current, [name]: value }));
+  }
+
+  function insertSigningLink() {
+    const textarea = messageTextareaRef.current;
+    const insertion = signingLinkMarkdown;
+
+    if (!textarea) {
+      setMessage((current) => `${current.trimEnd()}\n\n${insertion}`);
+      return;
+    }
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const prefix = message.slice(0, start);
+    const suffix = message.slice(end);
+    const paddedInsertion =
+      (prefix && !prefix.endsWith("\n") ? "\n\n" : "") +
+      insertion +
+      (suffix && !suffix.startsWith("\n") ? "\n\n" : "");
+    const nextMessage = `${prefix}${paddedInsertion}${suffix}`;
+    const nextCursorPosition = prefix.length + paddedInsertion.length;
+
+    setMessage(nextMessage);
+    window.setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextCursorPosition, nextCursorPosition);
+    }, 0);
   }
 
   function fillRandomTestData() {
@@ -320,9 +672,81 @@ export function DocusealPrefillWorkspace({
     setCustomerName(testData.customerName);
     setCustomerEmail(testData.customerEmail);
     setSubject(testData.subject);
-    setMessage(testData.message);
+    setMessage(`${testData.message}\n\n${signingLinkMarkdown}`);
     setValues({ ...emptyValues(selectedTemplate), ...testData.values });
-    setFeedback("Random test data filled. Review before saving or sending.");
+    setCustomerQuery(testData.customerName);
+    setSelectedCustomer(null);
+    setEquipmentQuery(testData.values.unit_number ?? "");
+    setSelectedEquipment(null);
+    setFeedback("Random test data filled. Select real customer and unit records before sending.");
+  }
+
+  function applyDefaults() {
+    if (selectedDraftIsSent) {
+      setFeedback("Invalidate this sent draft before applying defaults.");
+      return;
+    }
+
+    const defaultValues = resolveDefaultValues(defaults, selectedTemplate, values, selectedStoreKey);
+    if (Object.keys(defaultValues).length === 0) {
+      setFeedback("No saved defaults match this template, store, or trailer type.");
+      return;
+    }
+
+    setValues((current) => ({ ...current, ...defaultValues }));
+    setFeedback("Saved defaults applied.");
+  }
+
+  function selectCustomer(customer: CustomerSearchResult) {
+    setSelectedCustomer(customer);
+    setCustomerQuery(customer.name);
+    setCustomerName(customer.name);
+    setCustomerResults([]);
+    setValues((current) => applyCustomerToValues(current, customer));
+    setFeedback(`Selected ${customer.name} (${customer.customerNumber}).`);
+  }
+
+  function selectEquipment(equipment: EquipmentSearchResult) {
+    const equipmentValues = applyEquipmentToValues(values, equipment);
+    const nextValues = fillBlankDefaults(
+      resolveDefaultValues(
+        defaults,
+        selectedTemplate,
+        equipmentValues,
+        getEquipmentStoreKey(equipment),
+      ),
+      equipmentValues,
+    );
+
+    setSelectedEquipment(equipment);
+    setEquipmentQuery(equipment.assetNumber);
+    setEquipmentResults([]);
+    setValues(nextValues);
+    setFeedback(`Selected ${equipment.assetNumber} from ${equipment.branch}.`);
+  }
+
+  function hasRequiredEquipment() {
+    if (
+      selectedTemplate.fields.some((field) => field.name === "unit_number") &&
+      !values.unit_number?.trim()
+    ) {
+      setFeedback("Select a trailer unit before saving or sending this document.");
+      return false;
+    }
+
+    return true;
+  }
+
+  function hasRequiredCustomer() {
+    if (
+      selectedTemplate.fields.some((field) => field.name === "customer_number") &&
+      !values.customer_number?.trim()
+    ) {
+      setFeedback("Select a customer before saving or sending this document.");
+      return false;
+    }
+
+    return true;
   }
 
   async function submitJson<T>(url: string, method: string, body?: unknown) {
@@ -339,16 +763,29 @@ export function DocusealPrefillWorkspace({
   }
 
   function createDraft() {
+    if (!hasRequiredCustomer()) {
+      return;
+    }
+
+    if (!hasRequiredEquipment()) {
+      return;
+    }
+
     startTransition(async () => {
       try {
         setFeedback(null);
+        const valuesWithDefaults = fillBlankDefaults(
+          resolveDefaultValues(defaults, selectedTemplate, values, selectedStoreKey),
+          values,
+        );
         const result = await submitJson<DocusealDraft>("/api/docuseal/drafts", "POST", {
           templateKey: selectedTemplateKey,
+          location: selectedStoreKey || "Unassigned",
           customerName,
           customerEmail,
           subject,
           message,
-          values,
+          values: valuesWithDefaults,
         });
         if (result?.data) {
           setDrafts((current) => [result.data!, ...current]);
@@ -362,7 +799,58 @@ export function DocusealPrefillWorkspace({
     });
   }
 
+  function saveSectionDefaults(section: string, scopeType: DocusealDefaultScope) {
+    const scopeKey = getDefaultScopeKey(scopeType);
+
+    if (!scopeKey) {
+      setFeedback(
+        scopeType === "location"
+          ? "Select a unit before saving store defaults."
+          : "Enter a trailer type before saving trailer type defaults.",
+      );
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        setFeedback(null);
+        const result = await submitJson<DocusealPrefillDefault>(
+          "/api/docuseal/defaults",
+          "POST",
+          {
+            templateKey: selectedTemplate.key,
+            scopeType,
+            scopeKey,
+            values: extractDefaultValuesForSection(selectedTemplate, values, section),
+            merge: true,
+          },
+        );
+        if (result?.data) {
+          setDefaults((current) => [
+            result.data!,
+            ...current.filter((item) => item.id !== result.data!.id),
+          ]);
+        }
+        setFeedback(
+          result?.message ??
+            `${section} defaults saved for ${defaultScopeLabels[scopeType].toLowerCase()}.`,
+        );
+        router.refresh();
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : "Unable to save defaults.");
+      }
+    });
+  }
+
   function saveDraft() {
+    if (!hasRequiredCustomer()) {
+      return;
+    }
+
+    if (!hasRequiredEquipment()) {
+      return;
+    }
+
     if (!selectedDraft) {
       createDraft();
       return;
@@ -377,6 +865,7 @@ export function DocusealPrefillWorkspace({
           {
             customerName,
             customerEmail,
+            location: selectedStoreKey || selectedDraft.location,
             subject,
             message,
             values,
@@ -397,6 +886,14 @@ export function DocusealPrefillWorkspace({
   }
 
   function sendDraft() {
+    if (!hasRequiredCustomer()) {
+      return;
+    }
+
+    if (!hasRequiredEquipment()) {
+      return;
+    }
+
     if (!selectedDraft) {
       setFeedback("Create or save a draft before sending.");
       return;
@@ -419,6 +916,42 @@ export function DocusealPrefillWorkspace({
         router.refresh();
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : "Unable to send draft.");
+      }
+    });
+  }
+
+  function invalidateDraft() {
+    if (!selectedDraft) {
+      setFeedback("Select a sent draft to invalidate.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Invalidate the previously sent DocuSeal document? The customer link in the old email will stop working, and this draft will reopen for edits.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        setFeedback(null);
+        const result = await submitJson<DocusealDraft>(
+          `/api/docuseal/drafts/${selectedDraft.id}/invalidate`,
+          "POST",
+        );
+        if (result?.data) {
+          setDrafts((current) =>
+            current.map((draft) => (draft.id === result.data!.id ? result.data! : draft)),
+          );
+          loadDraft(result.data);
+        }
+        setFeedback(result?.message ?? "Previous DocuSeal submission invalidated.");
+        router.refresh();
+      } catch (error) {
+        setFeedback(
+          error instanceof Error ? error.message : "Unable to invalidate sent document.",
+        );
       }
     });
   }
@@ -456,7 +989,10 @@ export function DocusealPrefillWorkspace({
                   </span>
                 </div>
                 <p className="mt-1 truncate text-[0.68rem] text-slate-500">
-                  {draft.location} - {draft.templateName}
+                  {draft.values.unit_number?.trim() || "No unit selected"} - {draft.templateName}
+                </p>
+                <p className="mt-1 truncate text-[0.65rem] text-slate-400">
+                  Store {draft.location || "Unassigned"}
                 </p>
                 <p className="mt-1 text-[0.65rem] text-slate-400">
                   Updated {formatDate(draft.updatedAt)}
@@ -473,7 +1009,7 @@ export function DocusealPrefillWorkspace({
             <div className="bg-white px-3 py-2">
               <p className="workspace-metric-label">Template</p>
               <p className="truncate text-[0.8rem] font-semibold text-slate-900">
-                {selectedTemplate.location} road trailer
+                {selectedTemplate.name}
               </p>
             </div>
             <div className="bg-white px-3 py-2">
@@ -517,32 +1053,91 @@ export function DocusealPrefillWorkspace({
                   );
                   setSelectedTemplateKey(event.target.value);
                   if (nextTemplate) {
-                    setValues(emptyValues(nextTemplate));
+                    setValues({
+                      ...emptyValues(nextTemplate),
+                      ...resolveDefaultValues(defaults, nextTemplate, {}, selectedStoreKey),
+                    });
+                    setCustomerName("");
+                    setCustomerQuery("");
+                    setCustomerResults([]);
+                    setSelectedCustomer(null);
+                    setEquipmentQuery("");
+                    setEquipmentResults([]);
+                    setSelectedEquipment(null);
                   }
                 }}
                 className="workspace-input w-full"
               >
                 {templates.map((template) => (
                   <option key={template.key} value={template.key}>
-                    {template.location} - {template.name}
+                    {template.name}
                   </option>
                 ))}
               </select>
             </label>
-            <label className="space-y-1 text-[0.75rem] text-slate-600">
-              <span className="font-medium">Customer name</span>
+            <div className="relative space-y-1 text-[0.75rem] text-slate-600">
+              <span className="font-medium">Customer</span>
               <input
-                value={customerName}
-                onChange={(event) => setCustomerName(event.target.value)}
+                value={customerQuery}
+                onChange={(event) => {
+                  setCustomerQuery(event.target.value);
+                  setSelectedCustomer(null);
+                  setCustomerName("");
+                  setValues((current) => ({
+                    ...current,
+                    customer_number: "",
+                    ordered_by: "",
+                    lessee_name: "",
+                    lessee_company_name: "",
+                    lessee_location: "",
+                  }));
+                }}
+                disabled={selectedDraftIsSent}
+                placeholder="Search customer, number, city, or site"
                 className="workspace-input w-full"
               />
-            </label>
+              <span className="block text-[0.65rem] text-slate-500">
+                {values.customer_number
+                  ? `Selected ${customerName || customerQuery} / ${values.customer_number}`
+                  : "Select a customer from the search results."}
+              </span>
+              {customerResults.length > 0 || customerLoading ? (
+                <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto border border-[var(--line)] bg-white shadow-lg">
+                  {customerLoading ? (
+                    <div className="px-3 py-2 text-[0.72rem] text-slate-500">
+                      Searching...
+                    </div>
+                  ) : null}
+                  {customerResults.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      className="block w-full border-b border-[var(--line)] px-3 py-2 text-left last:border-b-0 hover:bg-slate-50"
+                      onClick={() => selectCustomer(customer)}
+                    >
+                      <span className="block truncate text-[0.75rem] font-semibold text-slate-900">
+                        {customer.name}
+                      </span>
+                      <span className="block truncate text-[0.65rem] text-slate-500">
+                        {getCustomerLabel(customer)}
+                      </span>
+                      <span className="block truncate text-[0.62rem] text-slate-400">
+                        {getCustomerLocationText(customer) ||
+                          customer.branchCoverage.join(", ") ||
+                          "No location data"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <label className="space-y-1 text-[0.75rem] text-slate-600">
               <span className="font-medium">Customer email</span>
               <input
                 type="email"
                 value={customerEmail}
                 onChange={(event) => setCustomerEmail(event.target.value)}
+                disabled={selectedDraftIsSent}
                 className="workspace-input w-full"
               />
             </label>
@@ -551,32 +1146,64 @@ export function DocusealPrefillWorkspace({
               <input
                 value={subject}
                 onChange={(event) => setSubject(event.target.value)}
+                disabled={selectedDraftIsSent}
                 className="workspace-input w-full"
               />
             </label>
             <label className="space-y-1 text-[0.75rem] text-slate-600 md:col-span-2 xl:col-span-4">
-              <span className="font-medium">Email message</span>
+              <span className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium">Email message</span>
+                <button
+                  type="button"
+                  className="btn-secondary px-2 py-1 text-[0.68rem]"
+                  disabled={selectedDraftIsSent}
+                  onClick={insertSigningLink}
+                >
+                  Insert signing link
+                </button>
+              </span>
               <textarea
+                ref={messageTextareaRef}
                 rows={2}
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
+                disabled={selectedDraftIsSent}
                 className="workspace-input w-full resize-y"
               />
+              <span
+                className={`block text-[0.68rem] ${
+                  messageHasSigningLink ? "text-emerald-700" : "text-amber-700"
+                }`}
+              >
+                {messageHasSigningLink
+                  ? "The DocuSeal signing link will appear where the placeholder is placed."
+                  : "Place the signing link where it should appear in the email."}
+              </span>
             </label>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] px-3 py-2">
-            <p className="text-[0.72rem] text-slate-500">
-              Filled fields are sent to DocuSeal as read-only. Empty fields remain available to the customer.
+            <p className="max-w-3xl text-[0.72rem] text-slate-500">
+              {selectedDraftIsSent
+                ? "This draft has already been sent, so it is locked. Invalidate the sent document to stop the old customer link and reopen this draft for edits."
+                : "Filled fields are sent to DocuSeal as read-only. Empty fields remain available to the customer."}
             </p>
             <div className="flex gap-2">
               <button
                 type="button"
                 className="btn-secondary"
-                disabled={pending}
+                disabled={pending || selectedDraftIsSent}
                 onClick={fillRandomTestData}
               >
                 Fill test data
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={pending || selectedDraftIsSent}
+                onClick={applyDefaults}
+              >
+                Apply defaults
               </button>
               <button
                 type="button"
@@ -589,18 +1216,28 @@ export function DocusealPrefillWorkspace({
               <button
                 type="button"
                 className="btn-secondary"
-                disabled={pending}
+                disabled={pending || selectedDraftIsSent}
                 onClick={saveDraft}
               >
                 Save
               </button>
+              {selectedDraftIsSent ? (
+                <button
+                  type="button"
+                  className="btn-secondary border-red-200 text-red-700 hover:border-red-300 hover:bg-red-50"
+                  disabled={pending}
+                  onClick={invalidateDraft}
+                >
+                  Invalidate and edit
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="btn-primary"
-                disabled={pending || selectedDraft?.status === "sent"}
+                disabled={pending || selectedDraftIsSent}
                 onClick={sendDraft}
               >
-                Send through DocuSeal
+                Send E-Sign Document
               </button>
             </div>
           </div>
@@ -611,44 +1248,179 @@ export function DocusealPrefillWorkspace({
           ) : null}
         </section>
 
-        {Object.entries(groupedFields).map(([section, fields]) => (
+        {Object.entries(groupedFields).map(([section, fields]) => {
+          const sectionCanSaveDefaults = defaultSections.has(section);
+          const companyDefault = findDefault(defaults, selectedTemplate, "global", "global");
+          const storeDefault = selectedStoreKey
+            ? findDefault(defaults, selectedTemplate, "location", selectedStoreKey)
+            : null;
+          const trailerTypeKey = values.unit_type?.trim();
+          const trailerTypeDefault = trailerTypeKey
+            ? findDefault(defaults, selectedTemplate, "trailer_type", trailerTypeKey)
+            : null;
+
+          return (
           <section key={section} className="panel overflow-hidden">
-            <div className="border-b border-[var(--line)] px-3 py-2">
-              <h3 className="text-[0.82rem] font-semibold text-slate-900">{section}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
+              <div>
+                <h3 className="text-[0.82rem] font-semibold text-slate-900">{section}</h3>
+                {sectionCanSaveDefaults ? (
+                  <p className="mt-0.5 text-[0.65rem] text-slate-500">
+                    Company {countDefaultValuesForSection(selectedTemplate, companyDefault, section)} /
+                    Store {countDefaultValuesForSection(selectedTemplate, storeDefault, section)} /
+                    Trailer type{" "}
+                    {countDefaultValuesForSection(
+                      selectedTemplate,
+                      trailerTypeDefault,
+                      section,
+                    )}
+                  </p>
+                ) : null}
+              </div>
+              {sectionCanSaveDefaults ? (
+                <details className="relative">
+                  <summary
+                    className={`btn-secondary h-8 cursor-pointer list-none px-2 text-[0.68rem] ${
+                      pending || selectedDraftIsSent ? "pointer-events-none opacity-50" : ""
+                    }`}
+                  >
+                    Save defaults
+                  </summary>
+                  <div className="absolute right-0 z-20 mt-1 min-w-52 overflow-hidden border border-[var(--line)] bg-white text-[0.72rem] shadow-lg">
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-2 text-left hover:bg-slate-50"
+                      disabled={pending || selectedDraftIsSent}
+                      onClick={() => saveSectionDefaults(section, "global")}
+                    >
+                      Save to company
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:text-slate-400"
+                      disabled={pending || selectedDraftIsSent || !selectedStoreKey}
+                      onClick={() => saveSectionDefaults(section, "location")}
+                    >
+                      Save to store{selectedStoreKey ? `: ${selectedStoreKey}` : ""}
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:text-slate-400"
+                      disabled={pending || selectedDraftIsSent || !trailerTypeKey}
+                      onClick={() => saveSectionDefaults(section, "trailer_type")}
+                    >
+                      Save to trailer type{trailerTypeKey ? `: ${trailerTypeKey}` : ""}
+                    </button>
+                  </div>
+                </details>
+              ) : null}
             </div>
             <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-              {fields.map((field) => (
-                <label
-                  key={field.name}
-                  className={`space-y-1 text-[0.75rem] text-slate-600 ${
-                    field.multiline ? "md:col-span-2 xl:col-span-3" : ""
-                  }`}
-                >
-                  <span className="flex items-center justify-between gap-2 font-medium">
-                    <span>{field.label}</span>
-                    <span className="mono text-[0.6rem] font-normal text-slate-400">
-                      {field.name}
+              {fields.map((field) => {
+                if (field.name === "unit_number") {
+                  return (
+                    <div
+                      key={field.name}
+                      className="relative space-y-1 text-[0.75rem] text-slate-600"
+                    >
+                      <span className="flex items-center justify-between gap-2 font-medium">
+                        <span>{field.label}</span>
+                        <span className="mono text-[0.6rem] font-normal text-slate-400">
+                          {field.name}
+                        </span>
+                      </span>
+                      <input
+                        value={equipmentQuery}
+                        onChange={(event) => {
+                          setEquipmentQuery(event.target.value);
+                          setSelectedEquipment(null);
+                          setValues((current) => ({
+                            ...current,
+                            unit_number: "",
+                            unit_type: "",
+                            vin_number: "",
+                            tag_number: "",
+                          }));
+                        }}
+                        disabled={selectedDraftIsSent}
+                        placeholder="Search unit, VIN, tag, or store"
+                        className="workspace-input w-full"
+                      />
+                      <span className="block text-[0.65rem] text-slate-500">
+                        {values.unit_number
+                          ? `Selected ${values.unit_number}${selectedStoreKey ? ` / Store ${selectedStoreKey}` : ""}`
+                          : "Select a trailer from the search results."}
+                      </span>
+                      {equipmentResults.length > 0 || equipmentLoading ? (
+                        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto border border-[var(--line)] bg-white shadow-lg">
+                          {equipmentLoading ? (
+                            <div className="px-3 py-2 text-[0.72rem] text-slate-500">
+                              Searching...
+                            </div>
+                          ) : null}
+                          {equipmentResults.map((equipment) => (
+                            <button
+                              key={equipment.id}
+                              type="button"
+                              className="block w-full border-b border-[var(--line)] px-3 py-2 text-left last:border-b-0 hover:bg-slate-50"
+                              onClick={() => selectEquipment(equipment)}
+                            >
+                              <span className="block truncate text-[0.75rem] font-semibold text-slate-900">
+                                {equipment.assetNumber}
+                              </span>
+                              <span className="block truncate text-[0.65rem] text-slate-500">
+                                {getEquipmentLabel(equipment)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                }
+
+                const equipmentManagedField = ["unit_type", "vin_number", "tag_number"].includes(
+                  field.name,
+                );
+
+                return (
+                  <label
+                    key={field.name}
+                    className={`space-y-1 text-[0.75rem] text-slate-600 ${
+                      field.multiline ? "md:col-span-2 xl:col-span-3" : ""
+                    }`}
+                  >
+                    <span className="flex items-center justify-between gap-2 font-medium">
+                      <span>{field.label}</span>
+                      <span className="mono text-[0.6rem] font-normal text-slate-400">
+                        {field.name}
+                      </span>
                     </span>
-                  </span>
-                  {field.multiline ? (
-                    <textarea
-                      rows={2}
-                      value={values[field.name] ?? ""}
-                      onChange={(event) => updateValue(field.name, event.target.value)}
-                      className="workspace-input w-full resize-y"
-                    />
-                  ) : (
-                    <input
-                      value={values[field.name] ?? ""}
-                      onChange={(event) => updateValue(field.name, event.target.value)}
-                      className="workspace-input w-full"
-                    />
-                  )}
-                </label>
-              ))}
+                    {field.multiline ? (
+                      <textarea
+                        rows={2}
+                        value={values[field.name] ?? ""}
+                        onChange={(event) => updateValue(field.name, event.target.value)}
+                        disabled={selectedDraftIsSent}
+                        className="workspace-input w-full resize-y"
+                      />
+                    ) : (
+                      <input
+                        value={values[field.name] ?? ""}
+                        onChange={(event) => updateValue(field.name, event.target.value)}
+                        disabled={selectedDraftIsSent || equipmentManagedField}
+                        className={`workspace-input w-full ${
+                          equipmentManagedField ? "bg-slate-50 text-slate-500" : ""
+                        }`}
+                      />
+                    )}
+                  </label>
+                );
+              })}
             </div>
           </section>
-        ))}
+          );
+        })}
       </main>
     </div>
   );

@@ -3838,6 +3838,27 @@ export const docusealPrefillDrafts = pgTable(
   }),
 );
 
+export const docusealPrefillDefaults = pgTable(
+  "docuseal_prefill_defaults",
+  {
+    id: text().primaryKey(),
+    templateKey: text().notNull(),
+    scopeType: text().notNull(),
+    scopeKey: text().notNull(),
+    values: jsonb().$type<Record<string, string>>().default({}).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    templateScopeUnique: uniqueIndex("docuseal_prefill_defaults_template_scope_unique").on(
+      table.templateKey,
+      table.scopeType,
+      table.scopeKey,
+    ),
+    templateIdx: index("docuseal_prefill_defaults_template_idx").on(table.templateKey),
+  }),
+);
+
 export const signatureSigners = pgTable(
   "signature_signers",
   {

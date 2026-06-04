@@ -8,6 +8,7 @@ import {
 } from "@/lib/server/docuseal-prefill";
 
 const updateDraftSchema = z.object({
+  location: z.string().optional(),
   customerName: z.string().optional(),
   customerEmail: z.string().email().or(z.literal("")).optional(),
   subject: z.string().optional(),

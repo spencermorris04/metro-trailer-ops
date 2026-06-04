@@ -9,6 +9,7 @@ import {
 
 const createDraftSchema = z.object({
   templateKey: z.string().min(1),
+  location: z.string().optional(),
   customerName: z.string().optional(),
   customerEmail: z.string().email().or(z.literal("")).optional(),
   subject: z.string().optional(),

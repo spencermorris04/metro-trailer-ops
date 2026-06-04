@@ -134,6 +134,13 @@
       "when": 1780516800000,
       "tag": "0018_docuseal_prefill_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1780603200000,
+      "tag": "0019_docuseal_prefill_defaults",
+      "breakpoints": true
     }
   ]
 }
