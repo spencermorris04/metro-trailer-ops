@@ -21,6 +21,7 @@ codeunit 50370 "MTE ESign API"
         ResponseText: Text;
         Url: Text;
         TemplateCode: Code[30];
+        FirstTemplateCode: Code[30];
     begin
         GetSetup(Setup);
 
@@ -48,6 +49,9 @@ codeunit 50370 "MTE ESign API"
             if TemplateCode = '' then
                 Error('Metro E-Sign template API returned a template without a code.');
 
+            if FirstTemplateCode = '' then
+                FirstTemplateCode := TemplateCode;
+
             if not Template.Get(TemplateCode) then begin
                 Template.Init();
                 Template.Code := TemplateCode;
@@ -61,6 +65,11 @@ codeunit 50370 "MTE ESign API"
             Template."Last Synced At" := CurrentDateTime();
             Template.Modify();
             RefreshTemplateFields(Template.Code, TemplateObject);
+        end;
+
+        if (Setup."Default Template Code" = '') and (FirstTemplateCode <> '') then begin
+            Setup."Default Template Code" := FirstTemplateCode;
+            Setup.Modify();
         end;
 
         Message('Metro E-Sign templates refreshed.');
@@ -150,6 +159,8 @@ codeunit 50370 "MTE ESign API"
         TemplateField: Record "MTE ESign Template Field";
         LeaseField: Record "MTE ESign Lease Field";
     begin
+        EnsureLeaseTemplate(Lease);
+
         if IsNullGuid(Lease."Lease ID") or (Lease."Template Code" = '') then
             exit;
 
@@ -178,6 +189,36 @@ codeunit 50370 "MTE ESign API"
                     LeaseField.Modify();
                 end;
             until TemplateField.Next() = 0;
+    end;
+
+    procedure EnsureLeaseTemplate(var Lease: Record "MTE ESign Lease")
+    var
+        Setup: Record "MTE ESign Setup";
+        Template: Record "MTE ESign Template";
+    begin
+        if Lease."Template Code" <> '' then
+            exit;
+
+        if Setup.Get('DEFAULT') and (Setup."Default Template Code" <> '') then
+            if Template.Get(Setup."Default Template Code") and Template.Active then begin
+                Lease.Validate("Template Code", Template.Code);
+                if not IsNullGuid(Lease."Lease ID") then
+                    Lease.Modify();
+                exit;
+            end;
+
+        Template.SetRange(Active, true);
+        if not Template.FindFirst() then begin
+            RefreshTemplates();
+            Template.Reset();
+            Template.SetRange(Active, true);
+            if not Template.FindFirst() then
+                exit;
+        end;
+
+        Lease.Validate("Template Code", Template.Code);
+        if not IsNullGuid(Lease."Lease ID") then
+            Lease.Modify();
     end;
 
     local procedure EnsureDraft(var Lease: Record "MTE ESign Lease")

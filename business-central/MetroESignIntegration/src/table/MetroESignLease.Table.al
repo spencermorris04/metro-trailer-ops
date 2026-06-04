@@ -207,6 +207,8 @@ table 50372 "MTE ESign Lease"
         if IsNullGuid("Lease ID") then
             "Lease ID" := CreateGuid();
 
+        ApplyDefaultTemplate();
+
         if "Created At" = 0DT then
             "Created At" := CurrentDateTime();
 
@@ -217,6 +219,11 @@ table 50372 "MTE ESign Lease"
 
         if Message = '' then
             Message := 'Please review the prepared Metro Trailer document and complete any remaining fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: {submitter.link} [Review and Submit]({submitter.link})';
+    end;
+
+    trigger OnRename()
+    begin
+        Error('Metro E-Sign leases cannot be renamed.');
     end;
 
     trigger OnModify()
@@ -251,5 +258,24 @@ table 50372 "MTE ESign Lease"
                     LeaseField.Modify();
                 end;
             until TemplateField.Next() = 0;
+    end;
+
+    local procedure ApplyDefaultTemplate()
+    var
+        Setup: Record "MTE ESign Setup";
+        Template: Record "MTE ESign Template";
+    begin
+        if "Template Code" <> '' then
+            exit;
+
+        if Setup.Get('DEFAULT') and (Setup."Default Template Code" <> '') then
+            if Template.Get(Setup."Default Template Code") and Template.Active then begin
+                Validate("Template Code", Template.Code);
+                exit;
+            end;
+
+        Template.SetRange(Active, true);
+        if Template.FindFirst() then
+            Validate("Template Code", Template.Code);
     end;
 }

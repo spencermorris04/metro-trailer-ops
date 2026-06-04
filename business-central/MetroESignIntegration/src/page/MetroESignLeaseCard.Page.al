@@ -21,6 +21,15 @@ page 50374 "MTE ESign Lease Card"
                 {
                     ApplicationArea = All;
                     Editable = IsDraftEditable;
+
+                    trigger OnValidate()
+                    var
+                        Api: Codeunit "MTE ESign API";
+                    begin
+                        CurrPage.SaveRecord();
+                        Api.PopulateLeaseFields(Rec);
+                        CurrPage.Update(false);
+                    end;
                 }
                 field("Template Name"; Rec."Template Name")
                 {
@@ -207,8 +216,34 @@ page 50374 "MTE ESign Lease Card"
                     CurrPage.Update(false);
                 end;
             }
+            action(RefreshTemplates)
+            {
+                Caption = 'Refresh Templates';
+                ApplicationArea = All;
+                Image = Refresh;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                var
+                    Api: Codeunit "MTE ESign API";
+                begin
+                    Api.RefreshTemplates();
+                    CurrPage.SaveRecord();
+                    Api.EnsureLeaseTemplate(Rec);
+                    Api.PopulateLeaseFields(Rec);
+                    CurrPage.Update(false);
+                end;
+            }
         }
     }
+
+    trigger OnNewRecord(BelowxRec: Boolean)
+    var
+        Api: Codeunit "MTE ESign API";
+    begin
+        Api.EnsureLeaseTemplate(Rec);
+    end;
 
     trigger OnAfterGetCurrRecord()
     begin
