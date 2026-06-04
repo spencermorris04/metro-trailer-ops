@@ -30,6 +30,11 @@ export default async function DocumentsPage() {
         eyebrow="Commercial"
         title="Documents"
         description="Internal retained documents, native e-sign packets, and linked BC source-document lineage."
+        actions={
+          <Link href="/docuseal" className="btn-primary">
+            DocuSeal prefill
+          </Link>
+        }
       />
 
       <SignatureRequestComposer contracts={composerContracts} />

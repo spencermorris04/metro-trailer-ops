@@ -3809,6 +3809,35 @@ export const signatureRequests = pgTable(
   }),
 );
 
+export const docusealPrefillDrafts = pgTable(
+  "docuseal_prefill_drafts",
+  {
+    id: text().primaryKey(),
+    templateKey: text().notNull(),
+    templateName: text().notNull(),
+    docusealTemplateId: integer().notNull(),
+    location: text().notNull(),
+    submitterRole: text().notNull(),
+    customerName: text().default("").notNull(),
+    customerEmail: text().default("").notNull(),
+    subject: text().notNull(),
+    message: text().notNull(),
+    values: jsonb().$type<Record<string, string>>().default({}).notNull(),
+    status: text().default("draft").notNull(),
+    sentAt: timestamp({ withTimezone: true }),
+    docusealSubmissionId: integer(),
+    docusealSubmitterSlug: text(),
+    docusealSubmitterUrl: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("docuseal_prefill_drafts_status_idx").on(table.status),
+    updatedAtIdx: index("docuseal_prefill_drafts_updated_at_idx").on(table.updatedAt),
+    templateIdx: index("docuseal_prefill_drafts_template_idx").on(table.templateKey),
+  }),
+);
+
 export const signatureSigners = pgTable(
   "signature_signers",
   {

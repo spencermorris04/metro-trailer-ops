@@ -33,6 +33,9 @@ const fallbackActor: WorkspaceActorSummary = {
   kind: "anonymous",
 };
 
+function isPublicPage(pathname: string) {
+  return pathname === "/login" || pathname.startsWith("/login/") || pathname.startsWith("/sign/");
+}
 async function getShellWorkspaceLayout(
   inputHeaders: Headers,
   pageKey: string,
@@ -62,6 +65,26 @@ async function listShellBranches() {
 export async function AppShell({ children }: { children: ReactNode }) {
   const runtimeMode = getRuntimeMode();
   const requestHeaders = new Headers(await headers());
+  const pathname = requestHeaders.get("x-metro-pathname") ?? "/";
+  const publicPage = isPublicPage(pathname);
+
+  if (publicPage) {
+    return (
+      <AppShellClient
+        runtimeMode={runtimeMode}
+        actor={fallbackActor}
+        shellLayout={defaultShellLayout}
+        dashboardPreferences={normalizeDashboardPreferences(null)}
+        notificationLayout={defaultNotificationLayout}
+        initialPathname={pathname}
+        publicPage
+        branches={[]}
+      >
+        {children}
+      </AppShellClient>
+    );
+  }
+
   const [shell, dashboards, notifications, branches] = await Promise.all([
     getShellWorkspaceLayout(requestHeaders, "shell", defaultShellLayout),
     getShellWorkspaceLayout(requestHeaders, "dashboards", normalizeDashboardPreferences(null)),
@@ -76,6 +99,8 @@ export async function AppShell({ children }: { children: ReactNode }) {
       shellLayout={shell.layout as typeof defaultShellLayout}
       dashboardPreferences={normalizeDashboardPreferences(dashboards.layout)}
       notificationLayout={notifications.layout as typeof defaultNotificationLayout}
+      initialPathname={pathname}
+      publicPage={publicPage}
       branches={branches.map((branch) => ({
         id: branch.id,
         code: branch.code,

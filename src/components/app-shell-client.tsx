@@ -52,6 +52,8 @@ type WorkspaceNotification = {
   createdAt: string | null;
 };
 
+type AuthGateState = "checking" | "allowed" | "public";
+
 const railItems: Array<{
   href: string;
   label: string;
@@ -816,12 +818,25 @@ function ShellStatusBar({
   );
 }
 
+function AuthCheckingPanel() {
+  return (
+    <div className="flex min-h-[calc(100vh-120px)] items-center justify-center">
+      <div className="panel w-full max-w-sm px-4 py-3">
+        <p className="eyebrow">Metro Trailer</p>
+        <p className="mt-1 text-[0.8rem] font-semibold text-slate-900">Checking session</p>
+      </div>
+    </div>
+  );
+}
+
 export function AppShellClient({
   runtimeMode,
   actor,
   shellLayout,
   dashboardPreferences,
   notificationLayout,
+  initialPathname,
+  publicPage,
   branches,
   children,
 }: {
@@ -830,6 +845,8 @@ export function AppShellClient({
   shellLayout: ShellLayout;
   dashboardPreferences: DashboardPreferences;
   notificationLayout: NotificationLayout;
+  initialPathname: string;
+  publicPage: boolean;
   branches: BranchSummary[];
   children: ReactNode;
 }) {
@@ -841,6 +858,15 @@ export function AppShellClient({
     useState(notificationLayout);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const pathname = usePathname();
+  const effectivePathname = pathname || initialPathname;
+  const isPublicPath =
+    publicPage ||
+    effectivePathname === "/login" ||
+    effectivePathname.startsWith("/login/") ||
+    effectivePathname.startsWith("/sign/");
+  const [authGateState, setAuthGateState] = useState<AuthGateState>(
+    isPublicPath ? "public" : "checking",
+  );
   const pendingRoute = useNavigationStore((state) => state.pendingRoute);
   const clearPendingRoute = useNavigationStore((state) => state.clearPendingRoute);
 
@@ -868,6 +894,49 @@ export function AppShellClient({
   useEffect(() => {
     clearPendingRoute();
   }, [clearPendingRoute, pathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (isPublicPath) {
+      setAuthGateState("public");
+      return;
+    }
+
+    setAuthGateState("checking");
+    fetch("/api/auth/get-session", {
+      credentials: "include",
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          return null;
+        }
+
+        return response.json().catch(() => null) as Promise<unknown>;
+      })
+      .then((session) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (session) {
+          setAuthGateState("allowed");
+          return;
+        }
+
+        router.replace(`/login?callbackUrl=${encodeURIComponent(effectivePathname)}`);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          router.replace(`/login?callbackUrl=${encodeURIComponent(effectivePathname)}`);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectivePathname, isPublicPath, router]);
 
   useEffect(() => {
     if (!pendingRoute) {
@@ -940,7 +1009,7 @@ export function AppShellClient({
           />
           <CategoryRail hidden={currentShellLayout.hideCategoryRail} />
           <main className={`min-h-0 flex-1 overflow-y-auto bg-[var(--background)] ${mainPadding}`}>
-            {children}
+            {authGateState === "checking" ? <AuthCheckingPanel /> : children}
           </main>
           <ShellStatusBar actor={actor} shellLayout={currentShellLayout} />
         </div>
@@ -961,7 +1030,7 @@ export function AppShellClient({
         />
         <CategoryRail hidden={currentShellLayout.hideCategoryRail} />
         <main className={`min-h-0 flex-1 overflow-y-auto bg-[var(--background)] ${mainPadding}`}>
-          {children}
+          {authGateState === "checking" ? <AuthCheckingPanel /> : children}
         </main>
         <ShellStatusBar actor={actor} shellLayout={currentShellLayout} />
       </div>

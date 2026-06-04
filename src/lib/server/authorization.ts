@@ -1,6 +1,5 @@
-import { eq, inArray, or } from "drizzle-orm";
+import { and, eq, gt, inArray, or } from "drizzle-orm";
 
-import { auth } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { ApiError } from "@/lib/server/api";
 import { isDemoRuntime } from "@/lib/server/runtime";
@@ -45,6 +44,12 @@ type PermissionScope = {
 export type ResourceScope = {
   branchId: string | null;
   customerId: string | null;
+};
+
+type AuthSessionSummary = {
+  authUserId: string;
+  email: string;
+  name: string;
 };
 
 export type ResolvedActor = {
@@ -152,6 +157,75 @@ async function getStaffPermissions(userId: string) {
   };
 }
 
+function parseCookieHeader(cookieHeader: string | null) {
+  const cookies = new Map<string, string>();
+
+  if (!cookieHeader) {
+    return cookies;
+  }
+
+  for (const cookie of cookieHeader.split(";")) {
+    const separatorIndex = cookie.indexOf("=");
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const name = cookie.slice(0, separatorIndex).trim();
+    const rawValue = cookie.slice(separatorIndex + 1).trim();
+
+    if (!name) {
+      continue;
+    }
+
+    try {
+      cookies.set(name, decodeURIComponent(rawValue));
+    } catch {
+      cookies.set(name, rawValue);
+    }
+  }
+
+  return cookies;
+}
+
+function getBetterAuthSessionToken(inputHeaders: Headers) {
+  const cookies = parseCookieHeader(inputHeaders.get("cookie"));
+  const signedToken =
+    cookies.get("better-auth.session_token") ??
+    cookies.get("__Secure-better-auth.session_token");
+
+  if (!signedToken) {
+    return null;
+  }
+
+  return signedToken.split(".")[0] || null;
+}
+
+async function getSessionFromHeaders(inputHeaders: Headers): Promise<AuthSessionSummary | null> {
+  const sessionToken = getBetterAuthSessionToken(inputHeaders);
+
+  if (!sessionToken) {
+    return null;
+  }
+
+  const [session] = await db
+    .select({
+      authUserId: schema.authSessions.userId,
+      email: schema.authUsers.email,
+      name: schema.authUsers.name,
+    })
+    .from(schema.authSessions)
+    .innerJoin(schema.authUsers, eq(schema.authSessions.userId, schema.authUsers.id))
+    .where(
+      and(
+        eq(schema.authSessions.token, sessionToken),
+        gt(schema.authSessions.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
+
+  return session ?? null;
+}
+
 export async function getActorFromHeaders(inputHeaders: Headers): Promise<ResolvedActor | null> {
   if (isDemoRuntime()) {
     return {
@@ -168,15 +242,13 @@ export async function getActorFromHeaders(inputHeaders: Headers): Promise<Resolv
     };
   }
 
-  const session = await auth.api.getSession({
-    headers: inputHeaders,
-  });
+  const session = await getSessionFromHeaders(inputHeaders);
 
   if (!session) {
     return null;
   }
 
-  const authUserId = session.user.id;
+  const authUserId = session.authUserId;
   const staffUser = await db.query.users.findFirst({
     where: (table, { eq: localEq }) => localEq(table.authUserId, authUserId),
   });
@@ -235,8 +307,8 @@ export async function getActorFromHeaders(inputHeaders: Headers): Promise<Resolv
       "accounting.view",
       "payment_methods.manage",
     ]),
-    email: session.user.email,
-    name: session.user.name,
+    email: session.email,
+    name: session.name,
   };
 }
 

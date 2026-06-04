@@ -6,9 +6,9 @@ import { eq } from "drizzle-orm";
 import { db, pool, schema } from "../src/lib/db";
 import { createId, now } from "../src/lib/server/production-utils";
 
-const adminEmail = process.env.LOCAL_ADMIN_EMAIL?.trim() || "admin@metrotrailer.local";
-const adminPassword = process.env.LOCAL_ADMIN_PASSWORD || "problematic";
-const adminName = process.env.LOCAL_ADMIN_NAME?.trim() || "Local Administrator";
+const adminEmail = process.env.LOCAL_ADMIN_EMAIL?.trim() || "spencer@metrotrl.com";
+const adminPassword = process.env.LOCAL_ADMIN_PASSWORD || "MetroTrailer2026!";
+const adminName = process.env.LOCAL_ADMIN_NAME?.trim() || "Spencer Morris";
 
 async function ensureLocalBranch() {
   const existing = await db.query.branches.findFirst({

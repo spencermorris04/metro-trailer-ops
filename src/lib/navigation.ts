@@ -80,6 +80,12 @@ export const navigationGroups: NavGroup[] = [
         description: "Internal docs, e-sign packets, and linked source lineage",
         icon: "folder",
       },
+      {
+        href: "/docuseal",
+        label: "E-Sign Prep",
+        description: "Prefill DocuSeal lease documents before customer review",
+        icon: "file-text",
+      },
     ],
   },
   {

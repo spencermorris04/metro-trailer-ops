@@ -19,9 +19,21 @@ function getAuthSecret() {
   return process.env.AUTH_SECRET?.trim() || "replace-me-with-a-long-random-secret";
 }
 
+function getTrustedOrigins() {
+  return [
+    process.env.APP_URL?.trim(),
+    process.env.BETTER_AUTH_URL?.trim(),
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+  ].filter((origin): origin is string => Boolean(origin));
+}
+
 export const auth = betterAuth({
   baseURL: getBaseUrl(),
   secret: getAuthSecret(),
+  trustedOrigins: getTrustedOrigins(),
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {

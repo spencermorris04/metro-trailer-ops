@@ -98,6 +98,52 @@ Deployed stack:
 
 The API intake and queue worker have been smoke-tested with an on-demand SkyBitz request for fixed asset `533442`.
 
+## DocuSeal Self-Hosted Deployment
+
+DocuSeal OSS was cloned locally at `C:\Users\NewOwner\Software\docuseal` from `https://github.com/docusealco/docuseal`.
+
+The self-hosted AWS deployment is managed separately from the sync backend so it can be deployed without touching the SQS/ECS worker platform:
+
+```bash
+$env:AWS_PROFILE="metro-trailer-deploy-admin"; npm run docuseal:synth -- --all
+$env:AWS_PROFILE="metro-trailer-deploy-admin"; npm run docuseal:deploy -- --all --require-approval never
+```
+
+Deployed stacks:
+
+- `MetroTrailerDocuseal`
+- `MetroTrailerLeaseSigningArchive`
+
+DocuSeal runtime:
+
+- Public URL: `http://MetroT-LoadB-LalZP5zYG7S5-765696422.us-east-2.elb.amazonaws.com`
+- ECS cluster: `metro-trailer-docuseal`
+- ECR repository: `452391802972.dkr.ecr.us-east-2.amazonaws.com/metro-trailer-docuseal`
+- Current branded image tag: `branded-20260603-mpycekt6`
+- Active Storage bucket: `metro-trailer-docuseal-attachments-452391802972-us-east-2`
+- Secrets:
+  - `metro-trailer/docuseal/app`
+  - `metro-trailer/docuseal/database`
+  - `metro-trailer/docuseal/smtp`
+
+DocuSeal email is configured through Resend SMTP using the already verified `lumpkindevelopment.com` domain. The ECS task reads `SMTP_PASSWORD` and `SMTP_FROM` from `metro-trailer/docuseal/smtp`; the current sender is `Metro Trailer E-Sign <documents@lumpkindevelopment.com>`. Email invitation links use `EMAIL_HOST`, which is currently the public ALB DNS name and should be updated when a real DocuSeal app domain is attached.
+
+Metro Trailer branding is maintained in the local clone at `C:\Users\NewOwner\Software\docuseal` and deployed as a custom ECR image. Upload a ZIP of that repo to `s3://metro-trailer-docuseal-source-452391802972-us-east-2/source/docuseal.zip`, run the CodeBuild project `metro-trailer-docuseal-image`, then deploy the resulting tag:
+
+```bash
+npm run docuseal:deploy -- MetroTrailerDocuseal --require-approval never -c docusealUseCustomImage=true -c docusealImageTag=<image-tag>
+```
+
+Completed lease evidence archive:
+
+- Bucket: `metro-trailer-docuseal-archive-452391802972-us-east-2`
+- Trail bucket: `metro-trailer-docuseal-archive-trail-452391802972-us-east-2`
+- KMS key: `arn:aws:kms:us-east-2:452391802972:key/691fb2f2-5838-4830-bb18-e97ffc65cfb9`
+- Writer role: `arn:aws:iam::452391802972:role/metro-trailer-lease-archive-writer`
+- Reader role: `arn:aws:iam::452391802972:role/metro-trailer-lease-archive-reader`
+
+DocuSeal working attachments use the Active Storage bucket above via the ECS task role and `S3_ATTACHMENTS_BUCKET`. The archive bucket is configured with S3 Object Lock, versioning, SSE-KMS, blocked public access, and default 7-year Governance retention. CloudTrail data-event logging is enabled for object-level archive access. Do not use DocuSeal's working storage as the evidentiary archive; archive completed signed PDFs, certificates, metadata, and hashes into the locked bucket from the backend workflow.
+
 ## Business Central Buttons
 
 Each BC extension now includes a small setup page and `Request Sync` actions on the Fixed Asset Card and related FactBox:
