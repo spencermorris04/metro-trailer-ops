@@ -195,6 +195,8 @@ page 50374 "MTE ESign Lease Card"
                 Caption = 'Refresh Prefill Fields';
                 ApplicationArea = All;
                 Image = RefreshLines;
+                Promoted = true;
+                PromotedCategory = Process;
 
                 trigger OnAction()
                 var

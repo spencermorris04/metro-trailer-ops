@@ -70,6 +70,7 @@ codeunit 50370 "MTE ESign API"
     var
         ResponseObject: JsonObject;
     begin
+        PopulateLeaseFields(Lease);
         EnsureDraft(Lease);
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/prepare');
@@ -87,6 +88,7 @@ codeunit 50370 "MTE ESign API"
     var
         ResponseObject: JsonObject;
     begin
+        PopulateLeaseFields(Lease);
         EnsureDraft(Lease);
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/send');
@@ -152,6 +154,12 @@ codeunit 50370 "MTE ESign API"
             exit;
 
         TemplateField.SetRange("Template Code", Lease."Template Code");
+        if TemplateField.IsEmpty() then begin
+            RefreshTemplates();
+            TemplateField.Reset();
+            TemplateField.SetRange("Template Code", Lease."Template Code");
+        end;
+
         TemplateField.SetCurrentKey("Template Code", "Sort Order");
         if TemplateField.FindSet() then
             repeat
@@ -346,10 +354,15 @@ codeunit 50370 "MTE ESign API"
     local procedure GetJsonText(Object: JsonObject; Name: Text): Text
     var
         Token: JsonToken;
+        ValueText: Text;
     begin
         if Object.Get(Name, Token) then
-            if Token.IsValue() then
+            if Token.IsValue() then begin
+                ValueText := Format(Token.AsValue());
+                if LowerCase(ValueText) = 'null' then
+                    exit('');
                 exit(Token.AsValue().AsText());
+            end;
 
         exit('');
     end;
@@ -357,10 +370,15 @@ codeunit 50370 "MTE ESign API"
     local procedure GetJsonInteger(Object: JsonObject; Name: Text): Integer
     var
         Token: JsonToken;
+        ValueText: Text;
     begin
         if Object.Get(Name, Token) then
-            if Token.IsValue() then
+            if Token.IsValue() then begin
+                ValueText := Format(Token.AsValue());
+                if LowerCase(ValueText) = 'null' then
+                    exit(0);
                 exit(Token.AsValue().AsInteger());
+            end;
 
         exit(0);
     end;
@@ -368,10 +386,15 @@ codeunit 50370 "MTE ESign API"
     local procedure GetJsonBoolean(Object: JsonObject; Name: Text; DefaultValue: Boolean): Boolean
     var
         Token: JsonToken;
+        ValueText: Text;
     begin
         if Object.Get(Name, Token) then
-            if Token.IsValue() then
+            if Token.IsValue() then begin
+                ValueText := Format(Token.AsValue());
+                if LowerCase(ValueText) = 'null' then
+                    exit(DefaultValue);
                 exit(Token.AsValue().AsBoolean());
+            end;
 
         exit(DefaultValue);
     end;

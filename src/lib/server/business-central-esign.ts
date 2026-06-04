@@ -101,10 +101,10 @@ function mapBusinessCentralDraft(draft: DocusealDraft) {
     templateKey: draft.templateKey,
     templateName: draft.templateName,
     status: draft.status,
-    sentAt: draft.sentAt,
+    sentAt: draft.sentAt ?? "",
     updatedAt: draft.updatedAt,
-    docusealSubmissionId: draft.docusealSubmissionId,
-    signingUrl: draft.docusealSubmitterUrl,
+    docusealSubmissionId: draft.docusealSubmissionId ?? 0,
+    signingUrl: draft.docusealSubmitterUrl ?? "",
   };
 }
 
