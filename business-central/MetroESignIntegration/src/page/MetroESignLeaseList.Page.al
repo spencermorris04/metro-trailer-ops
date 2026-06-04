@@ -56,7 +56,7 @@ page 50373 "MTE ESign Leases"
         {
             action(OpenSigningLink)
             {
-                Caption = 'Open Signing Link';
+                Caption = 'Open E-Sign Document';
                 ApplicationArea = All;
                 Image = LinkWeb;
                 Promoted = true;
@@ -65,7 +65,7 @@ page 50373 "MTE ESign Leases"
                 trigger OnAction()
                 begin
                     if Rec."Signing URL" = '' then
-                        Error('No signing URL is available for this lease.');
+                        Error('No E-Sign document URL is available for this lease.');
 
                     Hyperlink(Rec."Signing URL");
                 end;

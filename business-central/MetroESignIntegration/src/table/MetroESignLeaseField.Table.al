@@ -22,6 +22,21 @@ table 50373 "MTE ESign Lease Field"
             Caption = 'Value';
             DataClassification = CustomerContent;
         }
+        field(4; "Field Label"; Text[100])
+        {
+            Caption = 'Field';
+            DataClassification = CustomerContent;
+        }
+        field(5; Section; Text[80])
+        {
+            Caption = 'Section';
+            DataClassification = CustomerContent;
+        }
+        field(6; "Sort Order"; Integer)
+        {
+            Caption = 'Sort Order';
+            DataClassification = SystemMetadata;
+        }
     }
 
     keys
@@ -29,6 +44,9 @@ table 50373 "MTE ESign Lease Field"
         key(PK; "Lease ID", "Field Name")
         {
             Clustered = true;
+        }
+        key(LeaseOrder; "Lease ID", "Sort Order")
+        {
         }
     }
 

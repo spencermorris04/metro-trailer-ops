@@ -6,6 +6,7 @@ import { type DocusealDraft, listDocusealPrefillTemplates } from "@/lib/server/d
 import {
   createDocusealDraft,
   invalidateDocusealDraft,
+  prepareDocusealDraftPreview,
   sendDocusealDraft,
 } from "@/lib/server/docuseal-prefill";
 import { ApiError } from "@/lib/server/api";
@@ -123,6 +124,10 @@ export async function createBusinessCentralESignDraft(input: BusinessCentralDraf
 
 export async function sendBusinessCentralESignDraft(draftId: string) {
   return mapBusinessCentralDraft(await sendDocusealDraft(draftId));
+}
+
+export async function prepareBusinessCentralESignDraftPreview(draftId: string) {
+  return mapBusinessCentralDraft(await prepareDocusealDraftPreview(draftId));
 }
 
 export async function invalidateBusinessCentralESignDraft(draftId: string) {

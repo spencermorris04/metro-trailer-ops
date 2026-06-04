@@ -30,6 +30,8 @@ table 50372 "MTE ESign Lease"
                 Template.Get("Template Code");
                 "Template Name" := Template.Name;
                 "Backend Template Key" := Template."Backend Template Key";
+                if "Created At" <> 0DT then
+                    PopulateTemplateFields();
             end;
         }
         field(3; "Template Name"; Text[100])
@@ -126,19 +128,19 @@ table 50372 "MTE ESign Lease"
         }
         field(15; "DocuSeal Draft ID"; Text[80])
         {
-            Caption = 'DocuSeal Draft ID';
+            Caption = 'E-Sign Draft ID';
             DataClassification = SystemMetadata;
             Editable = false;
         }
         field(16; "DocuSeal Submission ID"; Integer)
         {
-            Caption = 'DocuSeal Submission ID';
+            Caption = 'E-Sign Submission ID';
             DataClassification = SystemMetadata;
             Editable = false;
         }
         field(17; "Signing URL"; Text[2048])
         {
-            Caption = 'Signing URL';
+            Caption = 'E-Sign Document URL';
             DataClassification = CustomerContent;
             Editable = false;
         }
@@ -214,11 +216,40 @@ table 50372 "MTE ESign Lease"
             Subject := 'Your signature is requested for a Metro Trailer Document';
 
         if Message = '' then
-            Message := 'Please review the prepared Metro Trailer document and complete any remaining fields.';
+            Message := 'Please review the prepared Metro Trailer document and complete any remaining fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: {submitter.link} [Review and Submit]({submitter.link})';
     end;
 
     trigger OnModify()
     begin
         "Updated At" := CurrentDateTime();
+    end;
+
+    local procedure PopulateTemplateFields()
+    var
+        TemplateField: Record "MTE ESign Template Field";
+        LeaseField: Record "MTE ESign Lease Field";
+    begin
+        if IsNullGuid("Lease ID") or ("Template Code" = '') then
+            exit;
+
+        TemplateField.SetRange("Template Code", "Template Code");
+        TemplateField.SetCurrentKey("Template Code", "Sort Order");
+        if TemplateField.FindSet() then
+            repeat
+                if not LeaseField.Get("Lease ID", TemplateField."Field Name") then begin
+                    LeaseField.Init();
+                    LeaseField."Lease ID" := "Lease ID";
+                    LeaseField."Field Name" := TemplateField."Field Name";
+                    LeaseField."Field Label" := TemplateField."Field Label";
+                    LeaseField.Section := TemplateField.Section;
+                    LeaseField."Sort Order" := TemplateField."Sort Order";
+                    LeaseField.Insert();
+                end else begin
+                    LeaseField."Field Label" := TemplateField."Field Label";
+                    LeaseField.Section := TemplateField.Section;
+                    LeaseField."Sort Order" := TemplateField."Sort Order";
+                    LeaseField.Modify();
+                end;
+            until TemplateField.Next() = 0;
     end;
 }

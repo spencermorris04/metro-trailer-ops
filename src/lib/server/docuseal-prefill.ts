@@ -257,6 +257,74 @@ function getSubmissionIdFromPayload(
   return getFirstSubmitterPayload(payload)?.submission_id ?? null;
 }
 
+async function deleteDocusealSubmission(submissionId: number) {
+  const response = await fetchDocuseal(`/api/submissions/${submissionId}`, {
+    method: "DELETE",
+    headers: {
+      "X-Auth-Token": getDocusealApiToken(),
+    },
+  });
+
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+  if (!response.ok && response.status !== 404) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected the submission invalidation.",
+      payload,
+    );
+  }
+}
+
+async function createDocusealSubmission(draft: DocusealDraft, sendEmail: boolean) {
+  const readonlyFields = buildReadonlyFields(draft.values);
+  const response = await fetchDocuseal("/api/submissions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Auth-Token": getDocusealApiToken(),
+    },
+    body: JSON.stringify({
+      template_id: draft.docusealTemplateId,
+      send_email: sendEmail,
+      submitters: [
+        {
+          role: draft.submitterRole,
+          name: draft.customerName,
+          email: draft.customerEmail,
+          values: draft.values,
+          readonly_fields: readonlyFields,
+          message: {
+            subject: draft.subject,
+            body: ensureSigningLinkInMessage(draft.message),
+          },
+        },
+      ],
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | (DocusealSubmitterPayload & { error?: string })
+    | DocusealSubmitterPayload[]
+    | { id?: number; submitters?: DocusealSubmitterPayload[]; error?: string }
+    | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      (!Array.isArray(payload) ? payload?.error : undefined) ??
+        "DocuSeal rejected the prefilled submission.",
+      payload,
+    );
+  }
+
+  return {
+    payload,
+    submitter: getFirstSubmitterPayload(payload),
+    submissionId: getSubmissionIdFromPayload(payload),
+  };
+}
+
 async function findSubmissionIdBySubmitterSlug(slug: string | null) {
   if (!slug) {
     return null;
@@ -513,48 +581,11 @@ export async function sendDocusealDraft(draftId: string) {
     throw new ApiError(400, "Customer name is required before sending.");
   }
 
-  const readonlyFields = buildReadonlyFields(draft.values);
-  const response = await fetchDocuseal("/api/submissions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Auth-Token": getDocusealApiToken(),
-    },
-    body: JSON.stringify({
-      template_id: draft.docusealTemplateId,
-      send_email: true,
-      submitters: [
-        {
-          role: draft.submitterRole,
-          name: draft.customerName,
-          email: draft.customerEmail,
-          values: draft.values,
-          readonly_fields: readonlyFields,
-          message: {
-            subject: draft.subject,
-            body: ensureSigningLinkInMessage(draft.message),
-          },
-        },
-      ],
-    }),
-  });
-
-  const payload = (await response.json().catch(() => null)) as
-    | (DocusealSubmitterPayload & { error?: string })
-    | DocusealSubmitterPayload[]
-    | { id?: number; submitters?: DocusealSubmitterPayload[]; error?: string }
-    | null;
-
-  if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      (!Array.isArray(payload) ? payload?.error : undefined) ??
-        "DocuSeal rejected the prefilled submission.",
-      payload,
-    );
+  if (draft.docusealSubmissionId) {
+    await deleteDocusealSubmission(draft.docusealSubmissionId);
   }
 
-  const submitter = getFirstSubmitterPayload(payload);
+  const { submitter, submissionId } = await createDocusealSubmission(draft, true);
   const timestamp = nowIso();
   const docusealSubmitterSlug = submitter?.slug ?? null;
   const [updatedDraft] = await db
@@ -563,7 +594,40 @@ export async function sendDocusealDraft(draftId: string) {
       status: "sent",
       sentAt: new Date(timestamp),
       updatedAt: new Date(timestamp),
-      docusealSubmissionId: getSubmissionIdFromPayload(payload),
+      docusealSubmissionId: submissionId,
+      docusealSubmitterSlug,
+      docusealSubmitterUrl: buildDocusealSubmitterUrl(docusealSubmitterSlug),
+    })
+    .where(eq(schema.docusealPrefillDrafts.id, draftId))
+    .returning();
+
+  return mapDraftRow(updatedDraft);
+}
+
+export async function prepareDocusealDraftPreview(draftId: string) {
+  const draft = await requireDraft(draftId);
+  if (draft.status === "sent") {
+    return draft;
+  }
+  if (!draft.customerEmail) {
+    throw new ApiError(400, "Customer email is required before previewing.");
+  }
+  if (!draft.customerName) {
+    throw new ApiError(400, "Customer name is required before previewing.");
+  }
+
+  if (draft.docusealSubmissionId && draft.docusealSubmitterUrl) {
+    return draft;
+  }
+
+  const { submitter, submissionId } = await createDocusealSubmission(draft, false);
+  const timestamp = nowIso();
+  const docusealSubmitterSlug = submitter?.slug ?? null;
+  const [updatedDraft] = await db
+    .update(schema.docusealPrefillDrafts)
+    .set({
+      updatedAt: new Date(timestamp),
+      docusealSubmissionId: submissionId,
       docusealSubmitterSlug,
       docusealSubmitterUrl: buildDocusealSubmitterUrl(docusealSubmitterSlug),
     })
@@ -583,22 +647,7 @@ export async function invalidateDocusealDraft(draftId: string) {
     (await findSubmissionIdBySubmitterSlug(draft.docusealSubmitterSlug));
 
   if (submissionId) {
-    const response = await fetchDocuseal(`/api/submissions/${submissionId}`, {
-      method: "DELETE",
-      headers: {
-        "X-Auth-Token": getDocusealApiToken(),
-      },
-    });
-
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-
-    if (!response.ok && response.status !== 404) {
-      throw new ApiError(
-        response.status,
-        payload?.error ?? "DocuSeal rejected the submission invalidation.",
-        payload,
-      );
-    }
+    await deleteDocusealSubmission(submissionId);
   }
 
   const timestamp = nowIso();

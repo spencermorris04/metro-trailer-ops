@@ -3,8 +3,9 @@ codeunit 50370 "MTE ESign API"
     Permissions =
         tabledata "MTE ESign Setup" = r,
         tabledata "MTE ESign Template" = rimd,
+        tabledata "MTE ESign Template Field" = rimd,
         tabledata "MTE ESign Lease" = rimd,
-        tabledata "MTE ESign Lease Field" = r;
+        tabledata "MTE ESign Lease Field" = rimd;
 
     procedure RefreshTemplates()
     var
@@ -59,9 +60,27 @@ codeunit 50370 "MTE ESign API"
             Template.Active := GetJsonBoolean(TemplateObject, 'active', true);
             Template."Last Synced At" := CurrentDateTime();
             Template.Modify();
+            RefreshTemplateFields(Template.Code, TemplateObject);
         end;
 
         Message('Metro E-Sign templates refreshed.');
+    end;
+
+    procedure PreviewLease(var Lease: Record "MTE ESign Lease")
+    var
+        ResponseObject: JsonObject;
+    begin
+        EnsureDraft(Lease);
+
+        ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/prepare');
+        ApplyDraftResponse(Lease, ResponseObject);
+        Lease."Last Error" := '';
+        Lease.Modify();
+
+        if Lease."Signing URL" = '' then
+            Error('Metro E-Sign did not return a preview URL.');
+
+        Hyperlink(Lease."Signing URL");
     end;
 
     procedure SendLease(var Lease: Record "MTE ESign Lease")
@@ -107,6 +126,7 @@ codeunit 50370 "MTE ESign API"
         ApplyDefaultTemplate(Lease);
         Lease.Validate("Customer No.", CustomerNo);
         Lease.Insert(true);
+        PopulateLeaseFields(Lease);
         exit(Lease."Lease ID");
     end;
 
@@ -119,7 +139,37 @@ codeunit 50370 "MTE ESign API"
         ApplyDefaultTemplate(Lease);
         Lease.Validate("Fixed Asset No.", FixedAssetNo);
         Lease.Insert(true);
+        PopulateLeaseFields(Lease);
         exit(Lease."Lease ID");
+    end;
+
+    procedure PopulateLeaseFields(var Lease: Record "MTE ESign Lease")
+    var
+        TemplateField: Record "MTE ESign Template Field";
+        LeaseField: Record "MTE ESign Lease Field";
+    begin
+        if IsNullGuid(Lease."Lease ID") or (Lease."Template Code" = '') then
+            exit;
+
+        TemplateField.SetRange("Template Code", Lease."Template Code");
+        TemplateField.SetCurrentKey("Template Code", "Sort Order");
+        if TemplateField.FindSet() then
+            repeat
+                if not LeaseField.Get(Lease."Lease ID", TemplateField."Field Name") then begin
+                    LeaseField.Init();
+                    LeaseField."Lease ID" := Lease."Lease ID";
+                    LeaseField."Field Name" := TemplateField."Field Name";
+                    LeaseField."Field Label" := TemplateField."Field Label";
+                    LeaseField.Section := TemplateField.Section;
+                    LeaseField."Sort Order" := TemplateField."Sort Order";
+                    LeaseField.Insert();
+                end else begin
+                    LeaseField."Field Label" := TemplateField."Field Label";
+                    LeaseField.Section := TemplateField.Section;
+                    LeaseField."Sort Order" := TemplateField."Sort Order";
+                    LeaseField.Modify();
+                end;
+            until TemplateField.Next() = 0;
     end;
 
     local procedure EnsureDraft(var Lease: Record "MTE ESign Lease")
@@ -170,6 +220,40 @@ codeunit 50370 "MTE ESign API"
         Body.Add('subject', Lease.Subject);
         Body.Add('message', Lease.Message);
         Body.Add('values', Values);
+    end;
+
+    local procedure RefreshTemplateFields(TemplateCode: Code[30]; TemplateObject: JsonObject)
+    var
+        TemplateField: Record "MTE ESign Template Field";
+        FieldToken: JsonToken;
+        FieldItemToken: JsonToken;
+        Fields: JsonArray;
+        FieldObject: JsonObject;
+        SortOrder: Integer;
+        FieldName: Text[100];
+    begin
+        TemplateField.SetRange("Template Code", TemplateCode);
+        TemplateField.DeleteAll();
+
+        if not TemplateObject.Get('fields', FieldToken) then
+            exit;
+
+        Fields := FieldToken.AsArray();
+        SortOrder := 0;
+        foreach FieldItemToken in Fields do begin
+            FieldObject := FieldItemToken.AsObject();
+            FieldName := CopyStr(GetJsonText(FieldObject, 'name'), 1, MaxStrLen(TemplateField."Field Name"));
+            if FieldName <> '' then begin
+                SortOrder += 10000;
+                TemplateField.Init();
+                TemplateField."Template Code" := TemplateCode;
+                TemplateField."Field Name" := FieldName;
+                TemplateField."Field Label" := CopyStr(GetJsonText(FieldObject, 'label'), 1, MaxStrLen(TemplateField."Field Label"));
+                TemplateField.Section := CopyStr(GetJsonText(FieldObject, 'section'), 1, MaxStrLen(TemplateField.Section));
+                TemplateField."Sort Order" := SortOrder;
+                TemplateField.Insert();
+            end;
+        end;
     end;
 
     local procedure ApplyDraftResponse(var Lease: Record "MTE ESign Lease"; Root: JsonObject)

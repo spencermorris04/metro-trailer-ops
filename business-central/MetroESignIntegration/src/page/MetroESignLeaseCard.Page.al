@@ -82,7 +82,7 @@ page 50374 "MTE ESign Lease Card"
                     Editable = IsDraftEditable;
                 }
             }
-            group("DocuSeal")
+            group("E-Sign")
             {
                 field("DocuSeal Draft ID"; Rec."DocuSeal Draft ID")
                 {
@@ -141,6 +141,23 @@ page 50374 "MTE ESign Lease Card"
                     CurrPage.Update(false);
                 end;
             }
+            action(PreviewESignDocument)
+            {
+                Caption = 'Preview E-Sign Document';
+                ApplicationArea = All;
+                Image = View;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                var
+                    Api: Codeunit "MTE ESign API";
+                begin
+                    CurrPage.SaveRecord();
+                    Api.PreviewLease(Rec);
+                    CurrPage.Update(false);
+                end;
+            }
             action(VoidSentDocument)
             {
                 Caption = 'Void Sent Document';
@@ -159,7 +176,7 @@ page 50374 "MTE ESign Lease Card"
             }
             action(OpenSigningLink)
             {
-                Caption = 'Open Signing Link';
+                Caption = 'Open E-Sign Document';
                 ApplicationArea = All;
                 Image = LinkWeb;
                 Promoted = true;
@@ -168,9 +185,24 @@ page 50374 "MTE ESign Lease Card"
                 trigger OnAction()
                 begin
                     if Rec."Signing URL" = '' then
-                        Error('No signing URL is available for this lease.');
+                        Error('No E-Sign document URL is available for this lease. Use Preview E-Sign Document first.');
 
                     Hyperlink(Rec."Signing URL");
+                end;
+            }
+            action(RefreshPrefillFields)
+            {
+                Caption = 'Refresh Prefill Fields';
+                ApplicationArea = All;
+                Image = RefreshLines;
+
+                trigger OnAction()
+                var
+                    Api: Codeunit "MTE ESign API";
+                begin
+                    CurrPage.SaveRecord();
+                    Api.PopulateLeaseFields(Rec);
+                    CurrPage.Update(false);
                 end;
             }
         }

@@ -6,10 +6,12 @@ permissionset 50370 "MTE ESIGN"
     Permissions =
         tabledata "MTE ESign Setup" = RIMD,
         tabledata "MTE ESign Template" = RIMD,
+        tabledata "MTE ESign Template Field" = RIMD,
         tabledata "MTE ESign Lease" = RIMD,
         tabledata "MTE ESign Lease Field" = RIMD,
         table "MTE ESign Setup" = X,
         table "MTE ESign Template" = X,
+        table "MTE ESign Template Field" = X,
         table "MTE ESign Lease" = X,
         table "MTE ESign Lease Field" = X,
         codeunit "MTE ESign API" = X,
