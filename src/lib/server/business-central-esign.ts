@@ -29,14 +29,15 @@ const bcDraftSchema = z.object({
 
 export type BusinessCentralDraftInput = z.infer<typeof bcDraftSchema>;
 
-function getConfiguredApiKey() {
-  return (
-    process.env.METRO_BC_ESIGN_API_KEY?.trim() ||
-    process.env.METRO_SYNC_API_KEY?.trim() ||
-    process.env.SYNC_API_KEY?.trim() ||
-    process.env.BC_ESIGN_API_KEY?.trim() ||
-    ""
-  );
+function getConfiguredApiKeys() {
+  return [
+    process.env.METRO_BC_ESIGN_API_KEY,
+    process.env.METRO_SYNC_API_KEY,
+    process.env.SYNC_API_KEY,
+    process.env.BC_ESIGN_API_KEY,
+  ]
+    .map((value) => value?.trim() ?? "")
+    .filter((value, index, values) => value && values.indexOf(value) === index);
 }
 
 function isEqualSecret(received: string, expected: string) {
@@ -50,8 +51,8 @@ function isEqualSecret(received: string, expected: string) {
 }
 
 export function requireBusinessCentralESignKey(request: Request) {
-  const expected = getConfiguredApiKey();
-  if (!expected) {
+  const expectedKeys = getConfiguredApiKeys();
+  if (expectedKeys.length === 0) {
     throw new ApiError(500, "Business Central E-Sign API key is not configured.");
   }
 
@@ -60,7 +61,7 @@ export function requireBusinessCentralESignKey(request: Request) {
     request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ||
     "";
 
-  if (!received || !isEqualSecret(received, expected)) {
+  if (!received || !expectedKeys.some((expected) => isEqualSecret(received, expected))) {
     throw new ApiError(401, "Invalid Business Central E-Sign API key.");
   }
 }
