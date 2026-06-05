@@ -24,6 +24,17 @@ function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function formatWholeNumber(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatDecimal(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: value > 0 && value < 10 ? 1 : 0,
+  }).format(value);
+}
+
 function buildHref(
   current: Record<string, string | undefined>,
   overrides: Record<string, string | undefined>,
@@ -60,6 +71,12 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
   const view = await getCustomerListView({ ...filters, page, pageSize });
   const totalPages = Math.max(1, Math.ceil(view.total / view.pageSize));
   const filtersActive = Object.values(filters).some(Boolean);
+  const maxCohortCount = Math.max(
+    1,
+    ...view.metrics.cohorts.map((cohort) => cohort.customerCount),
+  );
+  const latestActivityYear =
+    view.metrics.yearlyActivity[view.metrics.yearlyActivity.length - 1];
 
   return (
     <div className="space-y-2">
@@ -78,6 +95,146 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
           </>
         }
       />
+
+      <div className="grid grid-cols-4 gap-px border border-[var(--line)] bg-[var(--line)]">
+        {[
+          {
+            label: "All-time customers",
+            value: formatWholeNumber(view.metrics.totalCustomers),
+            detail: `${formatWholeNumber(view.metrics.rentingCustomers)} with rental history`,
+          },
+          {
+            label: "Active customers now",
+            value: formatWholeNumber(view.metrics.activeCustomersNow),
+            detail: "Customers with trailers on rent",
+          },
+          {
+            label: "Trailers on rent now",
+            value: formatWholeNumber(view.metrics.activeTrailersNow),
+            detail: `${formatDecimal(view.metrics.averageTrailersPerActiveCustomer)} per active customer`,
+          },
+          {
+            label: "Avg trailers rented",
+            value: formatDecimal(view.metrics.averageTrailersPerRentingCustomer),
+            detail: "Distinct historical trailers per renting customer",
+          },
+        ].map((metric) => (
+          <div key={metric.label} className="bg-white px-3 py-2">
+            <p className="workspace-metric-label">{metric.label}</p>
+            <p className="text-lg font-semibold text-slate-900">{metric.value}</p>
+            <p className="text-[0.65rem] text-slate-400">{metric.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-2 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <section className="panel overflow-hidden">
+          <div className="flex items-baseline justify-between gap-3 border-b border-[var(--line)] px-3 py-2">
+            <div className="flex items-baseline gap-3">
+              <span className="eyebrow">Annual</span>
+              <h2 className="text-[0.85rem] font-semibold text-slate-900">
+                Active rental customers by year
+              </h2>
+            </div>
+            <p className="hidden text-[0.75rem] text-slate-400 lg:block">
+              Service-period years from imported rental billing facts
+            </p>
+          </div>
+          <div className="data-table border-0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Year</th>
+                  <th>Customers</th>
+                  <th>Rental orders</th>
+                  <th>Trailers</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.metrics.yearlyActivity.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="text-slate-400">
+                      No imported rental activity is available yet.
+                    </td>
+                  </tr>
+                ) : (
+                  view.metrics.yearlyActivity.map((year) => (
+                    <tr key={year.year}>
+                      <td className="font-semibold text-slate-900">{year.year}</td>
+                      <td>{formatWholeNumber(year.activeCustomers)}</td>
+                      <td>{formatWholeNumber(year.rentalOrders)}</td>
+                      <td>{formatWholeNumber(year.trailers)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="panel overflow-hidden">
+          <div className="flex items-baseline justify-between gap-3 border-b border-[var(--line)] px-3 py-2">
+            <div className="flex items-baseline gap-3">
+              <span className="eyebrow">Cohorts</span>
+              <h2 className="text-[0.85rem] font-semibold text-slate-900">
+                Customer base by trailer count
+              </h2>
+            </div>
+            <p className="hidden text-[0.75rem] text-slate-400 lg:block">
+              Based on distinct trailers in rental history
+            </p>
+          </div>
+          <div className="space-y-3 p-3">
+            <div className="grid grid-cols-3 gap-px border border-[var(--line)] bg-[var(--line)]">
+              {[
+                {
+                  label: "Renting customers",
+                  value: formatWholeNumber(view.metrics.rentingCustomers),
+                },
+                {
+                  label: "No rental history",
+                  value: formatWholeNumber(view.metrics.noRentalHistoryCustomers),
+                },
+                {
+                  label: latestActivityYear ? `${latestActivityYear.year} active` : "Latest year",
+                  value: latestActivityYear
+                    ? formatWholeNumber(latestActivityYear.activeCustomers)
+                    : "n/a",
+                },
+              ].map((metric) => (
+                <div key={metric.label} className="bg-white px-3 py-2">
+                  <p className="workspace-metric-label">{metric.label}</p>
+                  <p className="text-base font-semibold text-slate-900">{metric.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              {view.metrics.cohorts.map((cohort) => (
+                <div key={cohort.key} className="space-y-1">
+                  <div className="flex items-center justify-between gap-3 text-[0.75rem]">
+                    <div>
+                      <span className="font-semibold text-slate-900">{cohort.label}</span>
+                      <span className="ml-2 text-slate-400">{cohort.rangeLabel}</span>
+                    </div>
+                    <span className="font-semibold text-slate-900">
+                      {formatWholeNumber(cohort.customerCount)}
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-sm bg-slate-100">
+                    <div
+                      className="h-full bg-[var(--brand)]"
+                      style={{
+                        width: `${Math.max(4, (cohort.customerCount / maxCohortCount) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
 
       <div className="panel px-3 py-2">
         <InstantForm className="flex flex-wrap items-end gap-2" action="/customers">

@@ -45,6 +45,20 @@ type CustomerListFilters = {
   pageSize?: number;
 };
 
+type CustomerTrailerCohort = {
+  key: "under_10" | "10_50" | "50_200" | "200_plus";
+  label: string;
+  rangeLabel: string;
+  customerCount: number;
+};
+
+type CustomerActivityYear = {
+  year: number;
+  activeCustomers: number;
+  rentalOrders: number;
+  trailers: number;
+};
+
 type ContractListFilters = {
   q?: string;
   status?: string;
@@ -141,6 +155,168 @@ function timestampForSort(value: string | null | undefined) {
   }
   const time = Date.parse(value);
   return Number.isFinite(time) ? time : 0;
+}
+
+async function getCustomerPortfolioMetrics() {
+  return getCachedView(
+    "customer-portfolio-metrics:v1",
+    ["customers", "contracts", "assets", "rental-history"],
+    300,
+    300,
+    async () => {
+      const [baseResult, activeResult, yearlyResult] = await Promise.all([
+        pool.query<{
+          total_customers: string;
+          renting_customers: string;
+          no_rental_history_customers: string;
+          total_historical_trailers_rented: string;
+          average_trailers_per_renting_customer: string | null;
+          under_10_customers: string;
+          between_10_50_customers: string;
+          between_50_200_customers: string;
+          over_200_customers: string;
+        }>(`
+          select
+            count(*)::text as total_customers,
+            count(*) filter (where equipment_count > 0)::text as renting_customers,
+            count(*) filter (where equipment_count = 0)::text as no_rental_history_customers,
+            coalesce(sum(equipment_count), 0)::text as total_historical_trailers_rented,
+            avg(equipment_count) filter (where equipment_count > 0)::text
+              as average_trailers_per_renting_customer,
+            count(*) filter (where equipment_count > 0 and equipment_count < 10)::text
+              as under_10_customers,
+            count(*) filter (where equipment_count >= 10 and equipment_count < 50)::text
+              as between_10_50_customers,
+            count(*) filter (where equipment_count >= 50 and equipment_count < 200)::text
+              as between_50_200_customers,
+            count(*) filter (where equipment_count >= 200)::text as over_200_customers
+          from customer_summary
+        `),
+        pool.query<{
+          active_customers: string;
+          active_trailers: string;
+          average_trailers_per_active_customer: string | null;
+        }>(`
+          with active_by_customer as (
+            select
+              c.id as customer_id,
+              count(distinct aa.asset_id)::integer as active_trailers
+            from asset_allocations aa
+            join contracts c on c.id = aa.contract_id
+            where aa.active = true
+              and aa.allocation_type = 'on_rent'
+              and aa.starts_at <= now()
+              and (aa.ends_at is null or aa.ends_at > now())
+              and c.status = 'active'
+            group by c.id
+          )
+          select
+            count(*)::text as active_customers,
+            coalesce(sum(active_trailers), 0)::text as active_trailers,
+            avg(active_trailers)::text as average_trailers_per_active_customer
+          from active_by_customer
+        `),
+        pool.query<{
+          yearly_activity: CustomerActivityYear[] | null;
+        }>(`
+          with activity_windows as (
+            select
+              customer_number,
+              lease_key,
+              asset_number,
+              least(
+                coalesce(service_period_start, posting_date),
+                coalesce(service_period_end, service_period_start, posting_date)
+              ) as starts_at,
+              greatest(
+                coalesce(service_period_start, posting_date),
+                coalesce(service_period_end, service_period_start, posting_date)
+              ) as ends_at
+            from rental_billing_facts
+            where customer_number is not null
+              and coalesce(service_period_start, posting_date) is not null
+          ),
+          annual_activity as (
+            select
+              extract(year from year_start)::integer as year,
+              count(distinct customer_number)::integer as active_customers,
+              count(distinct lease_key) filter (where lease_key is not null)::integer
+                as rental_orders,
+              count(distinct asset_number) filter (where asset_number is not null)::integer
+                as trailers
+            from activity_windows
+            cross join lateral generate_series(
+              date_trunc('year', starts_at),
+              date_trunc('year', ends_at),
+              interval '1 year'
+            ) as years(year_start)
+            group by extract(year from year_start)::integer
+          )
+          select coalesce(
+            jsonb_agg(
+              jsonb_build_object(
+                'year', year,
+                'activeCustomers', active_customers,
+                'rentalOrders', rental_orders,
+                'trailers', trailers
+              )
+              order by year
+            ),
+            '[]'::jsonb
+          ) as yearly_activity
+          from annual_activity
+        `),
+      ]);
+
+      const base = baseResult.rows[0];
+      const active = activeResult.rows[0];
+      const cohorts: CustomerTrailerCohort[] = [
+        {
+          key: "under_10",
+          label: "Less than 10",
+          rangeLabel: "1-9 trailers",
+          customerCount: Number(base?.under_10_customers ?? 0),
+        },
+        {
+          key: "10_50",
+          label: "10-50",
+          rangeLabel: "10-49 trailers",
+          customerCount: Number(base?.between_10_50_customers ?? 0),
+        },
+        {
+          key: "50_200",
+          label: "50-200",
+          rangeLabel: "50-199 trailers",
+          customerCount: Number(base?.between_50_200_customers ?? 0),
+        },
+        {
+          key: "200_plus",
+          label: "200+",
+          rangeLabel: "200 or more trailers",
+          customerCount: Number(base?.over_200_customers ?? 0),
+        },
+      ];
+
+      return {
+        totalCustomers: Number(base?.total_customers ?? 0),
+        rentingCustomers: Number(base?.renting_customers ?? 0),
+        noRentalHistoryCustomers: Number(base?.no_rental_history_customers ?? 0),
+        activeCustomersNow: Number(active?.active_customers ?? 0),
+        activeTrailersNow: Number(active?.active_trailers ?? 0),
+        averageTrailersPerRentingCustomer: numericToNumber(
+          base?.average_trailers_per_renting_customer,
+          0,
+        ),
+        averageTrailersPerActiveCustomer: numericToNumber(
+          active?.average_trailers_per_active_customer,
+          0,
+        ),
+        totalHistoricalTrailersRented: Number(base?.total_historical_trailers_rented ?? 0),
+        cohorts,
+        yearlyActivity: yearlyResult.rows[0]?.yearly_activity ?? [],
+      };
+    },
+  );
 }
 
 async function getBusinessCentralMappings(entityType: string) {
@@ -473,7 +649,7 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
   const limitParam = summaryParams.length;
   summaryParams.push(offset);
   const offsetParam = summaryParams.length;
-  const [summaryRows, summaryCount] = await Promise.all([
+  const [summaryRows, summaryCount, portfolioMetrics] = await Promise.all([
     pool.query<{
       customer_id: string;
       customer_number: string;
@@ -508,9 +684,11 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
       `select count(*)::text as count from customer_summary ${summaryWhere}`,
       summaryParams.slice(0, -2),
     ),
+    getCustomerPortfolioMetrics(),
   ]);
 
   return {
+    metrics: portfolioMetrics,
     data: summaryRows.rows.map((customer) => ({
       id: customer.customer_id,
       customerNumber: customer.customer_number,
@@ -671,6 +849,7 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
   );
 
   return {
+    metrics: await getCustomerPortfolioMetrics(),
     data: pageData.map((customer) => {
       const stats = bcStatsByCustomer.get(customer.customerNumber);
       return {
