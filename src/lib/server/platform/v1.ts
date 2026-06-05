@@ -159,7 +159,7 @@ function timestampForSort(value: string | null | undefined) {
 
 async function getCustomerPortfolioMetrics() {
   return getCachedView(
-    "customer-portfolio-metrics:v1",
+    "customer-portfolio-metrics:v2",
     ["customers", "contracts", "assets", "rental-history"],
     300,
     300,
@@ -197,18 +197,22 @@ async function getCustomerPortfolioMetrics() {
           active_trailers: string;
           average_trailers_per_active_customer: string | null;
         }>(`
-          with active_by_customer as (
+          with active_pairs as (
+            select distinct
+              customer_id,
+              asset_number
+            from rental_billing_facts
+            where customer_id is not null
+              and asset_number is not null
+              and service_period_start::date <= current_date
+              and service_period_end::date >= current_date
+          ),
+          active_by_customer as (
             select
-              c.id as customer_id,
-              count(distinct aa.asset_id)::integer as active_trailers
-            from asset_allocations aa
-            join contracts c on c.id = aa.contract_id
-            where aa.active = true
-              and aa.allocation_type = 'on_rent'
-              and aa.starts_at <= now()
-              and (aa.ends_at is null or aa.ends_at > now())
-              and c.status = 'active'
-            group by c.id
+              customer_id,
+              count(distinct asset_number)::integer as active_trailers
+            from active_pairs
+            group by customer_id
           )
           select
             count(*)::text as active_customers,
@@ -228,9 +232,12 @@ async function getCustomerPortfolioMetrics() {
                 coalesce(service_period_start, posting_date),
                 coalesce(service_period_end, service_period_start, posting_date)
               ) as starts_at,
-              greatest(
-                coalesce(service_period_start, posting_date),
-                coalesce(service_period_end, service_period_start, posting_date)
+              least(
+                current_date::timestamp,
+                greatest(
+                  coalesce(service_period_start, posting_date),
+                  coalesce(service_period_end, service_period_start, posting_date)
+                )
               ) as ends_at
             from rental_billing_facts
             where customer_number is not null
