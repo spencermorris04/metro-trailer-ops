@@ -3,8 +3,8 @@ import { desc, eq } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import {
-  docusealTemplates,
-  getDocusealTemplate,
+  getDocusealTemplateAlias,
+  getDocusealTemplateAliasById,
   type DocusealFieldSection,
   type DocusealTemplateDefinition,
 } from "@/lib/docuseal/templates";
@@ -63,6 +63,33 @@ type DocusealSubmissionCreatePayload = {
   submitters?: DocusealSubmitterPayload[];
 };
 
+type DocusealApiField = {
+  name?: string | null;
+  title?: string | null;
+  uuid?: string | null;
+  type?: string | null;
+  areas?: unknown[] | null;
+};
+
+type DocusealApiSubmitter = {
+  name?: string | null;
+};
+
+type DocusealApiTemplate = {
+  id?: number;
+  name?: string | null;
+  folder_name?: string | null;
+  archived_at?: string | null;
+  submitters?: DocusealApiSubmitter[] | null;
+  fields?: DocusealApiField[] | null;
+};
+
+type DocusealApiTemplateListPayload =
+  | DocusealApiTemplate[]
+  | {
+      data?: DocusealApiTemplate[];
+    };
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -106,7 +133,10 @@ async function fetchDocuseal(path: string, init?: RequestInit) {
   const url = `${getDocusealApiUrl()}${path}`;
 
   try {
-    return await fetch(url, init);
+    return await fetch(url, {
+      cache: "no-store",
+      ...init,
+    });
   } catch (error) {
     throw new ApiError(
       502,
@@ -116,8 +146,191 @@ async function fetchDocuseal(path: string, init?: RequestInit) {
   }
 }
 
-function requireTemplate(templateKey: string) {
-  const template = getDocusealTemplate(templateKey);
+function getDocusealAuthHeaders() {
+  return {
+    "X-Auth-Token": getDocusealApiToken(),
+  };
+}
+
+function humanizeFieldName(name: string) {
+  return name
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .replace(/\bPo\b/g, "PO")
+    .replace(/\bVin\b/g, "VIN")
+    .replace(/\bFhwa\b/g, "FHWA")
+    .replace(/\bCpu\b/g, "CPU")
+    .replace(/\bDln\b/g, "DLN")
+    .replace(/\bLo\b/g, "L.O.")
+    .replace(/\bLi\b/g, "L.I.")
+    .replace(/\bRo\b/g, "R.O.")
+    .replace(/\bRi\b/g, "R.I.");
+}
+
+function inferFieldSection(name: string): DocusealFieldSection {
+  if (name.startsWith("tire_")) {
+    return "Tire readings";
+  }
+
+  if (name.startsWith("inspection_out_")) {
+    return "Inspection out";
+  }
+
+  if (name.startsWith("inspection_in_")) {
+    return "Inspection in";
+  }
+
+  if (name.startsWith("special_instructions_")) {
+    return "Special instructions";
+  }
+
+  if (
+    name.startsWith("rental_rate_") ||
+    name.startsWith("subject_to_") ||
+    name === "minimum_lease_period"
+  ) {
+    return "Rates and terms";
+  }
+
+  if (
+    name.startsWith("agreement_signed_") ||
+    name.includes("authorized_agent") ||
+    name === "lessee_company_name"
+  ) {
+    return "Execution";
+  }
+
+  if (
+    name === "unit_number" ||
+    name === "unit_type" ||
+    name === "vin_number" ||
+    name === "tag_number" ||
+    name === "unit_description"
+  ) {
+    return "Equipment";
+  }
+
+  if (
+    name === "received_by" ||
+    name === "received_from" ||
+    name === "print_name" ||
+    name === "dun" ||
+    name === "dln"
+  ) {
+    return "Receipt";
+  }
+
+  if (
+    name.startsWith("customer_") ||
+    name.startsWith("lessee_") ||
+    name.startsWith("order_") ||
+    name === "ordered_by" ||
+    name === "purchase_order_number" ||
+    name === "agreement_date" ||
+    name === "rental_order_number"
+  ) {
+    return "Customer and order";
+  }
+
+  return "Other";
+}
+
+function mapDocusealApiField(
+  field: DocusealApiField,
+): DocusealTemplateDefinition["fields"][number] | null {
+  const name = field.name?.trim();
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    uuid: field.uuid?.trim() || name,
+    label: field.title?.trim() || humanizeFieldName(name),
+    section: inferFieldSection(name),
+    multiline: field.type === "textarea" || (field.areas?.length ?? 0) > 1,
+  };
+}
+
+function mapDocusealApiTemplate(
+  apiTemplate: DocusealApiTemplate,
+): DocusealTemplateDefinition | null {
+  const docusealTemplateId = apiTemplate.id;
+  if (!docusealTemplateId || apiTemplate.archived_at) {
+    return null;
+  }
+
+  const alias = getDocusealTemplateAliasById(docusealTemplateId);
+  const key = alias?.key ?? `docuseal-template-${docusealTemplateId}`;
+
+  return {
+    key,
+    docusealTemplateId,
+    name:
+      apiTemplate.name?.trim() ||
+      alias?.name ||
+      `DocuSeal Template ${docusealTemplateId}`,
+    location: apiTemplate.folder_name?.trim() || alias?.location || "",
+    submitterRole:
+      apiTemplate.submitters?.[0]?.name?.trim() ||
+      alias?.submitterRole ||
+      "First Party",
+    fields: (apiTemplate.fields ?? [])
+      .map(mapDocusealApiField)
+      .filter((field): field is DocusealTemplateDefinition["fields"][number] =>
+        Boolean(field),
+      ),
+  };
+}
+
+async function fetchDocusealTemplatesFromApi() {
+  const templates: DocusealTemplateDefinition[] = [];
+
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await fetchDocuseal(`/api/templates?per_page=100&page=${page}`, {
+      headers: getDocusealAuthHeaders(),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | (DocusealApiTemplateListPayload & { error?: string })
+      | null;
+
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        (!Array.isArray(payload) ? payload?.error : undefined) ??
+          "DocuSeal rejected the template lookup.",
+        payload,
+      );
+    }
+
+    const data = Array.isArray(payload) ? payload : payload?.data ?? [];
+    templates.push(
+      ...data
+        .map(mapDocusealApiTemplate)
+        .filter((template): template is DocusealTemplateDefinition =>
+          Boolean(template),
+        ),
+    );
+
+    if (data.length < 100) {
+      break;
+    }
+  }
+
+  return templates.sort(
+    (left, right) => left.docusealTemplateId - right.docusealTemplateId,
+  );
+}
+
+async function requireTemplate(templateKey: string) {
+  const alias = getDocusealTemplateAlias(templateKey);
+  const templates = await fetchDocusealTemplatesFromApi();
+  const template = alias
+    ? templates.find(
+        (candidate) => candidate.docusealTemplateId === alias.docusealTemplateId,
+      )
+    : templates.find((candidate) => candidate.key === templateKey.trim().toLowerCase());
+
   if (!template) {
     throw new ApiError(404, `DocuSeal template ${templateKey} was not found.`);
   }
@@ -389,7 +602,7 @@ function mapDefaultRow(
 }
 
 export function listDocusealPrefillTemplates() {
-  return docusealTemplates;
+  return fetchDocusealTemplatesFromApi();
 }
 
 export async function listDocusealDrafts() {
@@ -421,7 +634,7 @@ export async function upsertDocusealPrefillDefault(input: {
   values?: Record<string, unknown>;
   merge?: boolean;
 }) {
-  const template = requireTemplate(input.templateKey);
+  const template = await requireTemplate(input.templateKey);
   const { scopeType, scopeKey } = normalizeDefaultScope(input.scopeType, input.scopeKey);
   const values = normalizeDefaultValues(template, input.values);
   const existing = await db.query.docusealPrefillDefaults.findFirst({
@@ -472,7 +685,7 @@ export async function createDocusealDraft(input: {
   message?: string;
   values?: Record<string, unknown>;
 }) {
-  const template = requireTemplate(input.templateKey);
+  const template = await requireTemplate(input.templateKey);
   const timestamp = nowIso();
   const draft: DocusealDraft = {
     id: createId("dsdraft"),
@@ -536,7 +749,7 @@ export async function updateDocusealDraft(
     throw new ApiError(409, "Sent DocuSeal drafts cannot be edited.");
   }
 
-  const template = requireTemplate(draft.templateKey);
+  const template = await requireTemplate(draft.templateKey);
   const updates: Partial<typeof schema.docusealPrefillDrafts.$inferInsert> = {
     updatedAt: new Date(),
   };

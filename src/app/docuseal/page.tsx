@@ -7,7 +7,7 @@ import {
 } from "@/lib/server/docuseal-prefill";
 
 export default async function DocusealPrefillPage() {
-  const templates = listDocusealPrefillTemplates();
+  const templates = await listDocusealPrefillTemplates();
   const drafts = await listDocusealDrafts();
   const defaults = await listDocusealPrefillDefaults();
 

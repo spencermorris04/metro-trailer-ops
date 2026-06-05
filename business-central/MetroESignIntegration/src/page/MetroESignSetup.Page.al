@@ -51,6 +51,19 @@ page 50370 "MTE ESign Setup"
                     Api.RefreshTemplates();
                 end;
             }
+            action(OpenESignAdmin)
+            {
+                Caption = 'Open E-Sign Admin';
+                ApplicationArea = All;
+                Image = LinkWeb;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                begin
+                    Hyperlink('https://esign.lumpkindevelopment.com');
+                end;
+            }
         }
     }
 

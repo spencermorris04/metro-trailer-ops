@@ -61,6 +61,19 @@ page 50371 "MTE ESign Templates"
                     CurrPage.Update(false);
                 end;
             }
+            action(OpenESignAdmin)
+            {
+                Caption = 'Open E-Sign Admin';
+                ApplicationArea = All;
+                Image = LinkWeb;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                begin
+                    Hyperlink('https://esign.lumpkindevelopment.com');
+                end;
+            }
         }
     }
 }

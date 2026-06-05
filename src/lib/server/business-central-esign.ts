@@ -80,8 +80,10 @@ export function parseBusinessCentralDraftInput(value: unknown) {
   return bcDraftSchema.parse(value);
 }
 
-export function listBusinessCentralESignTemplates() {
-  return listDocusealPrefillTemplates().map((template) => ({
+export async function listBusinessCentralESignTemplates() {
+  const templates = await listDocusealPrefillTemplates();
+
+  return templates.map((template) => ({
     code: template.key.toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 30),
     name: template.name,
     templateKey: template.key,

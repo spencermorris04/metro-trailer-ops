@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   try {
     requireBusinessCentralESignKey(request);
 
-    return ok({ data: listBusinessCentralESignTemplates() }, undefined, request);
+    return ok({ data: await listBusinessCentralESignTemplates() }, undefined, request);
   } catch (error) {
     return errorResponse(error, request);
   }

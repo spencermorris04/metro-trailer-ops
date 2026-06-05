@@ -199,6 +199,19 @@ page 50374 "MTE ESign Lease Card"
                     Hyperlink(Rec."Signing URL");
                 end;
             }
+            action(OpenESignAdmin)
+            {
+                Caption = 'Open E-Sign Admin';
+                ApplicationArea = All;
+                Image = LinkWeb;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                begin
+                    Hyperlink('https://esign.lumpkindevelopment.com');
+                end;
+            }
             action(RefreshPrefillFields)
             {
                 Caption = 'Refresh Prefill Fields';
