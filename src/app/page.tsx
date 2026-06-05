@@ -30,7 +30,7 @@ import {
 } from "@/lib/server/platform";
 import { getWorkspaceLayout } from "@/lib/server/workspace-layouts";
 
-export const unstable_instant = { prefetch: "static" };
+export const unstable_instant = false;
 
 const defaultShellLayout = {
   left: 108,
