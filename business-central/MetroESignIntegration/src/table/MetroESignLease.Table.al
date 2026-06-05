@@ -86,7 +86,7 @@ table 50372 "MTE ESign Lease"
         {
             Caption = 'Unit/Trailer No.';
             DataClassification = CustomerContent;
-            TableRelation = "Fixed Asset"."No.";
+            TableRelation = "Fixed Asset"."No." where(Inactive = const(false), Blocked = const(false));
 
             trigger OnValidate()
             var
@@ -98,6 +98,11 @@ table 50372 "MTE ESign Lease"
                 end;
 
                 FixedAsset.Get("Fixed Asset No.");
+                if FixedAsset.Inactive then
+                    Error('Fixed asset %1 is inactive and cannot be added to an E-Sign lease.', "Fixed Asset No.");
+                if FixedAsset.Blocked then
+                    Error('Fixed asset %1 is blocked and cannot be added to an E-Sign lease.', "Fixed Asset No.");
+
                 "Unit Description" := FixedAsset.Description;
             end;
         }

@@ -166,6 +166,12 @@ codeunit 50370 "MTE ESign API"
 
         TemplateField.SetRange("Template Code", Lease."Template Code");
         if TemplateField.IsEmpty() then begin
+            SeedBuiltInTemplateFields(Lease."Template Code");
+            TemplateField.Reset();
+            TemplateField.SetRange("Template Code", Lease."Template Code");
+        end;
+
+        if TemplateField.IsEmpty() then begin
             RefreshTemplates();
             TemplateField.Reset();
             TemplateField.SetRange("Template Code", Lease."Template Code");
@@ -189,6 +195,113 @@ codeunit 50370 "MTE ESign API"
                     LeaseField.Modify();
                 end;
             until TemplateField.Next() = 0;
+    end;
+
+    local procedure SeedBuiltInTemplateFields(TemplateCode: Code[30])
+    begin
+        if TemplateCode <> 'ROAD_TRAILER_NSH' then
+            exit;
+
+        AddBuiltInTemplateField(TemplateCode, 'customer_phone', 'Phone No.', 'Customer and order', 10000);
+        AddBuiltInTemplateField(TemplateCode, 'ordered_by', 'Ordered By', 'Customer and order', 20000);
+        AddBuiltInTemplateField(TemplateCode, 'customer_number', 'Customer #', 'Customer and order', 30000);
+        AddBuiltInTemplateField(TemplateCode, 'order_number', 'Order #', 'Customer and order', 40000);
+        AddBuiltInTemplateField(TemplateCode, 'purchase_order_number', 'PO #', 'Customer and order', 50000);
+        AddBuiltInTemplateField(TemplateCode, 'agreement_date', 'Date', 'Customer and order', 60000);
+        AddBuiltInTemplateField(TemplateCode, 'lessee_name', 'Lessee name', 'Customer and order', 70000);
+        AddBuiltInTemplateField(TemplateCode, 'lessee_location', 'Lessee location', 'Customer and order', 80000);
+        AddBuiltInTemplateField(TemplateCode, 'unit_number', 'Unit #', 'Equipment', 90000);
+        AddBuiltInTemplateField(TemplateCode, 'unit_type', 'Type', 'Equipment', 100000);
+        AddBuiltInTemplateField(TemplateCode, 'vin_number', 'VIN #', 'Equipment', 110000);
+        AddBuiltInTemplateField(TemplateCode, 'tag_number', 'Tag #', 'Equipment', 120000);
+        AddBuiltInTemplateField(TemplateCode, 'rental_rate_per_day', 'Rate per day', 'Rates and terms', 130000);
+        AddBuiltInTemplateField(TemplateCode, 'rental_rate_per_week', 'Rate per week', 'Rates and terms', 140000);
+        AddBuiltInTemplateField(TemplateCode, 'rental_rate_per_month', 'Rate per month', 'Rates and terms', 150000);
+        AddBuiltInTemplateField(TemplateCode, 'rental_rate_additional_terms', 'Additional rate terms', 'Rates and terms', 160000);
+        AddBuiltInTemplateField(TemplateCode, 'subject_to_amount', 'Subject to amount', 'Rates and terms', 170000);
+        AddBuiltInTemplateField(TemplateCode, 'subject_to_terms', 'Subject to terms', 'Rates and terms', 180000);
+        AddBuiltInTemplateField(TemplateCode, 'minimum_lease_period', 'Minimum lease period', 'Rates and terms', 190000);
+        AddBuiltInTemplateField(TemplateCode, 'agreement_signed_day', 'Signed day', 'Execution', 200000);
+        AddBuiltInTemplateField(TemplateCode, 'agreement_signed_month', 'Signed month', 'Execution', 210000);
+        AddBuiltInTemplateField(TemplateCode, 'agreement_signed_year', 'Signed year', 'Execution', 220000);
+        AddBuiltInTemplateField(TemplateCode, 'lessee_company_name', 'Company name', 'Execution', 230000);
+        AddBuiltInTemplateField(TemplateCode, 'lessee_authorized_agent', 'Authorized agent', 'Execution', 240000);
+        AddBuiltInTemplateField(TemplateCode, 'lessee_authorized_agent_title', 'Authorized agent title', 'Execution', 250000);
+        AddBuiltInTemplateField(TemplateCode, 'metro_authorized_agent', 'Metro authorized agent', 'Execution', 260000);
+        AddBuiltInTemplateField(TemplateCode, 'metro_authorized_agent_title', 'Metro authorized agent title', 'Execution', 270000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_cpu', 'CPU', 'Special instructions', 280000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_pickup', 'Pick-up', 'Special instructions', 290000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_line_1', 'Special instructions line 1', 'Special instructions', 300000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_line_2', 'Special instructions line 2', 'Special instructions', 310000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_line_3', 'Special instructions line 3', 'Special instructions', 320000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_brakes', 'Brakes', 'Inspection out', 330000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_landing_gear', 'Landing gear', 'Inspection out', 340000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_fhwa', 'FHWA', 'Inspection out', 350000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_line_4', 'Special instructions line 4', 'Special instructions', 360000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_lights', 'Lights', 'Inspection out', 370000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_undercarriage', 'Undercarriage', 'Inspection out', 380000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_line_5', 'Special instructions line 5', 'Special instructions', 390000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_doors', 'Doors', 'Inspection out', 400000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_flaps', 'Flaps', 'Inspection out', 410000);
+        AddBuiltInTemplateField(TemplateCode, 'special_instructions_line_6', 'Special instructions line 6', 'Special instructions', 420000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_comments_line_1', 'Comments line 1', 'Inspection out', 430000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_comments_line_2', 'Comments line 2', 'Inspection out', 440000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_comments_line_3', 'Comments line 3', 'Inspection out', 450000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_1', 'Inspection in note line 1', 'Inspection in', 460000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_2', 'Inspection in note line 2', 'Inspection in', 470000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_right_side_condition', 'Right side condition', 'Inspection out', 480000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_left_side_condition', 'Left side condition', 'Inspection out', 490000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_front_condition', 'Front condition', 'Inspection out', 500000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_3', 'Inspection in note line 3', 'Inspection in', 510000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_4', 'Inspection in note line 4', 'Inspection in', 520000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_top_condition', 'Top condition', 'Inspection out', 530000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_floor_condition', 'Floor condition', 'Inspection out', 540000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_5', 'Inspection in note line 5', 'Inspection in', 550000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_out_rear_condition', 'Rear condition', 'Inspection out', 560000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_6', 'Inspection in note line 6', 'Inspection in', 570000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_7', 'Inspection in note line 7', 'Inspection in', 580000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_lo_front_gauge_out', 'L.O. front gauge out', 'Tire readings', 590000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_lo_front_gauge_in', 'L.O. front gauge in', 'Tire readings', 600000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ro_front_gauge_out', 'R.O. front gauge out', 'Tire readings', 610000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ro_front_gauge_in', 'R.O. front gauge in', 'Tire readings', 620000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_8', 'Inspection in note line 8', 'Inspection in', 630000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_li_front_gauge_out', 'L.I. front gauge out', 'Tire readings', 640000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_li_front_gauge_in', 'L.I. front gauge in', 'Tire readings', 650000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ri_front_gauge_out', 'R.I. front gauge out', 'Tire readings', 660000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ri_front_gauge_in', 'R.I. front gauge in', 'Tire readings', 670000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_notes_line_9', 'Inspection in note line 9', 'Inspection in', 680000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_lo_rear_gauge_out', 'L.O. rear gauge out', 'Tire readings', 690000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_lo_rear_gauge_in', 'L.O. rear gauge in', 'Tire readings', 700000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ro_rear_gauge_out', 'R.O. rear gauge out', 'Tire readings', 710000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ro_rear_gauge_in', 'R.O. rear gauge in', 'Tire readings', 720000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_month', 'Date in month', 'Inspection in', 730000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_day', 'Date in day', 'Inspection in', 740000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_year', 'Date in year', 'Inspection in', 750000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_li_rear_gauge_out', 'L.I. rear gauge out', 'Tire readings', 760000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_li_rear_gauge_in', 'L.I. rear gauge in', 'Tire readings', 770000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ri_rear_gauge_out', 'R.I. rear gauge out', 'Tire readings', 780000);
+        AddBuiltInTemplateField(TemplateCode, 'tire_ri_rear_gauge_in', 'R.I. rear gauge in', 'Tire readings', 790000);
+        AddBuiltInTemplateField(TemplateCode, 'inspection_in_inspected_by', 'Inspected in by', 'Inspection in', 800000);
+        AddBuiltInTemplateField(TemplateCode, 'received_by', 'Received by', 'Receipt', 810000);
+        AddBuiltInTemplateField(TemplateCode, 'dun', 'DLN', 'Receipt', 820000);
+        AddBuiltInTemplateField(TemplateCode, 'received_from', 'Received from', 'Receipt', 830000);
+        AddBuiltInTemplateField(TemplateCode, 'print_name', 'Print name', 'Receipt', 840000);
+    end;
+
+    local procedure AddBuiltInTemplateField(TemplateCode: Code[30]; FieldName: Text[100]; FieldLabel: Text[100]; Section: Text[80]; SortOrder: Integer)
+    var
+        TemplateField: Record "MTE ESign Template Field";
+    begin
+        if TemplateField.Get(TemplateCode, FieldName) then
+            exit;
+
+        TemplateField.Init();
+        TemplateField."Template Code" := TemplateCode;
+        TemplateField."Field Name" := FieldName;
+        TemplateField."Field Label" := FieldLabel;
+        TemplateField.Section := Section;
+        TemplateField."Sort Order" := SortOrder;
+        TemplateField.Insert();
     end;
 
     procedure EnsureLeaseTemplate(var Lease: Record "MTE ESign Lease")
