@@ -80,6 +80,38 @@ export interface BcAssetSeedInput {
   payload?: Record<string, unknown>;
 }
 
+function deriveAssetStatus(input: BcAssetSeedInput): typeof schema.assets.$inferInsert.status {
+  if (input.status) {
+    return input.status;
+  }
+  if (input.isDisposed || input.isInactive) {
+    return "retired";
+  }
+  if (input.underMaintenance) {
+    return "in_maintenance";
+  }
+  if (input.isOnRent) {
+    return "on_rent";
+  }
+  return "available";
+}
+
+function deriveAssetAvailability(
+  input: BcAssetSeedInput,
+  status: typeof schema.assets.$inferInsert.status,
+): typeof schema.assets.$inferInsert.availability {
+  if (input.availability) {
+    return input.availability;
+  }
+  if (status === "retired" || status === "in_maintenance") {
+    return "unavailable";
+  }
+  if (status === "on_rent") {
+    return "limited";
+  }
+  return "rentable";
+}
+
 export interface BcCustomerLocationSeedInput {
   externalId: string;
   name: string;
@@ -1387,6 +1419,8 @@ export async function seedBcAssets(inputs: BcAssetSeedInput[]) {
     });
     const id = existing?.id ?? createId("asset");
     const branchId = await requireBranchId(input.branchCode, input.branchName);
+    const status = deriveAssetStatus(input);
+    const availability = deriveAssetAvailability(input, status);
 
     await db.insert(schema.assets).values({
       id,
@@ -1395,8 +1429,8 @@ export async function seedBcAssets(inputs: BcAssetSeedInput[]) {
       type: input.type,
       subtype: input.subtype ?? null,
       dimensions: input.dimensions ?? null,
-      status: input.status ?? "available",
-      availability: input.availability ?? "rentable",
+      status,
+      availability,
       maintenanceStatus: input.maintenanceStatus ?? "clear",
       serialNumber: input.serialNumber ?? null,
       manufacturer: input.manufacturer ?? null,
@@ -1428,8 +1462,8 @@ export async function seedBcAssets(inputs: BcAssetSeedInput[]) {
         type: input.type,
         subtype: input.subtype ?? null,
         dimensions: input.dimensions ?? null,
-        status: input.status ?? "available",
-        availability: input.availability ?? "rentable",
+        status,
+        availability,
         maintenanceStatus: input.maintenanceStatus ?? "clear",
         serialNumber: input.serialNumber ?? null,
         manufacturer: input.manufacturer ?? null,

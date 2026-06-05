@@ -1359,6 +1359,12 @@ export const bcRmiWsRentalLedgerEntries = pgTable(
       table.documentNo,
     ),
     orderIdx: index("bc_rmi_ws_rle_order_idx").on(table.orderNo),
+    activeRentalIdx: index("bc_rmi_ws_rle_active_rental_idx").on(
+      table.thruDate,
+      table.fromDate,
+      table.billToCustomerNo,
+      table.noShipped,
+    ),
   }),
 );
 
