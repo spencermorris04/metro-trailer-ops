@@ -16,6 +16,7 @@ type CustomersPageProps = {
     customerType?: string | string[];
     portalEnabled?: string | string[];
     sourceProvider?: string | string[];
+    cohortMode?: string | string[];
     page?: string | string[];
   }>;
 };
@@ -33,6 +34,48 @@ function formatDecimal(value: number) {
     maximumFractionDigits: 1,
     minimumFractionDigits: value > 0 && value < 10 ? 1 : 0,
   }).format(value);
+}
+
+function normalizeCohortMode(value: string | undefined) {
+  return value === "all" ? "all" : "active";
+}
+
+function chartX(value: number, maxValue: number) {
+  if (maxValue <= 1) {
+    return 0;
+  }
+  return (Math.log10(Math.max(1, value)) / Math.log10(maxValue)) * 100;
+}
+
+function chartY(value: number, maxValue: number) {
+  return maxValue > 0 ? 54 - (value / maxValue) * 48 : 54;
+}
+
+function buildDistributionPath(
+  points: { trailerCount: number; customerCount: number }[],
+  maxTrailerCount: number,
+  maxCustomerCount: number,
+) {
+  return points
+    .map((point, index) => {
+      const x = chartX(point.trailerCount, maxTrailerCount).toFixed(2);
+      const y = chartY(point.customerCount, maxCustomerCount).toFixed(2);
+      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+    })
+    .join(" ");
+}
+
+function buildDistributionArea(
+  points: { trailerCount: number; customerCount: number }[],
+  maxTrailerCount: number,
+  maxCustomerCount: number,
+) {
+  const line = buildDistributionPath(points, maxTrailerCount, maxCustomerCount);
+  return line ? `M 0 54 ${line.replace(/^M/, "L")} L 100 54 Z` : "";
+}
+
+function uniqueTicks(values: number[]) {
+  return Array.from(new Set(values.filter((value) => Number.isFinite(value) && value > 0)));
 }
 
 function buildHref(
@@ -65,18 +108,51 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
     portalEnabled: getParam(resolved.portalEnabled),
     sourceProvider: getParam(resolved.sourceProvider),
   };
+  const cohortMode = normalizeCohortMode(getParam(resolved.cohortMode));
+  const currentParams = { ...filters, cohortMode };
   const page = Math.max(1, Number(getParam(resolved.page) ?? "1"));
   const pageSize = 30;
 
   const view = await getCustomerListView({ ...filters, page, pageSize });
   const totalPages = Math.max(1, Math.ceil(view.total / view.pageSize));
   const filtersActive = Object.values(filters).some(Boolean);
-  const maxCohortCount = Math.max(
+  const selectedDistribution = view.metrics.trailerCountDistributions[cohortMode];
+  const distributionPoints = selectedDistribution.points;
+  const maxDistributionCustomerCount = Math.max(
     1,
-    ...view.metrics.cohorts.map((cohort) => cohort.customerCount),
+    ...distributionPoints.map((point) => point.customerCount),
   );
-  const latestActivityYear =
-    view.metrics.yearlyActivity[view.metrics.yearlyActivity.length - 1];
+  const maxDistributionTrailerCount = Math.max(
+    1,
+    selectedDistribution.maxTrailerCount,
+    ...distributionPoints.map((point) => point.trailerCount),
+  );
+  const distributionPath = buildDistributionPath(
+    distributionPoints,
+    maxDistributionTrailerCount,
+    maxDistributionCustomerCount,
+  );
+  const distributionArea = buildDistributionArea(
+    distributionPoints,
+    maxDistributionTrailerCount,
+    maxDistributionCustomerCount,
+  );
+  const distributionTicks = uniqueTicks([
+    1,
+    10,
+    100,
+    1000,
+    10000,
+    maxDistributionTrailerCount,
+  ]).filter((value) => value <= maxDistributionTrailerCount);
+  const peakPoint = distributionPoints.reduce(
+    (peak, point) => (point.customerCount > peak.customerCount ? point : peak),
+    { trailerCount: 0, customerCount: 0 },
+  );
+  const selectedDistributionLabel =
+    cohortMode === "active" ? "Current active rental orders" : "All rental orders";
+  const selectedDistributionUnit =
+    cohortMode === "active" ? "active trailers" : "order/trailer assignments";
 
   return (
     <div className="space-y-2">
@@ -137,7 +213,7 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
               </h2>
             </div>
             <p className="hidden text-[0.75rem] text-slate-400 lg:block">
-              Service-period years from imported rental billing facts
+              Service-period years from 2014 onward
             </p>
           </div>
           <div className="data-table border-0">
@@ -173,33 +249,49 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
         </section>
 
         <section className="panel overflow-hidden">
-          <div className="flex items-baseline justify-between gap-3 border-b border-[var(--line)] px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] px-3 py-2">
             <div className="flex items-baseline gap-3">
               <span className="eyebrow">Cohorts</span>
               <h2 className="text-[0.85rem] font-semibold text-slate-900">
-                Customer base by trailer count
+                Customer trailer-count distribution
               </h2>
             </div>
-            <p className="hidden text-[0.75rem] text-slate-400 lg:block">
-              Based on distinct trailers in rental history
-            </p>
+            <div className="flex border border-[var(--line)] bg-white">
+              {[
+                { key: "active", label: "Active" },
+                { key: "all", label: "All orders" },
+              ].map((mode) => (
+                <WorkspaceLink
+                  key={mode.key}
+                  href={buildHref(currentParams, {
+                    cohortMode: mode.key,
+                    page: undefined,
+                  })}
+                  className={`px-2 py-1 text-[0.7rem] font-semibold ${
+                    cohortMode === mode.key
+                      ? "bg-[var(--brand)] text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {mode.label}
+                </WorkspaceLink>
+              ))}
+            </div>
           </div>
           <div className="space-y-3 p-3">
             <div className="grid grid-cols-3 gap-px border border-[var(--line)] bg-[var(--line)]">
               {[
                 {
-                  label: "Renting customers",
-                  value: formatWholeNumber(view.metrics.rentingCustomers),
+                  label: cohortMode === "active" ? "Active customers" : "Renting customers",
+                  value: formatWholeNumber(selectedDistribution.rentingCustomers),
                 },
                 {
-                  label: "No rental history",
-                  value: formatWholeNumber(view.metrics.noRentalHistoryCustomers),
+                  label: "Avg count",
+                  value: formatDecimal(selectedDistribution.averageTrailerCount),
                 },
                 {
-                  label: latestActivityYear ? `${latestActivityYear.year} active` : "Latest year",
-                  value: latestActivityYear
-                    ? formatWholeNumber(latestActivityYear.activeCustomers)
-                    : "n/a",
+                  label: "Total counted",
+                  value: formatWholeNumber(selectedDistribution.totalTrailerAssignments),
                 },
               ].map((metric) => (
                 <div key={metric.label} className="bg-white px-3 py-2">
@@ -210,27 +302,82 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
             </div>
 
             <div className="space-y-2">
-              {view.metrics.cohorts.map((cohort) => (
-                <div key={cohort.key} className="space-y-1">
-                  <div className="flex items-center justify-between gap-3 text-[0.75rem]">
-                    <div>
-                      <span className="font-semibold text-slate-900">{cohort.label}</span>
-                      <span className="ml-2 text-slate-400">{cohort.rangeLabel}</span>
-                    </div>
-                    <span className="font-semibold text-slate-900">
-                      {formatWholeNumber(cohort.customerCount)}
-                    </span>
+              <div className="flex items-center justify-between gap-3 text-[0.72rem] text-slate-500">
+                <span>{selectedDistributionLabel}</span>
+                <span>
+                  Peak: {formatWholeNumber(peakPoint.customerCount)} customers at{" "}
+                  {formatWholeNumber(peakPoint.trailerCount)} {selectedDistributionUnit}
+                </span>
+              </div>
+              <div className="h-64 border border-[var(--line)] bg-white px-2 py-2">
+                {distributionPoints.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-[0.75rem] text-slate-400">
+                    No trailer-count distribution is available.
                   </div>
-                  <div className="h-2 overflow-hidden rounded-sm bg-slate-100">
-                    <div
-                      className="h-full bg-[var(--brand)]"
-                      style={{
-                        width: `${Math.max(4, (cohort.customerCount / maxCohortCount) * 100)}%`,
-                      }}
+                ) : (
+                  <svg
+                    viewBox="0 0 100 64"
+                    preserveAspectRatio="none"
+                    className="h-full w-full overflow-visible"
+                    aria-label={`${selectedDistributionLabel} trailer-count distribution`}
+                  >
+                    <line x1="0" y1="54" x2="100" y2="54" stroke="#cbd5e1" strokeWidth="0.35" />
+                    {distributionTicks.map((tick) => {
+                      const x = chartX(tick, maxDistributionTrailerCount);
+                      return (
+                        <g key={tick}>
+                          <line
+                            x1={x}
+                            y1="6"
+                            x2={x}
+                            y2="54"
+                            stroke="#e2e8f0"
+                            strokeWidth="0.18"
+                          />
+                          <text
+                            x={x}
+                            y="61"
+                            textAnchor={x > 92 ? "end" : x < 8 ? "start" : "middle"}
+                            className="fill-slate-400 text-[3px] font-semibold"
+                          >
+                            {formatCompactNumber(tick)}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    <path d={distributionArea} fill="rgba(37, 99, 235, 0.12)" />
+                    <path
+                      d={distributionPath}
+                      fill="none"
+                      stroke="var(--brand)"
+                      strokeWidth="0.9"
+                      vectorEffect="non-scaling-stroke"
                     />
-                  </div>
-                </div>
-              ))}
+                    {distributionPoints.map((point) => {
+                      const x = chartX(point.trailerCount, maxDistributionTrailerCount);
+                      const y = chartY(point.customerCount, maxDistributionCustomerCount);
+                      return (
+                        <circle
+                          key={`${point.trailerCount}:${point.customerCount}`}
+                          cx={x}
+                          cy={y}
+                          r="0.7"
+                          fill="var(--brand)"
+                          opacity="0.58"
+                        />
+                      );
+                    })}
+                  </svg>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[0.68rem] text-slate-400">
+                <span>Trailer count, log scale</span>
+                <span>
+                  {cohortMode === "active"
+                    ? "Distinct open trailers per customer"
+                    : "Distinct rental order/trailer pairs per customer"}
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -450,7 +597,7 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
           </span>
           <div className="flex gap-1.5">
             <WorkspaceLink
-              href={buildHref(filters, {
+              href={buildHref(currentParams, {
                 page: page > 1 ? String(page - 1) : undefined,
               })}
               className="btn-secondary"
@@ -458,7 +605,7 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
               Prev
             </WorkspaceLink>
             <WorkspaceLink
-              href={buildHref(filters, {
+              href={buildHref(currentParams, {
                 page: page < totalPages ? String(page + 1) : String(totalPages),
               })}
               className="btn-secondary"

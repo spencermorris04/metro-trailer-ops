@@ -45,11 +45,18 @@ type CustomerListFilters = {
   pageSize?: number;
 };
 
-type CustomerTrailerCohort = {
-  key: "under_10" | "10_50" | "50_200" | "200_plus";
-  label: string;
-  rangeLabel: string;
+type CustomerTrailerDistributionPoint = {
+  trailerCount: number;
   customerCount: number;
+};
+
+type CustomerTrailerDistribution = {
+  mode: "active" | "all";
+  rentingCustomers: number;
+  totalTrailerAssignments: number;
+  averageTrailerCount: number;
+  maxTrailerCount: number;
+  points: CustomerTrailerDistributionPoint[];
 };
 
 type CustomerActivityYear = {
@@ -159,22 +166,24 @@ function timestampForSort(value: string | null | undefined) {
 
 async function getCustomerPortfolioMetrics() {
   return getCachedView(
-    "customer-portfolio-metrics:v3",
+    "customer-portfolio-metrics:v4",
     ["customers", "contracts", "assets", "rental-history"],
     300,
     300,
     async () => {
-      const [baseResult, activeResult, yearlyResult] = await Promise.all([
+      const [
+        baseResult,
+        activeResult,
+        yearlyResult,
+        activeDistributionResult,
+        allDistributionResult,
+      ] = await Promise.all([
         pool.query<{
           total_customers: string;
           renting_customers: string;
           no_rental_history_customers: string;
           total_historical_trailers_rented: string;
           average_trailers_per_renting_customer: string | null;
-          under_10_customers: string;
-          between_10_50_customers: string;
-          between_50_200_customers: string;
-          over_200_customers: string;
         }>(`
           select
             count(*)::text as total_customers,
@@ -182,14 +191,7 @@ async function getCustomerPortfolioMetrics() {
             count(*) filter (where equipment_count = 0)::text as no_rental_history_customers,
             coalesce(sum(equipment_count), 0)::text as total_historical_trailers_rented,
             avg(equipment_count) filter (where equipment_count > 0)::text
-              as average_trailers_per_renting_customer,
-            count(*) filter (where equipment_count > 0 and equipment_count < 10)::text
-              as under_10_customers,
-            count(*) filter (where equipment_count >= 10 and equipment_count < 50)::text
-              as between_10_50_customers,
-            count(*) filter (where equipment_count >= 50 and equipment_count < 200)::text
-              as between_50_200_customers,
-            count(*) filter (where equipment_count >= 200)::text as over_200_customers
+              as average_trailers_per_renting_customer
           from customer_summary
         `),
         pool.query<{
@@ -252,13 +254,14 @@ async function getCustomerPortfolioMetrics() {
               count(distinct lease_key) filter (where lease_key is not null)::integer
                 as rental_orders,
               count(distinct asset_number) filter (where asset_number is not null)::integer
-                as trailers
+            as trailers
             from activity_windows
             cross join lateral generate_series(
-              date_trunc('year', starts_at),
+              greatest(date '2014-01-01', date_trunc('year', starts_at)),
               date_trunc('year', ends_at),
               interval '1 year'
             ) as years(year_start)
+            where ends_at >= date '2014-01-01'
             group by extract(year from year_start)::integer
           )
           select coalesce(
@@ -275,36 +278,134 @@ async function getCustomerPortfolioMetrics() {
           ) as yearly_activity
           from annual_activity
         `),
+        pool.query<{
+          renting_customers: string;
+          total_trailer_assignments: string;
+          average_trailer_count: string | null;
+          max_trailer_count: string | null;
+          points: CustomerTrailerDistributionPoint[] | null;
+        }>(`
+          with customer_counts as (
+            select
+              sell_to_customer_no as customer_number,
+              count(distinct asset_number)::integer as trailer_count
+            from bc_web_portal_ship_ledger_entries
+            where open = true
+              and type = 'Fixed Asset'
+              and asset_number is not null
+              and asset_number <> ''
+              and sell_to_customer_no is not null
+              and sell_to_customer_no <> ''
+            group by sell_to_customer_no
+          ),
+          distribution as (
+            select
+              trailer_count,
+              count(*)::integer as customer_count
+            from customer_counts
+            group by trailer_count
+          ),
+          stats as (
+            select
+              count(*)::text as renting_customers,
+              coalesce(sum(trailer_count), 0)::text as total_trailer_assignments,
+              avg(trailer_count)::text as average_trailer_count,
+              max(trailer_count)::text as max_trailer_count
+            from customer_counts
+          )
+          select
+            stats.renting_customers,
+            stats.total_trailer_assignments,
+            stats.average_trailer_count,
+            stats.max_trailer_count,
+            coalesce(
+              jsonb_agg(
+                jsonb_build_object(
+                  'trailerCount', distribution.trailer_count,
+                  'customerCount', distribution.customer_count
+                )
+                order by distribution.trailer_count
+              ) filter (where distribution.trailer_count is not null),
+              '[]'::jsonb
+            ) as points
+          from stats
+          left join distribution on true
+          group by
+            stats.renting_customers,
+            stats.total_trailer_assignments,
+            stats.average_trailer_count,
+            stats.max_trailer_count
+        `),
+        pool.query<{
+          renting_customers: string;
+          total_trailer_assignments: string;
+          average_trailer_count: string | null;
+          max_trailer_count: string | null;
+          points: CustomerTrailerDistributionPoint[] | null;
+        }>(`
+          with order_trailer_assignments as (
+            select distinct
+              customer_number,
+              coalesce(nullif(lease_key, ''), document_no) as rental_order_key,
+              asset_number
+            from rental_billing_facts
+            where document_type = 'Posted Invoice'
+              and line_kind = 'Rental'
+              and customer_number is not null
+              and customer_number <> ''
+              and asset_number is not null
+              and asset_number <> ''
+              and coalesce(nullif(lease_key, ''), document_no) is not null
+          ),
+          customer_counts as (
+            select
+              customer_number,
+              count(*)::integer as trailer_count
+            from order_trailer_assignments
+            group by customer_number
+          ),
+          distribution as (
+            select
+              trailer_count,
+              count(*)::integer as customer_count
+            from customer_counts
+            group by trailer_count
+          ),
+          stats as (
+            select
+              count(*)::text as renting_customers,
+              coalesce(sum(trailer_count), 0)::text as total_trailer_assignments,
+              avg(trailer_count)::text as average_trailer_count,
+              max(trailer_count)::text as max_trailer_count
+            from customer_counts
+          )
+          select
+            stats.renting_customers,
+            stats.total_trailer_assignments,
+            stats.average_trailer_count,
+            stats.max_trailer_count,
+            coalesce(
+              jsonb_agg(
+                jsonb_build_object(
+                  'trailerCount', distribution.trailer_count,
+                  'customerCount', distribution.customer_count
+                )
+                order by distribution.trailer_count
+              ) filter (where distribution.trailer_count is not null),
+              '[]'::jsonb
+            ) as points
+          from stats
+          left join distribution on true
+          group by
+            stats.renting_customers,
+            stats.total_trailer_assignments,
+            stats.average_trailer_count,
+            stats.max_trailer_count
+        `),
       ]);
 
       const base = baseResult.rows[0];
       const active = activeResult.rows[0];
-      const cohorts: CustomerTrailerCohort[] = [
-        {
-          key: "under_10",
-          label: "Less than 10",
-          rangeLabel: "1-9 trailers",
-          customerCount: Number(base?.under_10_customers ?? 0),
-        },
-        {
-          key: "10_50",
-          label: "10-50",
-          rangeLabel: "10-49 trailers",
-          customerCount: Number(base?.between_10_50_customers ?? 0),
-        },
-        {
-          key: "50_200",
-          label: "50-200",
-          rangeLabel: "50-199 trailers",
-          customerCount: Number(base?.between_50_200_customers ?? 0),
-        },
-        {
-          key: "200_plus",
-          label: "200+",
-          rangeLabel: "200 or more trailers",
-          customerCount: Number(base?.over_200_customers ?? 0),
-        },
-      ];
 
       return {
         totalCustomers: Number(base?.total_customers ?? 0),
@@ -321,11 +422,39 @@ async function getCustomerPortfolioMetrics() {
           0,
         ),
         totalHistoricalTrailersRented: Number(base?.total_historical_trailers_rented ?? 0),
-        cohorts,
+        trailerCountDistributions: {
+          active: toCustomerTrailerDistribution("active", activeDistributionResult.rows[0]),
+          all: toCustomerTrailerDistribution("all", allDistributionResult.rows[0]),
+        },
         yearlyActivity: yearlyResult.rows[0]?.yearly_activity ?? [],
       };
     },
   );
+}
+
+function toCustomerTrailerDistribution(
+  mode: "active" | "all",
+  row:
+    | {
+        renting_customers: string;
+        total_trailer_assignments: string;
+        average_trailer_count: string | null;
+        max_trailer_count: string | null;
+        points: CustomerTrailerDistributionPoint[] | null;
+      }
+    | undefined,
+): CustomerTrailerDistribution {
+  return {
+    mode,
+    rentingCustomers: Number(row?.renting_customers ?? 0),
+    totalTrailerAssignments: Number(row?.total_trailer_assignments ?? 0),
+    averageTrailerCount: numericToNumber(row?.average_trailer_count, 0),
+    maxTrailerCount: Number(row?.max_trailer_count ?? 0),
+    points: (row?.points ?? []).map((point) => ({
+      trailerCount: Number(point.trailerCount ?? 0),
+      customerCount: Number(point.customerCount ?? 0),
+    })),
+  };
 }
 
 async function getBusinessCentralMappings(entityType: string) {
