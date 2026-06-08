@@ -1891,6 +1891,17 @@ export const customerSummary = pgTable(
   }),
 );
 
+export const customerRentalYearlyMetrics = pgTable(
+  "customer_rental_yearly_metrics",
+  {
+    year: integer().primaryKey(),
+    activeCustomers: integer().default(0).notNull(),
+    rentalOrders: integer().default(0).notNull(),
+    trailers: integer().default(0).notNull(),
+    refreshedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
 export const invoiceRegisterSummary = pgTable(
   "invoice_register_summary",
   {

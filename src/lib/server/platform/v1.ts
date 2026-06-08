@@ -41,6 +41,7 @@ type CustomerListFilters = {
   customerType?: string;
   portalEnabled?: string;
   sourceProvider?: string;
+  cohortMode?: "active" | "all";
   page?: number;
   pageSize?: number;
 };
@@ -164,20 +165,16 @@ function timestampForSort(value: string | null | undefined) {
   return Number.isFinite(time) ? time : 0;
 }
 
-async function getCustomerPortfolioMetrics() {
+async function getCustomerPortfolioMetrics(cohortMode: "active" | "all" = "active") {
   return getCachedView(
-    "customer-portfolio-metrics:v4",
+    `customer-portfolio-metrics:v5:${cohortMode}`,
     ["customers", "contracts", "assets", "rental-history"],
     300,
     300,
     async () => {
-      const [
-        baseResult,
-        activeResult,
-        yearlyResult,
-        activeDistributionResult,
-        allDistributionResult,
-      ] = await Promise.all([
+      const selectedDistributionQuery =
+        cohortMode === "all" ? queryAllOrderTrailerDistribution() : queryActiveTrailerDistribution();
+      const [baseResult, activeResult, yearlyResult, selectedDistributionResult] = await Promise.all([
         pool.query<{
           total_customers: string;
           renting_customers: string;
@@ -227,43 +224,6 @@ async function getCustomerPortfolioMetrics() {
         pool.query<{
           yearly_activity: CustomerActivityYear[] | null;
         }>(`
-          with activity_windows as (
-            select
-              customer_number,
-              lease_key,
-              asset_number,
-              least(
-                coalesce(service_period_start, posting_date),
-                coalesce(service_period_end, service_period_start, posting_date)
-              ) as starts_at,
-              least(
-                current_date::timestamp,
-                greatest(
-                  coalesce(service_period_start, posting_date),
-                  coalesce(service_period_end, service_period_start, posting_date)
-                )
-              ) as ends_at
-            from rental_billing_facts
-            where customer_number is not null
-              and coalesce(service_period_start, posting_date) is not null
-          ),
-          annual_activity as (
-            select
-              extract(year from year_start)::integer as year,
-              count(distinct customer_number)::integer as active_customers,
-              count(distinct lease_key) filter (where lease_key is not null)::integer
-                as rental_orders,
-              count(distinct asset_number) filter (where asset_number is not null)::integer
-            as trailers
-            from activity_windows
-            cross join lateral generate_series(
-              greatest(date '2014-01-01', date_trunc('year', starts_at)),
-              date_trunc('year', ends_at),
-              interval '1 year'
-            ) as years(year_start)
-            where ends_at >= date '2014-01-01'
-            group by extract(year from year_start)::integer
-          )
           select coalesce(
             jsonb_agg(
               jsonb_build_object(
@@ -276,132 +236,10 @@ async function getCustomerPortfolioMetrics() {
             ),
             '[]'::jsonb
           ) as yearly_activity
-          from annual_activity
+          from customer_rental_yearly_metrics
+          where year >= 2014
         `),
-        pool.query<{
-          renting_customers: string;
-          total_trailer_assignments: string;
-          average_trailer_count: string | null;
-          max_trailer_count: string | null;
-          points: CustomerTrailerDistributionPoint[] | null;
-        }>(`
-          with customer_counts as (
-            select
-              sell_to_customer_no as customer_number,
-              count(distinct asset_number)::integer as trailer_count
-            from bc_web_portal_ship_ledger_entries
-            where open = true
-              and type = 'Fixed Asset'
-              and asset_number is not null
-              and asset_number <> ''
-              and sell_to_customer_no is not null
-              and sell_to_customer_no <> ''
-            group by sell_to_customer_no
-          ),
-          distribution as (
-            select
-              trailer_count,
-              count(*)::integer as customer_count
-            from customer_counts
-            group by trailer_count
-          ),
-          stats as (
-            select
-              count(*)::text as renting_customers,
-              coalesce(sum(trailer_count), 0)::text as total_trailer_assignments,
-              avg(trailer_count)::text as average_trailer_count,
-              max(trailer_count)::text as max_trailer_count
-            from customer_counts
-          )
-          select
-            stats.renting_customers,
-            stats.total_trailer_assignments,
-            stats.average_trailer_count,
-            stats.max_trailer_count,
-            coalesce(
-              jsonb_agg(
-                jsonb_build_object(
-                  'trailerCount', distribution.trailer_count,
-                  'customerCount', distribution.customer_count
-                )
-                order by distribution.trailer_count
-              ) filter (where distribution.trailer_count is not null),
-              '[]'::jsonb
-            ) as points
-          from stats
-          left join distribution on true
-          group by
-            stats.renting_customers,
-            stats.total_trailer_assignments,
-            stats.average_trailer_count,
-            stats.max_trailer_count
-        `),
-        pool.query<{
-          renting_customers: string;
-          total_trailer_assignments: string;
-          average_trailer_count: string | null;
-          max_trailer_count: string | null;
-          points: CustomerTrailerDistributionPoint[] | null;
-        }>(`
-          with order_trailer_assignments as (
-            select distinct
-              customer_number,
-              coalesce(nullif(lease_key, ''), document_no) as rental_order_key,
-              asset_number
-            from rental_billing_facts
-            where document_type = 'Posted Invoice'
-              and line_kind = 'Rental'
-              and customer_number is not null
-              and customer_number <> ''
-              and asset_number is not null
-              and asset_number <> ''
-              and coalesce(nullif(lease_key, ''), document_no) is not null
-          ),
-          customer_counts as (
-            select
-              customer_number,
-              count(*)::integer as trailer_count
-            from order_trailer_assignments
-            group by customer_number
-          ),
-          distribution as (
-            select
-              trailer_count,
-              count(*)::integer as customer_count
-            from customer_counts
-            group by trailer_count
-          ),
-          stats as (
-            select
-              count(*)::text as renting_customers,
-              coalesce(sum(trailer_count), 0)::text as total_trailer_assignments,
-              avg(trailer_count)::text as average_trailer_count,
-              max(trailer_count)::text as max_trailer_count
-            from customer_counts
-          )
-          select
-            stats.renting_customers,
-            stats.total_trailer_assignments,
-            stats.average_trailer_count,
-            stats.max_trailer_count,
-            coalesce(
-              jsonb_agg(
-                jsonb_build_object(
-                  'trailerCount', distribution.trailer_count,
-                  'customerCount', distribution.customer_count
-                )
-                order by distribution.trailer_count
-              ) filter (where distribution.trailer_count is not null),
-              '[]'::jsonb
-            ) as points
-          from stats
-          left join distribution on true
-          group by
-            stats.renting_customers,
-            stats.total_trailer_assignments,
-            stats.average_trailer_count,
-            stats.max_trailer_count
-        `),
+        selectedDistributionQuery,
       ]);
 
       const base = baseResult.rows[0];
@@ -422,10 +260,10 @@ async function getCustomerPortfolioMetrics() {
           0,
         ),
         totalHistoricalTrailersRented: Number(base?.total_historical_trailers_rented ?? 0),
-        trailerCountDistributions: {
-          active: toCustomerTrailerDistribution("active", activeDistributionResult.rows[0]),
-          all: toCustomerTrailerDistribution("all", allDistributionResult.rows[0]),
-        },
+        trailerCountDistribution: toCustomerTrailerDistribution(
+          cohortMode,
+          selectedDistributionResult.rows[0],
+        ),
         yearlyActivity: yearlyResult.rows[0]?.yearly_activity ?? [],
       };
     },
@@ -455,6 +293,134 @@ function toCustomerTrailerDistribution(
       customerCount: Number(point.customerCount ?? 0),
     })),
   };
+}
+
+function queryActiveTrailerDistribution() {
+  return pool.query<{
+    renting_customers: string;
+    total_trailer_assignments: string;
+    average_trailer_count: string | null;
+    max_trailer_count: string | null;
+    points: CustomerTrailerDistributionPoint[] | null;
+  }>(`
+    with customer_counts as (
+      select
+        sell_to_customer_no as customer_number,
+        count(distinct asset_number)::integer as trailer_count
+      from bc_web_portal_ship_ledger_entries
+      where open = true
+        and type = 'Fixed Asset'
+        and asset_number is not null
+        and asset_number <> ''
+        and sell_to_customer_no is not null
+        and sell_to_customer_no <> ''
+      group by sell_to_customer_no
+    ),
+    distribution as (
+      select
+        trailer_count,
+        count(*)::integer as customer_count
+      from customer_counts
+      group by trailer_count
+    ),
+    stats as (
+      select
+        count(*)::text as renting_customers,
+        coalesce(sum(trailer_count), 0)::text as total_trailer_assignments,
+        avg(trailer_count)::text as average_trailer_count,
+        max(trailer_count)::text as max_trailer_count
+      from customer_counts
+    )
+    select
+      stats.renting_customers,
+      stats.total_trailer_assignments,
+      stats.average_trailer_count,
+      stats.max_trailer_count,
+      coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'trailerCount', distribution.trailer_count,
+            'customerCount', distribution.customer_count
+          )
+          order by distribution.trailer_count
+        ) filter (where distribution.trailer_count is not null),
+        '[]'::jsonb
+      ) as points
+    from stats
+    left join distribution on true
+    group by
+      stats.renting_customers,
+      stats.total_trailer_assignments,
+      stats.average_trailer_count,
+      stats.max_trailer_count
+  `);
+}
+
+function queryAllOrderTrailerDistribution() {
+  return pool.query<{
+    renting_customers: string;
+    total_trailer_assignments: string;
+    average_trailer_count: string | null;
+    max_trailer_count: string | null;
+    points: CustomerTrailerDistributionPoint[] | null;
+  }>(`
+    with order_trailer_assignments as (
+      select distinct
+        customer_number,
+        coalesce(nullif(lease_key, ''), document_no) as rental_order_key,
+        asset_number
+      from rental_activity_facts
+      where customer_number is not null
+        and customer_number <> ''
+        and asset_number is not null
+        and asset_number <> ''
+        and coalesce(nullif(lease_key, ''), document_no) is not null
+    ),
+    customer_counts as (
+      select
+        customer_number,
+        count(*)::integer as trailer_count
+      from order_trailer_assignments
+      group by customer_number
+    ),
+    distribution as (
+      select
+        trailer_count,
+        count(*)::integer as customer_count
+      from customer_counts
+      group by trailer_count
+    ),
+    stats as (
+      select
+        count(*)::text as renting_customers,
+        coalesce(sum(trailer_count), 0)::text as total_trailer_assignments,
+        avg(trailer_count)::text as average_trailer_count,
+        max(trailer_count)::text as max_trailer_count
+      from customer_counts
+    )
+    select
+      stats.renting_customers,
+      stats.total_trailer_assignments,
+      stats.average_trailer_count,
+      stats.max_trailer_count,
+      coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'trailerCount', distribution.trailer_count,
+            'customerCount', distribution.customer_count
+          )
+          order by distribution.trailer_count
+        ) filter (where distribution.trailer_count is not null),
+        '[]'::jsonb
+      ) as points
+    from stats
+    left join distribution on true
+    group by
+      stats.renting_customers,
+      stats.total_trailer_assignments,
+      stats.average_trailer_count,
+      stats.max_trailer_count
+  `);
 }
 
 async function getBusinessCentralMappings(entityType: string) {
@@ -787,6 +753,7 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
   const limitParam = summaryParams.length;
   summaryParams.push(offset);
   const offsetParam = summaryParams.length;
+  const cohortMode = filters?.cohortMode === "all" ? "all" : "active";
   const [summaryRows, summaryCount, portfolioMetrics] = await Promise.all([
     pool.query<{
       customer_id: string;
@@ -822,7 +789,7 @@ export async function getCustomerListView(filters?: CustomerListFilters) {
       `select count(*)::text as count from customer_summary ${summaryWhere}`,
       summaryParams.slice(0, -2),
     ),
-    getCustomerPortfolioMetrics(),
+    getCustomerPortfolioMetrics(cohortMode),
   ]);
 
   return {

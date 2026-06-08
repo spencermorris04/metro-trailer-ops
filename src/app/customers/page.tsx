@@ -113,10 +113,10 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
   const page = Math.max(1, Number(getParam(resolved.page) ?? "1"));
   const pageSize = 30;
 
-  const view = await getCustomerListView({ ...filters, page, pageSize });
+  const view = await getCustomerListView({ ...filters, cohortMode, page, pageSize });
   const totalPages = Math.max(1, Math.ceil(view.total / view.pageSize));
   const filtersActive = Object.values(filters).some(Boolean);
-  const selectedDistribution = view.metrics.trailerCountDistributions[cohortMode];
+  const selectedDistribution = view.metrics.trailerCountDistribution;
   const distributionPoints = selectedDistribution.points;
   const maxDistributionCustomerCount = Math.max(
     1,
