@@ -199,18 +199,15 @@ async function getCustomerPortfolioMetrics() {
         }>(`
           with active_pairs as (
             select distinct
-              c.id as customer_id,
-              e.no_shipped as asset_number
-            from bc_rmi_ws_rental_ledger_entries e
-            join customers c on c.customer_number = e.bill_to_customer_no
-            where e.document_type = 'Posted Invoice'
-              and e.type_shipped = 'Fixed Asset'
-              and e.no_shipped is not null
-              and e.no_shipped <> ''
-              and e.bill_to_customer_no is not null
-              and e.bill_to_customer_no <> ''
-              and e.from_date < (current_date + interval '1 day')
-              and e.thru_date >= current_date
+              e.sell_to_customer_no as customer_id,
+              e.asset_number
+            from bc_web_portal_ship_ledger_entries e
+            where e.open = true
+              and e.type = 'Fixed Asset'
+              and e.asset_number is not null
+              and e.asset_number <> ''
+              and e.sell_to_customer_no is not null
+              and e.sell_to_customer_no <> ''
           ),
           active_by_customer as (
             select
