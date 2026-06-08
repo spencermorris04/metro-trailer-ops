@@ -344,6 +344,7 @@ function mapDocusealApiTemplate(
       alias?.submitterRole ||
       "First Party",
     active: alias?.active ?? true,
+    editorUrl: `${getDocusealApiUrl()}/templates/${docusealTemplateId}/edit`,
     fields: (apiTemplate.fields ?? [])
       .map(mapDocusealApiField)
       .filter((field): field is DocusealTemplateDefinition["fields"][number] =>
@@ -898,6 +899,45 @@ export async function createDocusealTemplateFromPdf(input: {
   }
 
   return { classification, template };
+}
+
+export async function detectDocusealTemplateFields(docusealTemplateId: number) {
+  const response = await fetchDocuseal(
+    `/api/templates/${docusealTemplateId}/detect_fields`,
+    {
+      method: "POST",
+      headers: getDocusealAuthHeaders(),
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        fields_count?: number;
+        error?: string;
+        template?: DocusealApiTemplate;
+      }
+    | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected field detection.",
+      payload,
+    );
+  }
+
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find(
+    (candidate) => candidate.docusealTemplateId === docusealTemplateId,
+  );
+
+  if (!template) {
+    throw new ApiError(404, "Detected DocuSeal template was not found.");
+  }
+
+  return {
+    detectedFieldCount: payload?.fields_count ?? template.fields.length,
+    template,
+  };
 }
 
 export async function listDocusealDrafts() {

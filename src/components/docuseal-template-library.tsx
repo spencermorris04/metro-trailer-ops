@@ -95,6 +95,22 @@ export function DocusealTemplateLibrary({
     }));
   }
 
+  async function detectTemplateFields(template: DocusealTemplateDefinition) {
+    const result = await submitJson<{
+      detectedFieldCount: number;
+      template: DocusealTemplateDefinition;
+    }>(
+      `/api/docuseal/templates/${template.docusealTemplateId}/detect-fields`,
+      "POST",
+    );
+
+    if (result?.data?.template) {
+      replaceTemplate(result.data.template);
+    }
+
+    return result;
+  }
+
   async function submitJson<T>(url: string, method: string, body?: unknown) {
     const response = await fetch(url, {
       method,
@@ -137,14 +153,21 @@ export function DocusealTemplateLibrary({
         if (!response.ok) {
           throw new Error(result?.error ?? "Unable to upload E-Sign template.");
         }
+        let detectedFieldCount: number | null = null;
         if (result?.data?.template) {
           replaceTemplate(result.data.template);
+          const detectionResult = await detectTemplateFields(result.data.template);
+          detectedFieldCount = detectionResult?.data?.detectedFieldCount ?? null;
         }
         setUploadName("");
         if (uploadFileInputRef.current) {
           uploadFileInputRef.current.value = "";
         }
-        setFeedback(result?.message ?? "E-Sign template uploaded.");
+        setFeedback(
+          detectedFieldCount === null
+            ? result?.message ?? "E-Sign template uploaded."
+            : `E-Sign template uploaded and ${detectedFieldCount} fields were detected.`,
+        );
         router.refresh();
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : "Unable to upload E-Sign template.");
@@ -175,6 +198,23 @@ export function DocusealTemplateLibrary({
         setFeedback(
           error instanceof Error ? error.message : "Unable to save template classification.",
         );
+      }
+    });
+  }
+
+  function runFieldDetection(template: DocusealTemplateDefinition) {
+    startTransition(async () => {
+      try {
+        setFeedback(null);
+        const result = await detectTemplateFields(template);
+        setFeedback(
+          result?.message
+            ? `${result.message} ${result.data?.detectedFieldCount ?? 0} fields are available.`
+            : "E-Sign fields detected.",
+        );
+        router.refresh();
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : "Unable to detect E-Sign fields.");
       }
     });
   }
@@ -292,7 +332,9 @@ export function DocusealTemplateLibrary({
                 <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Signer role</th>
                 <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Fields</th>
                 <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Active</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium"></th>
+                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -388,6 +430,22 @@ export function DocusealTemplateLibrary({
                       >
                         Save
                       </button>
+                      <button
+                        type="button"
+                        className="btn-secondary ml-1 h-8 px-2 text-[0.68rem]"
+                        disabled={pending}
+                        onClick={() => runFieldDetection(template)}
+                      >
+                        Detect fields
+                      </button>
+                      <a
+                        href={template.editorUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-secondary ml-1 inline-flex h-8 items-center px-2 text-[0.68rem]"
+                      >
+                        Open editor
+                      </a>
                     </td>
                   </tr>
                 );

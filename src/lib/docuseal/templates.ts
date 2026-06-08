@@ -27,6 +27,7 @@ export type DocusealTemplateDefinition = {
   location: string;
   submitterRole: string;
   active: boolean;
+  editorUrl: string;
   fields: DocusealFieldDefinition[];
 };
 
@@ -36,7 +37,10 @@ export type DocusealTemplateCategory =
   | "credit_application"
   | "other";
 
-export type DocusealTemplateAlias = Omit<DocusealTemplateDefinition, "fields">;
+export type DocusealTemplateAlias = Omit<
+  DocusealTemplateDefinition,
+  "editorUrl" | "fields"
+>;
 
 export const docusealTemplateAliases = [
   {
