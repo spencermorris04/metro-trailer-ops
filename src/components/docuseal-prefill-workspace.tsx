@@ -1208,11 +1208,16 @@ export function DocusealPrefillWorkspace({
             </div>
           </div>
 
-          <details className="border-b border-[var(--line)] bg-white">
-            <summary className="cursor-pointer list-none px-3 py-2 text-[0.78rem] font-semibold text-slate-900 hover:bg-slate-50">
+          <div className="border-b border-[var(--line)] bg-white">
+            <div className="border-b border-[var(--line)] px-3 py-2">
+              <p className="text-[0.78rem] font-semibold text-slate-900">
               Template library
-            </summary>
-            <div className="space-y-3 border-t border-[var(--line)] p-3">
+              </p>
+              <p className="mt-0.5 text-[0.65rem] text-slate-500">
+                Upload PDFs, classify templates, and control which E-Sign templates are available.
+              </p>
+            </div>
+            <div className="space-y-3 p-3">
               <div className="grid gap-3 rounded-sm border border-[var(--line)] bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-6">
                 <label className="space-y-1 text-[0.72rem] text-slate-600 xl:col-span-2">
                   <span className="font-medium">PDF file</span>
@@ -1405,7 +1410,7 @@ export function DocusealPrefillWorkspace({
                 </table>
               </div>
             </div>
-          </details>
+          </div>
 
           <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="space-y-1 text-[0.75rem] text-slate-600">
