@@ -58,6 +58,14 @@ export function DocusealTemplateLibrary({
   const [uploadLocation, setUploadLocation] = useState("Company");
   const [uploadSubmitterRole, setUploadSubmitterRole] = useState("First Party");
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
+    templates[0]?.docusealTemplateId ?? null,
+  );
+
+  const selectedTemplate =
+    templateList.find((template) => template.docusealTemplateId === selectedTemplateId) ??
+    templateList[0] ??
+    null;
 
   function getTemplateEdit(template: DocusealTemplateDefinition) {
     return templateEdits[template.key] ?? buildTemplateEditState(template);
@@ -93,6 +101,7 @@ export function DocusealTemplateLibrary({
       ...current,
       [template.key]: buildTemplateEditState(template),
     }));
+    setSelectedTemplateId(template.docusealTemplateId);
   }
 
   async function detectTemplateFields(template: DocusealTemplateDefinition) {
@@ -311,6 +320,48 @@ export function DocusealTemplateLibrary({
         ) : null}
       </section>
 
+      {selectedTemplate ? (
+        <section className="panel overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
+            <div>
+              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                Selected template
+              </p>
+              <h3 className="text-[0.9rem] font-semibold text-slate-900">
+                #{selectedTemplate.docusealTemplateId} {selectedTemplate.name}
+              </h3>
+              <p className="mt-0.5 text-[0.68rem] text-slate-500">
+                {selectedTemplate.fields.length} fields available
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-primary h-9 px-3 text-[0.72rem]"
+                disabled={pending}
+                onClick={() => runFieldDetection(selectedTemplate)}
+              >
+                Detect and name fields
+              </button>
+              <a
+                href={selectedTemplate.editorUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-secondary inline-flex h-9 items-center px-3 text-[0.72rem]"
+              >
+                Open full editor
+              </a>
+            </div>
+          </div>
+          <iframe
+            key={selectedTemplate.editorUrl}
+            title={`${selectedTemplate.name} E-Sign editor`}
+            src={selectedTemplate.editorUrl}
+            className="h-[78vh] min-h-[720px] w-full border-0 bg-white"
+          />
+        </section>
+      ) : null}
+
       <section className="panel overflow-hidden">
         <div className="border-b border-[var(--line)] px-3 py-2">
           <h3 className="text-[0.82rem] font-semibold text-slate-900">
@@ -344,7 +395,11 @@ export function DocusealTemplateLibrary({
                 return (
                   <tr
                     key={template.docusealTemplateId}
-                    className="border-b border-[var(--line)] last:border-b-0"
+                    className={`border-b border-[var(--line)] last:border-b-0 ${
+                      selectedTemplate?.docusealTemplateId === template.docusealTemplateId
+                        ? "bg-slate-50"
+                        : ""
+                    }`}
                   >
                     <td className="px-2 py-1.5 text-slate-500">
                       #{template.docusealTemplateId}
@@ -425,6 +480,14 @@ export function DocusealTemplateLibrary({
                       <button
                         type="button"
                         className="btn-secondary h-8 px-2 text-[0.68rem]"
+                        disabled={pending}
+                        onClick={() => setSelectedTemplateId(template.docusealTemplateId)}
+                      >
+                        Select
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary ml-1 h-8 px-2 text-[0.68rem]"
                         disabled={pending}
                         onClick={() => saveTemplateClassification(template)}
                       >
