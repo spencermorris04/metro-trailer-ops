@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { PageHeader } from "@/components/page-header";
 import { DocusealPrefillWorkspace } from "@/components/docuseal-prefill-workspace";
 import {
@@ -15,8 +17,13 @@ export default async function DocusealPrefillPage() {
     <div className="space-y-2">
       <PageHeader
         eyebrow="E-Sign"
-        title="Metro E-Sign templates"
-        description="Upload, classify, prefill, and send Metro Trailer E-Sign documents."
+        title="Create E-Sign draft"
+        description="Prefill and send Metro Trailer E-Sign documents."
+        actions={
+          <Link href="/docuseal/templates" className="btn-secondary">
+            Manage templates
+          </Link>
+        }
       />
 
       <DocusealPrefillWorkspace templates={templates} drafts={drafts} defaults={defaults} />

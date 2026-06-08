@@ -82,8 +82,14 @@ export const navigationGroups: NavGroup[] = [
       },
       {
         href: "/docuseal",
-        label: "E-Sign Prep",
-        description: "Upload, classify, prefill, and send Metro E-Sign documents",
+        label: "E-Sign Drafts",
+        description: "Prefill and send Metro E-Sign documents",
+        icon: "file-text",
+      },
+      {
+        href: "/docuseal/templates",
+        label: "E-Sign Templates",
+        description: "Upload and classify Metro E-Sign templates",
         icon: "file-text",
       },
     ],
