@@ -148,6 +148,20 @@
       "when": 1780689600000,
       "tag": "0020_ws_rental_active_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1780948800000,
+      "tag": "0021_docuseal_template_classifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1781035200000,
+      "tag": "0022_bc_active_rental_snapshot",
+      "breakpoints": true
     }
   ]
 }

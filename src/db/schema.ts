@@ -1368,6 +1368,54 @@ export const bcRmiWsRentalLedgerEntries = pgTable(
   }),
 );
 
+export const bcWebPortalShipLedgerEntries = pgTable(
+  "bc_web_portal_ship_ledger_entries",
+  {
+    id: text().primaryKey(),
+    runId: text().references(() => bcImportRuns.id, { onDelete: "set null" }),
+    externalEntryNo: text().notNull(),
+    postingDate: timestamp({ withTimezone: true }),
+    transactionType: text(),
+    type: text(),
+    assetNumber: text(),
+    locationCode: text(),
+    quantity: numeric({ precision: 14, scale: 4 }),
+    quantityRemaining: numeric({ precision: 14, scale: 4 }),
+    open: boolean(),
+    documentType: text(),
+    documentNo: text(),
+    rentalLineType: text(),
+    sellToCustomerNo: text(),
+    customerType: text(),
+    parentNo: text(),
+    sellToCustomerName: text(),
+    shipToCity: text(),
+    shipToCounty: text(),
+    shipToPostCode: text(),
+    shipToAddress: text(),
+    description: text(),
+    showOpen: text(),
+    sourcePayload: jsonb().$type<Record<string, unknown>>().notNull(),
+    importedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    entryNoUnique: uniqueIndex("bc_web_portal_sle_entry_unique").on(
+      table.externalEntryNo,
+    ),
+    activeIdx: index("bc_web_portal_sle_active_idx").on(
+      table.open,
+      table.type,
+      table.sellToCustomerNo,
+      table.assetNumber,
+    ),
+    documentIdx: index("bc_web_portal_sle_document_idx").on(
+      table.documentType,
+      table.documentNo,
+    ),
+    assetIdx: index("bc_web_portal_sle_asset_idx").on(table.assetNumber),
+  }),
+);
+
 export const bcRmiPostedRentalInvoiceHeaders = pgTable(
   "bc_rmi_posted_rental_invoice_headers",
   {
@@ -3862,6 +3910,29 @@ export const docusealPrefillDefaults = pgTable(
       table.scopeKey,
     ),
     templateIdx: index("docuseal_prefill_defaults_template_idx").on(table.templateKey),
+  }),
+);
+
+export const docusealTemplateClassifications = pgTable(
+  "docuseal_template_classifications",
+  {
+    docusealTemplateId: integer().primaryKey(),
+    templateKey: text().notNull(),
+    name: text().notNull(),
+    category: text().default("other").notNull(),
+    folderName: text().default("").notNull(),
+    location: text().default("").notNull(),
+    submitterRole: text().default("First Party").notNull(),
+    active: boolean().default(true).notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    templateKeyUnique: uniqueIndex("docuseal_template_classifications_key_unique").on(
+      table.templateKey,
+    ),
+    categoryIdx: index("docuseal_template_classifications_category_idx").on(table.category),
+    activeIdx: index("docuseal_template_classifications_active_idx").on(table.active),
   }),
 );
 

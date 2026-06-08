@@ -6,6 +6,7 @@ import {
   getDocusealTemplateAlias,
   getDocusealTemplateAliasById,
   type DocusealFieldSection,
+  type DocusealTemplateCategory,
   type DocusealTemplateDefinition,
 } from "@/lib/docuseal/templates";
 import { ApiError } from "@/lib/server/api";
@@ -40,6 +41,19 @@ export type DocusealPrefillDefault = {
   scopeType: DocusealDefaultScope;
   scopeKey: string;
   values: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DocusealTemplateClassification = {
+  docusealTemplateId: number;
+  templateKey: string;
+  name: string;
+  category: DocusealTemplateCategory;
+  folderName: string;
+  location: string;
+  submitterRole: string;
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -167,6 +181,56 @@ function humanizeFieldName(name: string) {
     .replace(/\bRi\b/g, "R.I.");
 }
 
+function slugifyTemplateKey(value: string) {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return slug || "docuseal-template";
+}
+
+function normalizeTemplateCategory(value: string | null | undefined): DocusealTemplateCategory {
+  if (
+    value === "lease" ||
+    value === "payment_authorization" ||
+    value === "credit_application" ||
+    value === "other"
+  ) {
+    return value;
+  }
+
+  return "other";
+}
+
+function inferTemplateCategory(name: string): DocusealTemplateCategory {
+  const normalized = name.toLowerCase();
+
+  if (normalized.includes("credit application")) {
+    return "credit_application";
+  }
+
+  if (
+    normalized.includes("ach") ||
+    normalized.includes("credit card") ||
+    normalized.includes("authorization")
+  ) {
+    return "payment_authorization";
+  }
+
+  if (
+    normalized.includes("lease") ||
+    normalized.includes("contract") ||
+    normalized.includes("trailer")
+  ) {
+    return "lease";
+  }
+
+  return "other";
+}
+
 function inferFieldSection(name: string): DocusealFieldSection {
   if (name.startsWith("tire_")) {
     return "Tire readings";
@@ -262,19 +326,24 @@ function mapDocusealApiTemplate(
 
   const alias = getDocusealTemplateAliasById(docusealTemplateId);
   const key = alias?.key ?? `docuseal-template-${docusealTemplateId}`;
+  const name =
+    apiTemplate.name?.trim() ||
+    alias?.name ||
+    `DocuSeal Template ${docusealTemplateId}`;
+  const folderName = apiTemplate.folder_name?.trim() || alias?.folderName || "";
 
   return {
     key,
     docusealTemplateId,
-    name:
-      apiTemplate.name?.trim() ||
-      alias?.name ||
-      `DocuSeal Template ${docusealTemplateId}`,
-    location: apiTemplate.folder_name?.trim() || alias?.location || "",
+    name,
+    category: alias?.category ?? inferTemplateCategory(name),
+    folderName,
+    location: folderName || alias?.location || "",
     submitterRole:
       apiTemplate.submitters?.[0]?.name?.trim() ||
       alias?.submitterRole ||
       "First Party",
+    active: alias?.active ?? true,
     fields: (apiTemplate.fields ?? [])
       .map(mapDocusealApiField)
       .filter((field): field is DocusealTemplateDefinition["fields"][number] =>
@@ -322,9 +391,118 @@ async function fetchDocusealTemplatesFromApi() {
   );
 }
 
+function mapTemplateClassificationRow(
+  row: typeof schema.docusealTemplateClassifications.$inferSelect,
+): DocusealTemplateClassification {
+  return {
+    docusealTemplateId: row.docusealTemplateId,
+    templateKey: row.templateKey,
+    name: row.name,
+    category: normalizeTemplateCategory(row.category),
+    folderName: row.folderName,
+    location: row.location,
+    submitterRole: row.submitterRole,
+    active: row.active,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mergeTemplateClassifications(
+  templates: DocusealTemplateDefinition[],
+  classifications: DocusealTemplateClassification[],
+) {
+  const byTemplateId = new Map(
+    classifications.map((classification) => [
+      classification.docusealTemplateId,
+      classification,
+    ]),
+  );
+
+  return templates.map((template) => {
+    const classification = byTemplateId.get(template.docusealTemplateId);
+    if (!classification) {
+      return template;
+    }
+
+    return {
+      ...template,
+      key: classification.templateKey || template.key,
+      name: classification.name || template.name,
+      category: classification.category,
+      folderName: classification.folderName,
+      location: classification.location || classification.folderName,
+      submitterRole: classification.submitterRole || template.submitterRole,
+      active: classification.active,
+    };
+  });
+}
+
+export async function listDocusealTemplateClassifications() {
+  const rows = await db
+    .select()
+    .from(schema.docusealTemplateClassifications)
+    .orderBy(desc(schema.docusealTemplateClassifications.updatedAt));
+
+  return rows.map(mapTemplateClassificationRow);
+}
+
+export async function upsertDocusealTemplateClassification(input: {
+  docusealTemplateId: number;
+  templateKey?: string;
+  name: string;
+  category: DocusealTemplateCategory;
+  folderName?: string;
+  location?: string;
+  submitterRole?: string;
+  active?: boolean;
+}) {
+  const existing = await db.query.docusealTemplateClassifications.findFirst({
+    where: (table, operators) =>
+      operators.eq(table.docusealTemplateId, input.docusealTemplateId),
+  });
+  const templateKey =
+    input.templateKey?.trim() ||
+    existing?.templateKey ||
+    `${slugifyTemplateKey(input.name)}-${input.docusealTemplateId}`;
+  const folderName = input.folderName?.trim() ?? existing?.folderName ?? "";
+  const location = input.location?.trim() ?? existing?.location ?? folderName;
+  const submitterRole = input.submitterRole?.trim() || existing?.submitterRole || "First Party";
+  const values = {
+    templateKey,
+    name: input.name.trim(),
+    category: input.category,
+    folderName,
+    location,
+    submitterRole,
+    active: input.active ?? existing?.active ?? true,
+    updatedAt: new Date(),
+  };
+
+  if (existing) {
+    const [updated] = await db
+      .update(schema.docusealTemplateClassifications)
+      .set(values)
+      .where(eq(schema.docusealTemplateClassifications.docusealTemplateId, input.docusealTemplateId))
+      .returning();
+
+    return mapTemplateClassificationRow(updated);
+  }
+
+  const [created] = await db
+    .insert(schema.docusealTemplateClassifications)
+    .values({
+      docusealTemplateId: input.docusealTemplateId,
+      ...values,
+    })
+    .returning();
+
+  return mapTemplateClassificationRow(created);
+}
+
 async function requireTemplate(templateKey: string) {
   const alias = getDocusealTemplateAlias(templateKey);
-  const templates = await fetchDocusealTemplatesFromApi();
+  const templates = await listDocusealPrefillTemplates();
   const template = alias
     ? templates.find(
         (candidate) => candidate.docusealTemplateId === alias.docusealTemplateId,
@@ -602,7 +780,124 @@ function mapDefaultRow(
 }
 
 export function listDocusealPrefillTemplates() {
-  return fetchDocusealTemplatesFromApi();
+  return Promise.all([
+    fetchDocusealTemplatesFromApi(),
+    listDocusealTemplateClassifications(),
+  ]).then(([templates, classifications]) =>
+    mergeTemplateClassifications(templates, classifications),
+  );
+}
+
+export async function updateDocusealTemplateClassification(input: {
+  docusealTemplateId: number;
+  name: string;
+  category: DocusealTemplateCategory;
+  folderName?: string;
+  location?: string;
+  submitterRole?: string;
+  active?: boolean;
+}) {
+  const folderName = input.folderName?.trim() ?? "";
+  const response = await fetchDocuseal(`/api/templates/${input.docusealTemplateId}`, {
+    method: "PUT",
+    headers: {
+      ...getDocusealAuthHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: input.name.trim(),
+      folder_name: folderName,
+    }),
+  });
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected the template update.",
+      payload,
+    );
+  }
+
+  const classification = await upsertDocusealTemplateClassification({
+    ...input,
+    folderName,
+    location: input.location?.trim() || folderName,
+  });
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find(
+    (candidate) => candidate.docusealTemplateId === input.docusealTemplateId,
+  );
+
+  if (!template) {
+    throw new ApiError(404, "Updated DocuSeal template was not found.");
+  }
+
+  return { classification, template };
+}
+
+export async function createDocusealTemplateFromPdf(input: {
+  fileName: string;
+  fileBase64: string;
+  name: string;
+  category: DocusealTemplateCategory;
+  folderName?: string;
+  location?: string;
+  submitterRole?: string;
+  active?: boolean;
+}) {
+  const name = input.name.trim();
+  const folderName = input.folderName?.trim() ?? "";
+  const externalId = `metro-${slugifyTemplateKey(name)}`;
+  const response = await fetchDocuseal("/api/templates/pdf", {
+    method: "POST",
+    headers: {
+      ...getDocusealAuthHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name,
+      folder_name: folderName,
+      external_id: externalId,
+      shared_link: true,
+      documents: [
+        {
+          name: input.fileName,
+          file: input.fileBase64,
+        },
+      ],
+    }),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | (DocusealApiTemplate & { error?: string })
+    | null;
+
+  if (!response.ok || !payload?.id) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected the PDF template upload.",
+      payload,
+    );
+  }
+
+  const classification = await upsertDocusealTemplateClassification({
+    docusealTemplateId: payload.id,
+    templateKey: `${slugifyTemplateKey(name)}-${payload.id}`,
+    name,
+    category: input.category,
+    folderName,
+    location: input.location?.trim() || folderName,
+    submitterRole: input.submitterRole,
+    active: input.active,
+  });
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find((candidate) => candidate.docusealTemplateId === payload.id);
+
+  if (!template) {
+    throw new ApiError(404, "Created DocuSeal template was not found.");
+  }
+
+  return { classification, template };
 }
 
 export async function listDocusealDrafts() {

@@ -15,8 +15,8 @@ export default async function DocusealPrefillPage() {
     <div className="space-y-2">
       <PageHeader
         eyebrow="E-Sign"
-        title="DocuSeal prefill"
-        description="Prepare Metro Trailer lease documents before sending the customer into DocuSeal."
+        title="Metro E-Sign templates"
+        description="Upload, classify, prefill, and send Metro Trailer E-Sign documents."
       />
 
       <DocusealPrefillWorkspace templates={templates} drafts={drafts} defaults={defaults} />

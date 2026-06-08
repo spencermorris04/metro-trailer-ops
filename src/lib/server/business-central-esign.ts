@@ -89,7 +89,9 @@ export async function listBusinessCentralESignTemplates() {
     name: template.name,
     templateKey: template.key,
     docusealTemplateId: template.docusealTemplateId,
-    active: true,
+    category: template.category,
+    location: template.location,
+    active: template.active,
     fields: template.fields.map((field) => ({
       name: field.name,
       label: field.label,
