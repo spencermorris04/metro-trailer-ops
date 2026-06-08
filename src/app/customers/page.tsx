@@ -10,6 +10,8 @@ import { getCustomerListView } from "@/lib/server/platform";
 
 export const unstable_instant = { prefetch: "static" };
 
+const DISTRIBUTION_OVERFLOW_BUCKET = 400;
+
 type CustomersPageProps = {
   searchParams: Promise<{
     q?: string | string[];
@@ -36,6 +38,20 @@ function formatDecimal(value: number) {
   }).format(value);
 }
 
+function formatTrailerCountBucket(value: number) {
+  if (value >= DISTRIBUTION_OVERFLOW_BUCKET) {
+    return `${formatWholeNumber(DISTRIBUTION_OVERFLOW_BUCKET)}+`;
+  }
+  return formatWholeNumber(value);
+}
+
+function formatTrailerTick(value: number, maxValue: number) {
+  if (value >= DISTRIBUTION_OVERFLOW_BUCKET && maxValue >= DISTRIBUTION_OVERFLOW_BUCKET) {
+    return `${formatWholeNumber(DISTRIBUTION_OVERFLOW_BUCKET)}+`;
+  }
+  return formatCompactNumber(value);
+}
+
 function normalizeCohortMode(value: string | undefined) {
   return value === "all" ? "all" : "active";
 }
@@ -44,11 +60,14 @@ function chartX(value: number, maxValue: number) {
   if (maxValue <= 1) {
     return 0;
   }
-  return (Math.log10(Math.max(1, value)) / Math.log10(maxValue)) * 100;
+  const cappedValue = Math.min(Math.max(1, value), maxValue);
+  const scaledValue = Math.sqrt(cappedValue) - 1;
+  const scaledMax = Math.sqrt(maxValue) - 1;
+  return (scaledValue / scaledMax) * 100;
 }
 
 function chartY(value: number, maxValue: number) {
-  return maxValue > 0 ? 54 - (value / maxValue) * 48 : 54;
+  return maxValue > 0 ? 54 - (Math.sqrt(value) / Math.sqrt(maxValue)) * 48 : 54;
 }
 
 function buildDistributionPath(
@@ -140,9 +159,11 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
   const distributionTicks = uniqueTicks([
     1,
     10,
+    25,
+    50,
     100,
-    1000,
-    10000,
+    200,
+    DISTRIBUTION_OVERFLOW_BUCKET,
     maxDistributionTrailerCount,
   ]).filter((value) => value <= maxDistributionTrailerCount);
   const peakPoint = distributionPoints.reduce(
@@ -306,7 +327,7 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
                 <span>{selectedDistributionLabel}</span>
                 <span>
                   Peak: {formatWholeNumber(peakPoint.customerCount)} customers at{" "}
-                  {formatWholeNumber(peakPoint.trailerCount)} {selectedDistributionUnit}
+                  {formatTrailerCountBucket(peakPoint.trailerCount)} {selectedDistributionUnit}
                 </span>
               </div>
               <div className="h-64 border border-[var(--line)] bg-white px-2 py-2">
@@ -340,7 +361,7 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
                             textAnchor={x > 92 ? "end" : x < 8 ? "start" : "middle"}
                             className="fill-slate-400 text-[3px] font-semibold"
                           >
-                            {formatCompactNumber(tick)}
+                            {formatTrailerTick(tick, maxDistributionTrailerCount)}
                           </text>
                         </g>
                       );
@@ -371,7 +392,7 @@ async function CustomersContent({ searchParams }: CustomersPageProps) {
                 )}
               </div>
               <div className="flex items-center justify-between gap-3 text-[0.68rem] text-slate-400">
-                <span>Trailer count, log scale</span>
+                <span>Trailer count, 400+ grouped</span>
                 <span>
                   {cohortMode === "active"
                     ? "Distinct open trailers per customer"

@@ -60,6 +60,8 @@ type CustomerTrailerDistribution = {
   points: CustomerTrailerDistributionPoint[];
 };
 
+const CUSTOMER_TRAILER_DISTRIBUTION_OVERFLOW_BUCKET = 400;
+
 type CustomerActivityYear = {
   year: number;
   activeCustomers: number;
@@ -167,7 +169,7 @@ function timestampForSort(value: string | null | undefined) {
 
 async function getCustomerPortfolioMetrics(cohortMode: "active" | "all" = "active") {
   return getCachedView(
-    `customer-portfolio-metrics:v5:${cohortMode}`,
+    `customer-portfolio-metrics:v6:${cohortMode}`,
     ["customers", "contracts", "assets", "rental-history"],
     300,
     300,
@@ -282,16 +284,40 @@ function toCustomerTrailerDistribution(
       }
     | undefined,
 ): CustomerTrailerDistribution {
+  const rawPoints = (row?.points ?? []).map((point) => ({
+    trailerCount: Number(point.trailerCount ?? 0),
+    customerCount: Number(point.customerCount ?? 0),
+  }));
+  const bucketedPoints = new Map<number, number>();
+  let hasOverflowBucket = false;
+
+  for (const point of rawPoints) {
+    if (point.trailerCount <= 0 || point.customerCount <= 0) {
+      continue;
+    }
+    const bucket =
+      point.trailerCount >= CUSTOMER_TRAILER_DISTRIBUTION_OVERFLOW_BUCKET
+        ? CUSTOMER_TRAILER_DISTRIBUTION_OVERFLOW_BUCKET
+        : point.trailerCount;
+    hasOverflowBucket ||= bucket === CUSTOMER_TRAILER_DISTRIBUTION_OVERFLOW_BUCKET;
+    bucketedPoints.set(bucket, (bucketedPoints.get(bucket) ?? 0) + point.customerCount);
+  }
+
+  const maxTrailerCount = Number(row?.max_trailer_count ?? 0);
+
   return {
     mode,
     rentingCustomers: Number(row?.renting_customers ?? 0),
     totalTrailerAssignments: Number(row?.total_trailer_assignments ?? 0),
     averageTrailerCount: numericToNumber(row?.average_trailer_count, 0),
-    maxTrailerCount: Number(row?.max_trailer_count ?? 0),
-    points: (row?.points ?? []).map((point) => ({
-      trailerCount: Number(point.trailerCount ?? 0),
-      customerCount: Number(point.customerCount ?? 0),
-    })),
+    maxTrailerCount:
+      hasOverflowBucket || maxTrailerCount >= CUSTOMER_TRAILER_DISTRIBUTION_OVERFLOW_BUCKET
+        ? CUSTOMER_TRAILER_DISTRIBUTION_OVERFLOW_BUCKET
+        : maxTrailerCount,
+    points: Array.from(bucketedPoints, ([trailerCount, customerCount]) => ({
+      trailerCount,
+      customerCount,
+    })).sort((a, b) => a.trailerCount - b.trailerCount),
   };
 }
 
