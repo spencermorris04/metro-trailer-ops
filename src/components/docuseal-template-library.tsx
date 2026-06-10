@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import Link from "next/link";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { Icon } from "@/components/icons";
 import type {
   DocusealTemplateCategory,
   DocusealTemplateDefinition,
@@ -41,6 +43,10 @@ function buildTemplateEditState(template: DocusealTemplateDefinition): TemplateE
   };
 }
 
+function formatCategory(category: DocusealTemplateCategory) {
+  return templateCategoryLabels[category] ?? category;
+}
+
 export function DocusealTemplateLibrary({
   templates,
 }: {
@@ -61,11 +67,36 @@ export function DocusealTemplateLibrary({
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
     templates[0]?.docusealTemplateId ?? null,
   );
+  const [templateQuery, setTemplateQuery] = useState("");
+  const [showUpload, setShowUpload] = useState(false);
+
+  const filteredTemplates = useMemo(() => {
+    const query = templateQuery.trim().toLowerCase();
+    if (!query) {
+      return templateList;
+    }
+
+    return templateList.filter((template) => {
+      const searchable = [
+        template.name,
+        template.key,
+        template.folderName,
+        template.location,
+        formatCategory(template.category),
+        String(template.docusealTemplateId),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchable.includes(query);
+    });
+  }, [templateList, templateQuery]);
 
   const selectedTemplate =
     templateList.find((template) => template.docusealTemplateId === selectedTemplateId) ??
     templateList[0] ??
     null;
+  const selectedEdit = selectedTemplate ? getTemplateEdit(selectedTemplate) : null;
 
   function getTemplateEdit(template: DocusealTemplateDefinition) {
     return templateEdits[template.key] ?? buildTemplateEditState(template);
@@ -172,6 +203,7 @@ export function DocusealTemplateLibrary({
         if (uploadFileInputRef.current) {
           uploadFileInputRef.current.value = "";
         }
+        setShowUpload(false);
         setFeedback(
           detectedFieldCount === null
             ? result?.message ?? "E-Sign template uploaded."
@@ -229,201 +261,116 @@ export function DocusealTemplateLibrary({
   }
 
   return (
-    <main className="space-y-2">
-      <section className="panel overflow-hidden">
-        <div className="border-b border-[var(--line)] px-3 py-2">
-          <h3 className="text-[0.82rem] font-semibold text-slate-900">Upload template</h3>
-          <p className="mt-0.5 text-[0.65rem] text-slate-500">
-            Add a PDF to E-Sign, then classify it for Metro workflows.
+    <main className="panel overflow-hidden">
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-white px-3 py-2">
+        <div className="min-w-0">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Template workspace
           </p>
+          <h2 className="truncate text-[0.95rem] font-semibold text-slate-950">
+            {selectedTemplate ? selectedTemplate.name : "No template selected"}
+          </h2>
         </div>
-        <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-6">
-          <label className="space-y-1 text-[0.72rem] text-slate-600 xl:col-span-2">
-            <span className="font-medium">PDF file</span>
-            <input
-              ref={uploadFileInputRef}
-              type="file"
-              accept="application/pdf,.pdf"
-              disabled={pending}
-              className="workspace-input w-full"
-            />
-          </label>
-          <label className="space-y-1 text-[0.72rem] text-slate-600 xl:col-span-2">
-            <span className="font-medium">Template name</span>
-            <input
-              value={uploadName}
-              onChange={(event) => setUploadName(event.target.value)}
-              disabled={pending}
-              placeholder="ACH Authorization Form"
-              className="workspace-input w-full"
-            />
-          </label>
-          <label className="space-y-1 text-[0.72rem] text-slate-600">
-            <span className="font-medium">Type</span>
-            <select
-              value={uploadCategory}
-              onChange={(event) =>
-                setUploadCategory(event.target.value as DocusealTemplateCategory)
-              }
-              disabled={pending}
-              className="workspace-input w-full"
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/docuseal" className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]">
+            <Icon name="file-text" size={14} />
+            Create draft
+          </Link>
+          <button
+            type="button"
+            className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
+            onClick={() => setShowUpload((current) => !current)}
+          >
+            <Icon name="folder" size={14} />
+            Upload PDF
+          </button>
+          <button
+            type="button"
+            className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
+            disabled={pending || !selectedTemplate}
+            onClick={() => selectedTemplate && saveTemplateClassification(selectedTemplate)}
+          >
+            <Icon name="clipboard" size={14} />
+            Save details
+          </button>
+          <button
+            type="button"
+            className="btn-primary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
+            disabled={pending || !selectedTemplate}
+            onClick={() => selectedTemplate && runFieldDetection(selectedTemplate)}
+          >
+            <Icon name="search" size={14} />
+            Detect fields
+          </button>
+          {selectedTemplate ? (
+            <a
+              href={selectedTemplate.editorUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
             >
-              {Object.entries(templateCategoryLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-[0.72rem] text-slate-600">
-            <span className="font-medium">Folder</span>
-            <input
-              value={uploadFolderName}
-              onChange={(event) => setUploadFolderName(event.target.value)}
-              disabled={pending}
-              className="workspace-input w-full"
-            />
-          </label>
-          <label className="space-y-1 text-[0.72rem] text-slate-600">
-            <span className="font-medium">Location</span>
-            <input
-              value={uploadLocation}
-              onChange={(event) => setUploadLocation(event.target.value)}
-              disabled={pending}
-              className="workspace-input w-full"
-            />
-          </label>
-          <label className="space-y-1 text-[0.72rem] text-slate-600">
-            <span className="font-medium">Signer role</span>
-            <input
-              value={uploadSubmitterRole}
-              onChange={(event) => setUploadSubmitterRole(event.target.value)}
-              disabled={pending}
-              className="workspace-input w-full"
-            />
-          </label>
-          <div className="flex items-end">
-            <button
-              type="button"
-              className="btn-primary h-9 w-full"
-              disabled={pending}
-              onClick={uploadTemplate}
-            >
-              Upload template
-            </button>
-          </div>
+              <Icon name="globe" size={14} />
+              Open full editor
+            </a>
+          ) : null}
         </div>
-        {feedback ? (
-          <div className="border-t border-[var(--line)] px-3 py-2 text-[0.75rem] text-slate-600">
-            {feedback}
-          </div>
-        ) : null}
-      </section>
+      </div>
 
-      {selectedTemplate ? (
-        <section className="panel overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
-            <div>
-              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                Selected template
-              </p>
-              <h3 className="text-[0.9rem] font-semibold text-slate-900">
-                #{selectedTemplate.docusealTemplateId} {selectedTemplate.name}
-              </h3>
-              <p className="mt-0.5 text-[0.68rem] text-slate-500">
-                {selectedTemplate.fields.length} fields available
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn-primary h-9 px-3 text-[0.72rem]"
-                disabled={pending}
-                onClick={() => runFieldDetection(selectedTemplate)}
-              >
-                Detect and name fields
-              </button>
-              <a
-                href={selectedTemplate.editorUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-secondary inline-flex h-9 items-center px-3 text-[0.72rem]"
-              >
-                Open full editor
-              </a>
-            </div>
-          </div>
-          <iframe
-            key={selectedTemplate.editorUrl}
-            title={`${selectedTemplate.name} E-Sign editor`}
-            src={selectedTemplate.editorUrl}
-            className="h-[78vh] min-h-[720px] w-full border-0 bg-white"
-          />
-        </section>
-      ) : null}
+      <div className="grid min-h-[calc(100vh-210px)] lg:grid-cols-[340px_minmax(0,1fr)]">
+        <aside className="border-b border-[var(--line)] bg-[var(--surface-soft)] lg:border-b-0 lg:border-r">
+          <div className="space-y-2 p-3">
+            <label className="block space-y-1 text-[0.7rem] font-medium text-slate-600">
+              <span>Find template</span>
+              <input
+                value={templateQuery}
+                onChange={(event) => setTemplateQuery(event.target.value)}
+                placeholder="Search name, folder, location..."
+                className="workspace-input h-8 w-full bg-white"
+              />
+            </label>
 
-      <section className="panel overflow-hidden">
-        <div className="border-b border-[var(--line)] px-3 py-2">
-          <h3 className="text-[0.82rem] font-semibold text-slate-900">
-            Template classifications
-          </h3>
-          <p className="mt-0.5 text-[0.65rem] text-slate-500">
-            Control type, folder, location, signer role, and availability.
-          </p>
-        </div>
-        <div className="overflow-auto">
-          <table className="min-w-[980px] w-full border-collapse text-left text-[0.72rem]">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">ID</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Name</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Type</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Folder</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Location</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Signer role</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Fields</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">Active</th>
-                <th className="border-b border-[var(--line)] px-2 py-1.5 font-medium">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {templateList.map((template) => {
-                const edit = getTemplateEdit(template);
-
-                return (
-                  <tr
-                    key={template.docusealTemplateId}
-                    className={`border-b border-[var(--line)] last:border-b-0 ${
-                      selectedTemplate?.docusealTemplateId === template.docusealTemplateId
-                        ? "bg-slate-50"
-                        : ""
-                    }`}
-                  >
-                    <td className="px-2 py-1.5 text-slate-500">
-                      #{template.docusealTemplateId}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <input
-                        value={edit.name}
-                        onChange={(event) =>
-                          updateTemplateEdit(template, { name: event.target.value })
-                        }
-                        disabled={pending}
-                        className="workspace-input h-8 w-full"
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
+            {showUpload ? (
+              <section className="border border-[var(--line)] bg-white">
+                <div className="border-b border-[var(--line)] px-3 py-2">
+                  <h3 className="text-[0.78rem] font-semibold text-slate-900">
+                    Upload template
+                  </h3>
+                  <p className="mt-0.5 text-[0.65rem] text-slate-500">
+                    Add a PDF, classify it, then field detection runs automatically.
+                  </p>
+                </div>
+                <div className="space-y-2 p-3">
+                  <label className="block space-y-1 text-[0.68rem] text-slate-600">
+                    <span className="font-medium">PDF file</span>
+                    <input
+                      ref={uploadFileInputRef}
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      disabled={pending}
+                      className="workspace-input w-full bg-white"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[0.68rem] text-slate-600">
+                    <span className="font-medium">Template name</span>
+                    <input
+                      value={uploadName}
+                      onChange={(event) => setUploadName(event.target.value)}
+                      disabled={pending}
+                      placeholder="ACH Authorization Form"
+                      className="workspace-input h-8 w-full bg-white"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block space-y-1 text-[0.68rem] text-slate-600">
+                      <span className="font-medium">Type</span>
                       <select
-                        value={edit.category}
+                        value={uploadCategory}
                         onChange={(event) =>
-                          updateTemplateEdit(template, {
-                            category: event.target.value as DocusealTemplateCategory,
-                          })
+                          setUploadCategory(event.target.value as DocusealTemplateCategory)
                         }
                         disabled={pending}
-                        className="workspace-input h-8 w-full"
+                        className="workspace-input h-8 w-full bg-white"
                       >
                         {Object.entries(templateCategoryLabels).map(([value, label]) => (
                           <option key={value} value={value}>
@@ -431,92 +378,207 @@ export function DocusealTemplateLibrary({
                           </option>
                         ))}
                       </select>
-                    </td>
-                    <td className="px-2 py-1.5">
+                    </label>
+                    <label className="block space-y-1 text-[0.68rem] text-slate-600">
+                      <span className="font-medium">Folder</span>
                       <input
-                        value={edit.folderName}
-                        onChange={(event) =>
-                          updateTemplateEdit(template, { folderName: event.target.value })
-                        }
+                        value={uploadFolderName}
+                        onChange={(event) => setUploadFolderName(event.target.value)}
                         disabled={pending}
-                        className="workspace-input h-8 w-full"
+                        className="workspace-input h-8 w-full bg-white"
                       />
-                    </td>
-                    <td className="px-2 py-1.5">
+                    </label>
+                    <label className="block space-y-1 text-[0.68rem] text-slate-600">
+                      <span className="font-medium">Location</span>
                       <input
-                        value={edit.location}
-                        onChange={(event) =>
-                          updateTemplateEdit(template, { location: event.target.value })
-                        }
+                        value={uploadLocation}
+                        onChange={(event) => setUploadLocation(event.target.value)}
                         disabled={pending}
-                        className="workspace-input h-8 w-full"
+                        className="workspace-input h-8 w-full bg-white"
                       />
-                    </td>
-                    <td className="px-2 py-1.5">
+                    </label>
+                    <label className="block space-y-1 text-[0.68rem] text-slate-600">
+                      <span className="font-medium">Signer role</span>
                       <input
-                        value={edit.submitterRole}
-                        onChange={(event) =>
-                          updateTemplateEdit(template, { submitterRole: event.target.value })
-                        }
+                        value={uploadSubmitterRole}
+                        onChange={(event) => setUploadSubmitterRole(event.target.value)}
                         disabled={pending}
-                        className="workspace-input h-8 w-full"
+                        className="workspace-input h-8 w-full bg-white"
                       />
-                    </td>
-                    <td className="px-2 py-1.5 text-slate-500">
-                      {template.fields.length}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <input
-                        type="checkbox"
-                        checked={edit.active}
-                        onChange={(event) =>
-                          updateTemplateEdit(template, { active: event.target.checked })
-                        }
-                        disabled={pending}
-                        className="h-4 w-4"
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <button
-                        type="button"
-                        className="btn-secondary h-8 px-2 text-[0.68rem]"
-                        disabled={pending}
-                        onClick={() => setSelectedTemplateId(template.docusealTemplateId)}
-                      >
-                        Select
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary ml-1 h-8 px-2 text-[0.68rem]"
-                        disabled={pending}
-                        onClick={() => saveTemplateClassification(template)}
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary ml-1 h-8 px-2 text-[0.68rem]"
-                        disabled={pending}
-                        onClick={() => runFieldDetection(template)}
-                      >
-                        Detect fields
-                      </button>
-                      <a
-                        href={template.editorUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn-secondary ml-1 inline-flex h-8 items-center px-2 text-[0.68rem]"
-                      >
-                        Open editor
-                      </a>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary h-8 w-full text-[0.7rem]"
+                    disabled={pending}
+                    onClick={uploadTemplate}
+                  >
+                    Upload and detect fields
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            <div className="max-h-[calc(100vh-335px)] overflow-auto border border-[var(--line)] bg-white">
+              {filteredTemplates.length ? (
+                filteredTemplates.map((template) => {
+                  const selected =
+                    selectedTemplate?.docusealTemplateId === template.docusealTemplateId;
+
+                  return (
+                    <button
+                      key={template.docusealTemplateId}
+                      type="button"
+                      className={`block w-full border-b border-[var(--line)] px-3 py-2 text-left last:border-b-0 transition hover:bg-slate-50 ${
+                        selected ? "bg-slate-100" : "bg-white"
+                      }`}
+                      onClick={() => setSelectedTemplateId(template.docusealTemplateId)}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-[0.75rem] font-semibold text-slate-900">
+                          {template.name}
+                        </span>
+                        <span className="shrink-0 text-[0.62rem] font-medium text-slate-500">
+                          #{template.docusealTemplateId}
+                        </span>
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.62rem] text-slate-500">
+                        <span>{formatCategory(template.category)}</span>
+                        <span>/</span>
+                        <span>{template.folderName || "No folder"}</span>
+                        <span>/</span>
+                        <span>{template.fields.length} fields</span>
+                        {!template.active ? (
+                          <>
+                            <span>/</span>
+                            <span className="font-semibold text-red-600">Inactive</span>
+                          </>
+                        ) : null}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="px-3 py-8 text-center text-[0.72rem] text-slate-500">
+                  No templates match that search.
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        <section className="min-w-0 bg-white">
+          {selectedTemplate && selectedEdit ? (
+            <div className="flex h-full flex-col">
+              <div className="border-b border-[var(--line)] bg-slate-50 px-3 py-2">
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_180px_160px_160px_170px_90px]">
+                  <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
+                    <span>Name</span>
+                    <input
+                      value={selectedEdit.name}
+                      onChange={(event) =>
+                        updateTemplateEdit(selectedTemplate, { name: event.target.value })
+                      }
+                      disabled={pending}
+                      className="workspace-input h-8 w-full bg-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
+                    <span>Type</span>
+                    <select
+                      value={selectedEdit.category}
+                      onChange={(event) =>
+                        updateTemplateEdit(selectedTemplate, {
+                          category: event.target.value as DocusealTemplateCategory,
+                        })
+                      }
+                      disabled={pending}
+                      className="workspace-input h-8 w-full bg-white"
+                    >
+                      {Object.entries(templateCategoryLabels).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
+                    <span>Folder</span>
+                    <input
+                      value={selectedEdit.folderName}
+                      onChange={(event) =>
+                        updateTemplateEdit(selectedTemplate, { folderName: event.target.value })
+                      }
+                      disabled={pending}
+                      className="workspace-input h-8 w-full bg-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
+                    <span>Location</span>
+                    <input
+                      value={selectedEdit.location}
+                      onChange={(event) =>
+                        updateTemplateEdit(selectedTemplate, { location: event.target.value })
+                      }
+                      disabled={pending}
+                      className="workspace-input h-8 w-full bg-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
+                    <span>Signer role</span>
+                    <input
+                      value={selectedEdit.submitterRole}
+                      onChange={(event) =>
+                        updateTemplateEdit(selectedTemplate, {
+                          submitterRole: event.target.value,
+                        })
+                      }
+                      disabled={pending}
+                      className="workspace-input h-8 w-full bg-white"
+                    />
+                  </label>
+                  <label className="flex items-end gap-2 pb-1 text-[0.68rem] font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={selectedEdit.active}
+                      onChange={(event) =>
+                        updateTemplateEdit(selectedTemplate, { active: event.target.checked })
+                      }
+                      disabled={pending}
+                      className="h-4 w-4"
+                    />
+                    Active
+                  </label>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[0.68rem] text-slate-500">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>Template #{selectedTemplate.docusealTemplateId}</span>
+                    <span>/</span>
+                    <span>{selectedTemplate.fields.length} fields</span>
+                    <span>/</span>
+                    <span>Role: {selectedTemplate.submitterRole || "First Party"}</span>
+                  </div>
+                  <div className="min-h-4 text-slate-600">
+                    {pending ? "Working..." : feedback}
+                  </div>
+                </div>
+              </div>
+
+              <iframe
+                key={selectedTemplate.editorUrl}
+                title={`${selectedTemplate.name} E-Sign editor`}
+                src={selectedTemplate.editorUrl}
+                className="h-[calc(100vh-345px)] min-h-[640px] w-full flex-1 border-0 bg-white"
+              />
+            </div>
+          ) : (
+            <div className="flex min-h-[420px] items-center justify-center text-[0.78rem] text-slate-500">
+              Select or upload a template to edit.
+            </div>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
