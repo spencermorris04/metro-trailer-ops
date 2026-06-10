@@ -6,7 +6,12 @@ import { updateBusinessCentralESignEditorDraft } from "@/lib/server/business-cen
 const editorSaveSchema = z.object({
   expires: z.union([z.string(), z.number()]),
   token: z.string().min(1),
-  values: z.record(z.string(), z.unknown()),
+  location: z.string().optional(),
+  customerName: z.string().optional(),
+  customerEmail: z.string().optional(),
+  subject: z.string().optional(),
+  message: z.string().optional(),
+  values: z.record(z.string(), z.unknown()).optional(),
 });
 
 type EditorSaveRouteContext = {
@@ -21,7 +26,14 @@ export async function POST(request: Request, context: EditorSaveRouteContext) {
       draftId,
       String(input.expires),
       input.token,
-      input.values,
+      {
+        location: input.location,
+        customerName: input.customerName,
+        customerEmail: input.customerEmail,
+        subject: input.subject,
+        message: input.message,
+        values: input.values,
+      },
     );
 
     return ok({ message: "Metro E-Sign draft saved.", data }, undefined, request);

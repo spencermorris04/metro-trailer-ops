@@ -12,6 +12,7 @@ import {
   invalidateDocusealDraft,
   prepareDocusealDraftPreview,
   sendDocusealDraft,
+  switchDocusealDraftTemplate,
   updateDocusealDraft,
 } from "@/lib/server/docuseal-prefill";
 import { ApiError } from "@/lib/server/api";
@@ -265,10 +266,68 @@ export async function updateBusinessCentralESignEditorDraft(
   draftId: string,
   expires: string | string[] | undefined,
   token: string | string[] | undefined,
-  values: Record<string, unknown>,
+  input: {
+    location?: string;
+    customerName?: string;
+    customerEmail?: string;
+    subject?: string;
+    message?: string;
+    values?: Record<string, unknown>;
+  },
 ) {
   const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
-  const updatedDraft = await updateDocusealDraft(draft.id, { values });
+  const updatedDraft = await updateDocusealDraft(draft.id, input);
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
+
+  if (!template) {
+    throw new ApiError(404, "Metro E-Sign template was not found for this draft.");
+  }
+
+  return {
+    draft: updatedDraft,
+    template,
+  };
+}
+
+export async function switchBusinessCentralESignEditorTemplate(
+  draftId: string,
+  expires: string | string[] | undefined,
+  token: string | string[] | undefined,
+  input: {
+    templateKey: string;
+    location?: string;
+    values?: Record<string, unknown>;
+  },
+) {
+  const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
+  const updatedDraft = await switchDocusealDraftTemplate(draft.id, input);
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
+
+  if (!template) {
+    throw new ApiError(404, "Metro E-Sign template was not found for this draft.");
+  }
+
+  return {
+    draft: updatedDraft,
+    template,
+  };
+}
+
+export async function runBusinessCentralESignEditorAction(
+  draftId: string,
+  expires: string | string[] | undefined,
+  token: string | string[] | undefined,
+  action: "prepare" | "send" | "invalidate",
+) {
+  const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
+  const updatedDraft =
+    action === "prepare"
+      ? await prepareDocusealDraftPreview(draft.id)
+      : action === "send"
+        ? await sendDocusealDraft(draft.id)
+        : await invalidateDocusealDraft(draft.id);
   const templates = await listDocusealPrefillTemplates();
   const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
 

@@ -1130,6 +1130,51 @@ export async function updateDocusealDraft(
   return mapDraftRow(updatedDraft);
 }
 
+export async function switchDocusealDraftTemplate(
+  draftId: string,
+  input: {
+    templateKey: string;
+    location?: string;
+    values?: Record<string, unknown>;
+  },
+) {
+  const draft = await requireDraft(draftId);
+  if (draft.status === "sent") {
+    throw new ApiError(409, "Sent DocuSeal drafts cannot be changed.");
+  }
+
+  const template = await requireTemplate(input.templateKey);
+  const values = normalizeValues(template, {
+    ...draft.values,
+    ...input.values,
+  });
+  const submissionId =
+    draft.docusealSubmissionId ?? (await findSubmissionIdBySubmitterSlug(draft.docusealSubmitterSlug));
+
+  if (submissionId) {
+    await deleteDocusealSubmission(submissionId);
+  }
+
+  const [updatedDraft] = await db
+    .update(schema.docusealPrefillDrafts)
+    .set({
+      templateKey: template.key,
+      templateName: template.name,
+      docusealTemplateId: template.docusealTemplateId,
+      location: input.location?.trim() || draft.location || template.location,
+      submitterRole: template.submitterRole,
+      values,
+      updatedAt: new Date(),
+      docusealSubmissionId: null,
+      docusealSubmitterSlug: null,
+      docusealSubmitterUrl: null,
+    })
+    .where(eq(schema.docusealPrefillDrafts.id, draftId))
+    .returning();
+
+  return mapDraftRow(updatedDraft);
+}
+
 export async function sendDocusealDraft(draftId: string) {
   const draft = await requireDraft(draftId);
   if (draft.status === "sent") {

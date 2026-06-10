@@ -1,5 +1,8 @@
 import { ApiError } from "@/lib/server/api";
-import { getBusinessCentralESignEditorDraft } from "@/lib/server/business-central-esign";
+import {
+  getBusinessCentralESignEditorDraft,
+} from "@/lib/server/business-central-esign";
+import { listDocusealPrefillTemplates } from "@/lib/server/docuseal-prefill";
 import { BusinessCentralESignEditorClient } from "./bc-editor-client";
 
 type EditorLoadResult = Awaited<ReturnType<typeof getBusinessCentralESignEditorDraft>>;
@@ -47,10 +50,13 @@ export default async function BusinessCentralESignEditorPage({
   const expiresValue = Array.isArray(query.expires) ? query.expires[0] : query.expires;
   const tokenValue = Array.isArray(query.token) ? query.token[0] : query.token;
 
+  const templates = await listDocusealPrefillTemplates();
+
   return (
     <BusinessCentralESignEditorClient
       draft={editor.draft}
       template={editor.template}
+      templates={templates}
       expires={Number(expiresValue)}
       token={tokenValue ?? ""}
     />
