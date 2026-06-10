@@ -1,6 +1,7 @@
-import { errorResponse, ok } from "@/lib/server/api";
+import { errorResponse, ok, readJson } from "@/lib/server/api";
 import {
   createBusinessCentralESignEditorUrl,
+  parseBusinessCentralEditorSessionRequest,
   requireBusinessCentralESignKey,
 } from "@/lib/server/business-central-esign";
 
@@ -14,7 +15,12 @@ export async function POST(request: Request, context: EditorUrlRouteContext) {
 
     const { draftId } = await context.params;
     const baseUrl = new URL(request.url).origin;
-    const data = await createBusinessCentralESignEditorUrl(draftId, baseUrl);
+    const body = await readJson(request).catch(() => ({}));
+    const data = await createBusinessCentralESignEditorUrl(
+      draftId,
+      baseUrl,
+      parseBusinessCentralEditorSessionRequest(body),
+    );
 
     return ok({ message: "Business Central E-Sign editor URL created.", data }, undefined, request);
   } catch (error) {

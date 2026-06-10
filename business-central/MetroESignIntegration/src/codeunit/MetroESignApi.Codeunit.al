@@ -120,7 +120,7 @@ codeunit 50370 "MTE ESign API"
         SyncTypedLeaseFields(Lease);
         EnsureDraft(Lease, false);
 
-        ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/editor-url');
+        ResponseObject := PostJson('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/editor-url', BuildEditorSessionBody());
         ApplyEditorUrlResponse(Lease, ResponseObject);
         Lease."Last Error" := '';
         Lease.Modify();
@@ -457,6 +457,17 @@ codeunit 50370 "MTE ESign API"
         Body.Add('subject', Lease.Subject);
         Body.Add('message', Lease.Message);
         Body.Add('values', Values);
+    end;
+
+    local procedure BuildEditorSessionBody() Body: JsonObject
+    begin
+        Body.Add('bcUserId', UserId());
+        Body.Add('bcUserSecurityId', Format(UserSecurityId()));
+        Body.Add('companyName', CompanyName());
+        Body.Add('canEdit', true);
+        Body.Add('canSend', true);
+        Body.Add('canVoid', true);
+        Body.Add('canManageTemplates', false);
     end;
 
     local procedure SyncTypedLeaseFields(var Lease: Record "MTE ESign Lease")

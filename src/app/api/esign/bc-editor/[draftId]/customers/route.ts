@@ -12,8 +12,11 @@ export async function GET(request: Request, context: EditorCustomerSearchRouteCo
     const { searchParams } = new URL(request.url);
     await getBusinessCentralESignEditorDraft(
       draftId,
-      searchParams.get("expires") ?? undefined,
-      searchParams.get("token") ?? undefined,
+      {
+        expires: searchParams.get("expires") ?? undefined,
+        session: searchParams.get("session") ?? undefined,
+        token: searchParams.get("token") ?? undefined,
+      },
     );
 
     const pageSize = Math.min(12, Math.max(1, Number(searchParams.get("pageSize") ?? "8")));

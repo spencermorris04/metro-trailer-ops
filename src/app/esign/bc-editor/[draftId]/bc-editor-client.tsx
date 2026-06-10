@@ -19,6 +19,19 @@ type EditorPayload = {
   template: DocusealTemplateDefinition;
 };
 
+type EditorActor = {
+  bcUserId: string;
+  bcUserSecurityId: string;
+  companyName: string;
+};
+
+type EditorCapabilities = {
+  canEdit: boolean;
+  canSend: boolean;
+  canVoid: boolean;
+  canManageTemplates: boolean;
+};
+
 type CustomerSearchResult = {
   id: string;
   customerNumber: string;
@@ -67,7 +80,10 @@ type EditorProps = {
   template: DocusealTemplateDefinition;
   templates: DocusealTemplateDefinition[];
   expires: number;
+  session: string;
   token: string;
+  actor: EditorActor;
+  capabilities: EditorCapabilities;
 };
 
 const signingLinkVariable = "{submitter.link}";
@@ -369,7 +385,10 @@ export function BusinessCentralESignEditorClient({
   template,
   templates,
   expires,
+  session,
   token,
+  actor,
+  capabilities,
 }: EditorProps) {
   const messageTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [currentDraft, setCurrentDraft] = useState(draft);
@@ -392,7 +411,15 @@ export function BusinessCentralESignEditorClient({
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState("Ready");
   const groupedFields = useMemo(() => groupFields(currentTemplate.fields), [currentTemplate]);
-  const disabled = Boolean(busy) || currentDraft.status === "sent";
+  const disabled = Boolean(busy) || currentDraft.status === "sent" || !capabilities.canEdit;
+  const actionAuth = useMemo(
+    () => ({
+      expires,
+      session,
+      token,
+    }),
+    [expires, session, token],
+  );
   const filledCount = currentTemplate.fields.filter((field) => values[field.name]?.trim()).length;
   const messageHasSigningLink = includesSigningLink(message);
   const location = getEquipmentStoreKey(selectedEquipment) || currentDraft.location;
@@ -448,6 +475,7 @@ export function BusinessCentralESignEditorClient({
         q: query,
         pageSize: "8",
         expires: String(expires),
+        session,
         token,
       });
       const response = await fetch(
@@ -464,7 +492,7 @@ export function BusinessCentralESignEditorClient({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [currentDraft.id, currentDraft.status, customerQuery, expires, token]);
+  }, [currentDraft.id, currentDraft.status, customerQuery, expires, session, token]);
 
   useEffect(() => {
     if (currentDraft.status === "sent") {
@@ -483,6 +511,7 @@ export function BusinessCentralESignEditorClient({
         pageSize: "8",
         rentableOnly: String(rentableOnly),
         expires: String(expires),
+        session,
         token,
       });
       const response = await fetch(
@@ -499,7 +528,7 @@ export function BusinessCentralESignEditorClient({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [currentDraft.id, currentDraft.status, equipmentQuery, expires, rentableOnly, token]);
+  }, [currentDraft.id, currentDraft.status, equipmentQuery, expires, rentableOnly, session, token]);
 
   function loadPayload(payload: EditorPayload) {
     setCurrentDraft(payload.draft);
@@ -573,13 +602,17 @@ export function BusinessCentralESignEditorClient({
   }
 
   async function saveDraft() {
+    if (!capabilities.canEdit || currentDraft.status === "sent") {
+      setFeedback("This Business Central session cannot edit this E-Sign draft.");
+      return false;
+    }
+
     setBusy("save");
     try {
       const result = await submitJson<EditorPayload>(
         `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}`,
         {
-          expires,
-          token,
+          ...actionAuth,
           location: getEquipmentStoreKey(selectedEquipment) || currentDraft.location,
           customerName,
           customerEmail,
@@ -613,7 +646,11 @@ export function BusinessCentralESignEditorClient({
   }
 
   async function switchTemplate(templateKey: string) {
-    if (templateKey === currentTemplate.key || currentDraft.status === "sent") {
+    if (
+      templateKey === currentTemplate.key ||
+      currentDraft.status === "sent" ||
+      !capabilities.canEdit
+    ) {
       return;
     }
 
@@ -622,8 +659,7 @@ export function BusinessCentralESignEditorClient({
       const result = await submitJson<EditorPayload>(
         `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/template`,
         {
-          expires,
-          token,
+          ...actionAuth,
           templateKey,
           location: getEquipmentStoreKey(selectedEquipment) || currentDraft.location,
           values: {
@@ -644,6 +680,15 @@ export function BusinessCentralESignEditorClient({
   }
 
   async function runAction(action: "prepare" | "send" | "invalidate") {
+    if (
+      (action === "prepare" && !capabilities.canEdit) ||
+      (action === "send" && !capabilities.canSend) ||
+      (action === "invalidate" && !capabilities.canVoid)
+    ) {
+      setFeedback("This Business Central session cannot perform that E-Sign action.");
+      return;
+    }
+
     if (action !== "invalidate") {
       const saved = await saveDraft();
       if (!saved) {
@@ -655,7 +700,7 @@ export function BusinessCentralESignEditorClient({
     try {
       const result = await submitJson<EditorPayload>(
         `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/action`,
-        { expires, token, action },
+        { ...actionAuth, action },
       );
       if (result.data) {
         loadPayload(result.data);
@@ -704,6 +749,9 @@ export function BusinessCentralESignEditorClient({
             <span className="rounded-sm border border-slate-300 bg-slate-50 px-2 py-1 text-[0.72rem] font-semibold text-slate-700">
               {currentDraft.status}
             </span>
+            <span className="rounded-sm border border-cyan-200 bg-cyan-50 px-2 py-1 text-[0.72rem] font-semibold text-cyan-900">
+              BC: {actor.bcUserId || "Business Central"}
+            </span>
             <button
               type="button"
               onClick={saveDraft}
@@ -715,7 +763,7 @@ export function BusinessCentralESignEditorClient({
             <button
               type="button"
               onClick={() => runAction("prepare")}
-              disabled={Boolean(busy)}
+              disabled={Boolean(busy) || !capabilities.canEdit}
               className="h-8 rounded-sm border border-slate-300 bg-white px-3 text-[0.76rem] font-semibold text-slate-900 disabled:opacity-50"
             >
               Preview
@@ -724,7 +772,7 @@ export function BusinessCentralESignEditorClient({
               <button
                 type="button"
                 onClick={() => runAction("invalidate")}
-                disabled={Boolean(busy)}
+                disabled={Boolean(busy) || !capabilities.canVoid}
                 className="h-8 rounded-sm border border-red-300 bg-red-50 px-3 text-[0.76rem] font-semibold text-red-700 disabled:opacity-50"
               >
                 Void sent document
@@ -733,7 +781,7 @@ export function BusinessCentralESignEditorClient({
               <button
                 type="button"
                 onClick={() => runAction("send")}
-                disabled={Boolean(busy)}
+                disabled={Boolean(busy) || !capabilities.canSend}
                 className="h-8 rounded-sm bg-slate-950 px-4 text-[0.76rem] font-semibold text-white disabled:bg-slate-400"
               >
                 Send E-Sign Document

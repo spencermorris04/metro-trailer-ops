@@ -2,7 +2,7 @@
   "id": "f72d2a6e-5d07-45f2-b71a-36c2e4d5f8cb",
   "name": "Metro E-Sign Integration",
   "publisher": "Metro Trailer",
-  "version": "1.0.0.12",
+  "version": "1.0.0.13",
   "brief": "Metro Trailer E-Sign lease workflow integration for Business Central.",
   "description": "Creates Metro E-Sign lease workflow data, user pages, Fixed Asset and Customer card integrations, and outbound API calls to the Metro E-Sign backend.",
   "platform": "27.0.0.0",

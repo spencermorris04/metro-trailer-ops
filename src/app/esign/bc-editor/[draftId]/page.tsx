@@ -32,8 +32,11 @@ export default async function BusinessCentralESignEditorPage({
   const query = await searchParams;
   const editor: EditorLoadResult | Error = await getBusinessCentralESignEditorDraft(
     draftId,
-    query.expires,
-    query.token,
+    {
+      expires: query.expires,
+      session: query.session,
+      token: query.token,
+    },
   ).catch((error: unknown) =>
     error instanceof Error ? error : new Error("The editor could not be loaded."),
   );
@@ -49,6 +52,7 @@ export default async function BusinessCentralESignEditorPage({
 
   const expiresValue = Array.isArray(query.expires) ? query.expires[0] : query.expires;
   const tokenValue = Array.isArray(query.token) ? query.token[0] : query.token;
+  const sessionValue = Array.isArray(query.session) ? query.session[0] : query.session;
 
   const templates = await listDocusealPrefillTemplates();
 
@@ -58,7 +62,14 @@ export default async function BusinessCentralESignEditorPage({
       template={editor.template}
       templates={templates}
       expires={Number(expiresValue)}
+      session={sessionValue ?? ""}
       token={tokenValue ?? ""}
+      actor={{
+        bcUserId: editor.session.bcUserId,
+        bcUserSecurityId: editor.session.bcUserSecurityId,
+        companyName: editor.session.companyName,
+      }}
+      capabilities={editor.session.capabilities}
     />
   );
 }

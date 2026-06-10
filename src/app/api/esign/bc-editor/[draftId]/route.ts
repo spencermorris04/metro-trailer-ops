@@ -4,7 +4,8 @@ import { errorResponse, ok, readJson } from "@/lib/server/api";
 import { updateBusinessCentralESignEditorDraft } from "@/lib/server/business-central-esign";
 
 const editorSaveSchema = z.object({
-  expires: z.union([z.string(), z.number()]),
+  expires: z.union([z.string(), z.number()]).optional(),
+  session: z.string().optional(),
   token: z.string().min(1),
   location: z.string().optional(),
   customerName: z.string().optional(),
@@ -24,8 +25,11 @@ export async function POST(request: Request, context: EditorSaveRouteContext) {
     const input = editorSaveSchema.parse(await readJson(request));
     const data = await updateBusinessCentralESignEditorDraft(
       draftId,
-      String(input.expires),
-      input.token,
+      {
+        expires: input.expires,
+        session: input.session,
+        token: input.token,
+      },
       {
         location: input.location,
         customerName: input.customerName,

@@ -37,6 +37,48 @@ const bcDraftSchema = z.object({
 
 export type BusinessCentralDraftInput = z.infer<typeof bcDraftSchema>;
 
+const editorCapabilitiesSchema = z.object({
+  canEdit: z.boolean().default(true),
+  canSend: z.boolean().default(true),
+  canVoid: z.boolean().default(true),
+  canManageTemplates: z.boolean().default(false),
+});
+
+const editorSessionSchema = z.object({
+  draftId: z.string().min(1),
+  expiresAt: z.number().finite(),
+  bcUserId: z.string().optional().default("Business Central"),
+  bcUserSecurityId: z.string().optional().default(""),
+  companyName: z.string().optional().default(""),
+  capabilities: editorCapabilitiesSchema.default({
+    canEdit: true,
+    canSend: true,
+    canVoid: true,
+    canManageTemplates: false,
+  }),
+});
+
+const editorSessionRequestSchema = z.object({
+  bcUserId: z.string().optional().default("Business Central"),
+  bcUserSecurityId: z.string().optional().default(""),
+  companyName: z.string().optional().default(""),
+  canEdit: z.boolean().optional().default(true),
+  canSend: z.boolean().optional().default(true),
+  canVoid: z.boolean().optional().default(true),
+  canManageTemplates: z.boolean().optional().default(false),
+});
+
+export type BusinessCentralEditorSession = z.infer<typeof editorSessionSchema>;
+export type BusinessCentralEditorSessionRequest = z.infer<
+  typeof editorSessionRequestSchema
+>;
+
+export type BusinessCentralEditorAuthInput = {
+  expires?: string | string[] | number | undefined;
+  session?: string | string[] | undefined;
+  token?: string | string[] | undefined;
+};
+
 function getConfiguredApiKeys() {
   return [
     process.env.METRO_BC_ESIGN_API_KEY,
@@ -58,6 +100,31 @@ function signPreviewToken(draftId: string, expiresAt: number, secret: string) {
     .digest("base64url");
 }
 
+function encodeEditorSession(session: BusinessCentralEditorSession) {
+  return Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
+}
+
+function signEditorSession(session: string, secret: string) {
+  return createHmac("sha256", secret).update(session).digest("base64url");
+}
+
+function decodeEditorSession(value: string) {
+  try {
+    return editorSessionSchema.parse(
+      JSON.parse(Buffer.from(value, "base64url").toString("utf8")),
+    );
+  } catch {
+    throw new ApiError(401, "This Metro E-Sign editor session is invalid.");
+  }
+}
+
+function isValidEditorSession(session: string, token: string) {
+  return getConfiguredApiKeys().some((secret) => {
+    const expected = signEditorSession(session, secret);
+    return isEqualSecret(token, expected);
+  });
+}
+
 function isValidPreviewToken(draftId: string, expiresAt: number, token: string) {
   if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) {
     return false;
@@ -77,6 +144,14 @@ function isEqualSecret(received: string, expected: string) {
     receivedBuffer.length === expectedBuffer.length &&
     timingSafeEqual(receivedBuffer, expectedBuffer)
   );
+}
+
+function getFirstString(value: string | string[] | number | undefined) {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return value === undefined ? undefined : String(value);
 }
 
 export function requireBusinessCentralESignKey(request: Request) {
@@ -108,6 +183,10 @@ function mergeCommonValues(input: BusinessCentralDraftInput) {
 
 export function parseBusinessCentralDraftInput(value: unknown) {
   return bcDraftSchema.parse(value);
+}
+
+export function parseBusinessCentralEditorSessionRequest(value: unknown) {
+  return editorSessionRequestSchema.parse(value ?? {});
 }
 
 export async function listBusinessCentralESignTemplates() {
@@ -210,6 +289,7 @@ export async function createBusinessCentralESignPreviewUrl(
 export async function createBusinessCentralESignEditorUrl(
   draftId: string,
   baseUrl: string,
+  input: BusinessCentralEditorSessionRequest = parseBusinessCentralEditorSessionRequest({}),
 ) {
   await getDocusealDraft(draftId);
 
@@ -219,15 +299,114 @@ export async function createBusinessCentralESignEditorUrl(
   }
 
   const expiresAt = Date.now() + editorTokenMaxAgeMs;
-  const token = signPreviewToken(draftId, expiresAt, expectedKeys[0]);
+  const session = encodeEditorSession({
+    draftId,
+    expiresAt,
+    bcUserId: input.bcUserId,
+    bcUserSecurityId: input.bcUserSecurityId,
+    companyName: input.companyName,
+    capabilities: {
+      canEdit: input.canEdit,
+      canSend: input.canSend,
+      canVoid: input.canVoid,
+      canManageTemplates: input.canManageTemplates,
+    },
+  });
+  const token = signEditorSession(session, expectedKeys[0]);
   const url = new URL(`/esign/bc-editor/${encodeURIComponent(draftId)}`, baseUrl);
   url.searchParams.set("expires", String(expiresAt));
+  url.searchParams.set("session", session);
   url.searchParams.set("token", token);
 
   return {
     url: url.toString(),
     expiresAt,
   };
+}
+
+function getLegacyEditorSession(
+  draftId: string,
+  expires: string | string[] | number | undefined,
+  token: string | string[] | undefined,
+) {
+  const expiresValue = getFirstString(expires);
+  const tokenValue = getFirstString(token);
+  const expiresAt = Number(expiresValue);
+
+  if (!expiresValue || !tokenValue || !isValidPreviewToken(draftId, expiresAt, tokenValue)) {
+    return null;
+  }
+
+  return {
+    draftId,
+    expiresAt,
+    bcUserId: "Business Central",
+    bcUserSecurityId: "",
+    companyName: "",
+    capabilities: {
+      canEdit: true,
+      canSend: true,
+      canVoid: true,
+      canManageTemplates: false,
+    },
+  } satisfies BusinessCentralEditorSession;
+}
+
+function validateBusinessCentralEditorAuth(
+  draftId: string,
+  auth: BusinessCentralEditorAuthInput,
+) {
+  const sessionValue = getFirstString(auth.session);
+  const tokenValue = getFirstString(auth.token);
+
+  if (sessionValue && tokenValue) {
+    if (!isValidEditorSession(sessionValue, tokenValue)) {
+      throw new ApiError(401, "This Metro E-Sign editor session is invalid.");
+    }
+
+    const session = decodeEditorSession(sessionValue);
+    if (session.draftId !== draftId || session.expiresAt < Date.now()) {
+      throw new ApiError(401, "This Metro E-Sign editor session is expired.");
+    }
+
+    return session;
+  }
+
+  const legacySession = getLegacyEditorSession(draftId, auth.expires, auth.token);
+  if (!legacySession) {
+    throw new ApiError(401, "This Metro E-Sign editor link is invalid or expired.");
+  }
+
+  return legacySession;
+}
+
+function requireEditorCapability(
+  session: BusinessCentralEditorSession,
+  capability: keyof BusinessCentralEditorSession["capabilities"],
+  message: string,
+) {
+  if (!session.capabilities[capability]) {
+    throw new ApiError(403, message);
+  }
+}
+
+function recordBusinessCentralESignActivity(
+  session: BusinessCentralEditorSession,
+  action: string,
+  metadata: Record<string, unknown> = {},
+) {
+  console.info(
+    JSON.stringify({
+      event: "bc_esign_activity",
+      draftId: session.draftId,
+      action,
+      bcUserId: session.bcUserId,
+      bcUserSecurityId: session.bcUserSecurityId,
+      companyName: session.companyName,
+      metadata,
+      occurredAt: new Date().toISOString(),
+    }),
+  );
 }
 
 export async function getBusinessCentralESignPreviewDraft(
@@ -260,12 +439,33 @@ export async function getBusinessCentralESignPreviewDraft(
   };
 }
 
-export const getBusinessCentralESignEditorDraft = getBusinessCentralESignPreviewDraft;
+export async function getBusinessCentralESignEditorDraft(
+  draftId: string,
+  auth: BusinessCentralEditorAuthInput,
+) {
+  const session = validateBusinessCentralEditorAuth(draftId, auth);
+
+  const [draft, templates] = await Promise.all([
+    getDocusealDraft(draftId),
+    listDocusealPrefillTemplates(),
+  ]);
+  const template = templates.find((candidate) => candidate.key === draft.templateKey);
+
+  if (!template) {
+    throw new ApiError(404, "Metro E-Sign template was not found for this draft.");
+  }
+
+  return {
+    draft,
+    template,
+    expiresAt: session.expiresAt,
+    session,
+  };
+}
 
 export async function updateBusinessCentralESignEditorDraft(
   draftId: string,
-  expires: string | string[] | undefined,
-  token: string | string[] | undefined,
+  auth: BusinessCentralEditorAuthInput,
   input: {
     location?: string;
     customerName?: string;
@@ -275,8 +475,13 @@ export async function updateBusinessCentralESignEditorDraft(
     values?: Record<string, unknown>;
   },
 ) {
-  const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
+  const { draft, session } = await getBusinessCentralESignEditorDraft(draftId, auth);
+  requireEditorCapability(session, "canEdit", "This Business Central session cannot edit this E-Sign draft.");
   const updatedDraft = await updateDocusealDraft(draft.id, input);
+  recordBusinessCentralESignActivity(session, "save", {
+    templateKey: updatedDraft.templateKey,
+    fields: Object.keys(input.values ?? {}),
+  });
   const templates = await listDocusealPrefillTemplates();
   const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
 
@@ -292,16 +497,19 @@ export async function updateBusinessCentralESignEditorDraft(
 
 export async function switchBusinessCentralESignEditorTemplate(
   draftId: string,
-  expires: string | string[] | undefined,
-  token: string | string[] | undefined,
+  auth: BusinessCentralEditorAuthInput,
   input: {
     templateKey: string;
     location?: string;
     values?: Record<string, unknown>;
   },
 ) {
-  const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
+  const { draft, session } = await getBusinessCentralESignEditorDraft(draftId, auth);
+  requireEditorCapability(session, "canEdit", "This Business Central session cannot change this E-Sign template.");
   const updatedDraft = await switchDocusealDraftTemplate(draft.id, input);
+  recordBusinessCentralESignActivity(session, "template.change", {
+    templateKey: input.templateKey,
+  });
   const templates = await listDocusealPrefillTemplates();
   const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
 
@@ -317,17 +525,28 @@ export async function switchBusinessCentralESignEditorTemplate(
 
 export async function runBusinessCentralESignEditorAction(
   draftId: string,
-  expires: string | string[] | undefined,
-  token: string | string[] | undefined,
+  auth: BusinessCentralEditorAuthInput,
   action: "prepare" | "send" | "invalidate",
 ) {
-  const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
+  const { draft, session } = await getBusinessCentralESignEditorDraft(draftId, auth);
+  if (action === "prepare") {
+    requireEditorCapability(session, "canEdit", "This Business Central session cannot prepare this E-Sign draft.");
+  } else if (action === "send") {
+    requireEditorCapability(session, "canSend", "This Business Central session cannot send E-Sign documents.");
+  } else {
+    requireEditorCapability(session, "canVoid", "This Business Central session cannot void E-Sign documents.");
+  }
+
   const updatedDraft =
     action === "prepare"
       ? await prepareDocusealDraftPreview(draft.id)
       : action === "send"
         ? await sendDocusealDraft(draft.id)
         : await invalidateDocusealDraft(draft.id);
+  recordBusinessCentralESignActivity(session, action, {
+    status: updatedDraft.status,
+    docusealSubmissionId: updatedDraft.docusealSubmissionId,
+  });
   const templates = await listDocusealPrefillTemplates();
   const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
 
