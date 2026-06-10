@@ -9,11 +9,11 @@ page 50377 "MTE ESign Preview Part"
     {
         area(Content)
         {
-            usercontrol(Preview; "Microsoft.Dynamics.Nav.Client.WebPageViewer")
+            usercontrol(Preview; "MTE ESign Web Viewer")
             {
                 ApplicationArea = All;
 
-                trigger ControlAddInReady(callbackUrl: Text)
+                trigger ControlAddInReady()
                 begin
                     ControlReady := true;
                     LoadPreview();
