@@ -23,5 +23,10 @@ page 50374 "MTE ESign Lease Card"
         Api: Codeunit "MTE ESign API";
     begin
         Api.EnsureLeaseTemplate(Rec);
+        if IsNullGuid(Rec."Lease ID") then begin
+            Rec."Lease ID" := CreateGuid();
+            Rec.Insert(true);
+            CurrPage.Update(false);
+        end;
     end;
 }

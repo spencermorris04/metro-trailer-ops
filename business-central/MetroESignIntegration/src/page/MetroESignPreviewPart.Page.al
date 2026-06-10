@@ -50,7 +50,7 @@ page 50377 "MTE ESign Preview Part"
                 '<div style="border:1px solid #cbd5e1;background:white;padding:16px;max-width:560px;">' +
                 '<div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">Metro E-Sign Editor</div>' +
                 '<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a;">No editor loaded</div>' +
-                '<div style="margin-top:6px;font-size:13px;line-height:1.45;">Save this E-Sign record, then reopen it to load the editor.</div>' +
+                '<div style="margin-top:6px;font-size:13px;line-height:1.45;">The E-Sign control record is still being created. Refresh this page if the editor does not load automatically.</div>' +
                 '</div></div>');
             exit;
         end;
