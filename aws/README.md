@@ -121,7 +121,7 @@ DocuSeal runtime:
 - ACM certificate: `arn:aws:acm:us-east-2:452391802972:certificate/dbc186a4-eed8-4b21-8dd1-ece6a1ebdedd`
 - ECS cluster: `metro-trailer-docuseal`
 - ECR repository: `452391802972.dkr.ecr.us-east-2.amazonaws.com/metro-trailer-docuseal`
-- Current deployed image tag: `4265fb363a639319ec1416f848c8e037d0462578`
+- Current deployed image tag: `757e7cd56a5b10c7a82c0b15c9daeba56d218ebe`
 - Active Storage bucket: `metro-trailer-docuseal-attachments-452391802972-us-east-2`
 - Secrets:
   - `metro-trailer/docuseal/app`
