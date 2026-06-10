@@ -8,6 +8,7 @@ controladdin "MTE ESign Web Viewer"
     MinimumHeight = 420;
 
     event ControlAddInReady()
+    event EditorStateChanged(Payload: Text)
 
     procedure Navigate(Url: Text)
 

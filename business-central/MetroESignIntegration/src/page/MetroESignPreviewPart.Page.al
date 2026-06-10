@@ -18,6 +18,11 @@ page 50377 "MTE ESign Preview Part"
                     ControlReady := true;
                     LoadPreview();
                 end;
+
+                trigger EditorStateChanged(Payload: Text)
+                begin
+                    ApplyEditorState(Payload);
+                end;
             }
         }
     }
@@ -54,6 +59,131 @@ page 50377 "MTE ESign Preview Part"
             CurrPage.Preview.Navigate(Rec."Editor URL")
         else
             CurrPage.Preview.Navigate(Rec."Preview URL");
+    end;
+
+    local procedure ApplyEditorState(Payload: Text)
+    var
+        Customer: Record Customer;
+        FixedAsset: Record "Fixed Asset";
+        Root: JsonObject;
+        Changed: Boolean;
+        CustomerNo: Code[20];
+        CustomerName: Text[100];
+        CustomerEmail: Text[250];
+        FixedAssetNo: Code[20];
+        UnitDescription: Text[100];
+        RentalOrderNo: Code[30];
+        LocationCode: Code[30];
+        StatusText: Text;
+        SigningUrl: Text[2048];
+        SubmissionId: Integer;
+    begin
+        if Payload = '' then
+            exit;
+
+        if not Root.ReadFrom(Payload) then
+            exit;
+
+        CustomerNo := CopyStr(GetJsonText(Root, 'customerNo'), 1, MaxStrLen(CustomerNo));
+        CustomerName := CopyStr(GetJsonText(Root, 'customerName'), 1, MaxStrLen(CustomerName));
+        CustomerEmail := CopyStr(GetJsonText(Root, 'customerEmail'), 1, MaxStrLen(CustomerEmail));
+        FixedAssetNo := CopyStr(GetJsonText(Root, 'unitNo'), 1, MaxStrLen(FixedAssetNo));
+        UnitDescription := CopyStr(GetJsonText(Root, 'unitDescription'), 1, MaxStrLen(UnitDescription));
+        RentalOrderNo := CopyStr(GetJsonText(Root, 'rentalOrderNo'), 1, MaxStrLen(RentalOrderNo));
+        LocationCode := CopyStr(GetJsonText(Root, 'location'), 1, MaxStrLen(LocationCode));
+        StatusText := LowerCase(GetJsonText(Root, 'status'));
+        SigningUrl := CopyStr(GetJsonText(Root, 'signingUrl'), 1, MaxStrLen(SigningUrl));
+        SubmissionId := GetJsonInteger(Root, 'docusealSubmissionId');
+
+        if (CustomerNo <> '') and (Rec."Customer No." <> CustomerNo) then begin
+            if Customer.Get(CustomerNo) then
+                Rec.Validate("Customer No.", CustomerNo)
+            else
+                Rec."Customer No." := CustomerNo;
+            Changed := true;
+        end;
+        if (CustomerName <> '') and (Rec."Customer Name" <> CustomerName) then begin
+            Rec."Customer Name" := CustomerName;
+            Changed := true;
+        end;
+        if (CustomerEmail <> '') and (Rec."Customer Email" <> CustomerEmail) then begin
+            Rec."Customer Email" := CustomerEmail;
+            Changed := true;
+        end;
+
+        if (FixedAssetNo <> '') and (Rec."Fixed Asset No." <> FixedAssetNo) then begin
+            if FixedAsset.Get(FixedAssetNo) then
+                Rec.Validate("Fixed Asset No.", FixedAssetNo)
+            else begin
+                Rec."Fixed Asset No." := FixedAssetNo;
+                Rec."Unit No." := FixedAssetNo;
+            end;
+            Changed := true;
+        end;
+        if (UnitDescription <> '') and (Rec."Unit Description" <> UnitDescription) then begin
+            Rec."Unit Description" := UnitDescription;
+            Changed := true;
+        end;
+        if (RentalOrderNo <> '') and (Rec."Rental Order No." <> RentalOrderNo) then begin
+            Rec."Rental Order No." := RentalOrderNo;
+            Changed := true;
+        end;
+        if (LocationCode <> '') and (Rec.Location <> LocationCode) then begin
+            Rec.Location := LocationCode;
+            Changed := true;
+        end;
+        if (SigningUrl <> '') and (Rec."Signing URL" <> SigningUrl) then begin
+            Rec."Signing URL" := SigningUrl;
+            Changed := true;
+        end;
+        if (SubmissionId <> 0) and (Rec."DocuSeal Submission ID" <> SubmissionId) then begin
+            Rec."DocuSeal Submission ID" := SubmissionId;
+            Changed := true;
+        end;
+
+        if StatusText = 'sent' then begin
+            if Rec.Status <> Rec.Status::Sent then begin
+                Rec.Status := Rec.Status::Sent;
+                Changed := true;
+            end;
+            if Rec."Sent At" = 0DT then begin
+                Rec."Sent At" := CurrentDateTime();
+                Changed := true;
+            end;
+        end else
+            if StatusText = 'draft' then
+                if Rec.Status <> Rec.Status::Draft then begin
+                    Rec.Status := Rec.Status::Draft;
+                    Clear(Rec."Sent At");
+                    Changed := true;
+                end;
+
+        if Changed then begin
+            Rec.Modify(true);
+            CurrPage.Update(false);
+        end;
+    end;
+
+    local procedure GetJsonText(Object: JsonObject; Name: Text): Text
+    var
+        Token: JsonToken;
+    begin
+        if not Object.Get(Name, Token) then
+            exit('');
+        if Token.AsValue().IsNull() then
+            exit('');
+        exit(Token.AsValue().AsText());
+    end;
+
+    local procedure GetJsonInteger(Object: JsonObject; Name: Text): Integer
+    var
+        Token: JsonToken;
+    begin
+        if not Object.Get(Name, Token) then
+            exit(0);
+        if Token.AsValue().IsNull() then
+            exit(0);
+        exit(Token.AsValue().AsInteger());
     end;
 
     var

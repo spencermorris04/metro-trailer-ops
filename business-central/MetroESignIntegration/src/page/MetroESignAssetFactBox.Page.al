@@ -24,6 +24,16 @@ page 50375 "MTE ESign Asset FB"
                         OpenRelatedLeases();
                     end;
                 }
+                field(LatestDocumentText; LatestDocumentText)
+                {
+                    ApplicationArea = All;
+                    Caption = 'Latest Document';
+
+                    trigger OnDrillDown()
+                    begin
+                        OpenLatestLease();
+                    end;
+                }
                 field(LatestStatusText; LatestStatusText)
                 {
                     ApplicationArea = All;
@@ -64,6 +74,17 @@ page 50375 "MTE ESign Asset FB"
                     OpenRelatedLeases();
                 end;
             }
+            action(OpenLatestESign)
+            {
+                Caption = 'Open Latest E-Sign';
+                ApplicationArea = All;
+                Image = Document;
+
+                trigger OnAction()
+                begin
+                    OpenLatestLease();
+                end;
+            }
         }
     }
 
@@ -78,6 +99,7 @@ page 50375 "MTE ESign Asset FB"
         LeaseCount: Integer;
     begin
         Clear(LeaseCountText);
+        Clear(LatestDocumentText);
         Clear(LatestStatusText);
         Clear(LatestUpdatedAt);
 
@@ -92,6 +114,9 @@ page 50375 "MTE ESign Asset FB"
         Lease.SetCurrentKey("Fixed Asset No.", Status, "Updated At");
         Lease.Ascending(false);
         if Lease.FindFirst() then begin
+            LatestDocumentText := Lease."Template Name";
+            if LatestDocumentText = '' then
+                LatestDocumentText := Format(Lease."Lease ID");
             LatestStatusText := Format(Lease.Status);
             LatestUpdatedAt := Lease."Updated At";
         end;
@@ -103,6 +128,19 @@ page 50375 "MTE ESign Asset FB"
     begin
         Lease.SetRange("Fixed Asset No.", Rec."No.");
         Page.Run(Page::"MTE ESign Leases", Lease);
+    end;
+
+    local procedure OpenLatestLease()
+    var
+        Lease: Record "MTE ESign Lease";
+    begin
+        Lease.SetRange("Fixed Asset No.", Rec."No.");
+        Lease.SetCurrentKey("Fixed Asset No.", Status, "Updated At");
+        Lease.Ascending(false);
+        if not Lease.FindFirst() then
+            Error('No E-Sign documents exist for fixed asset %1.', Rec."No.");
+
+        Page.Run(Page::"MTE ESign Lease Card", Lease);
     end;
 
     local procedure CreateLeaseForAsset()
@@ -121,6 +159,7 @@ page 50375 "MTE ESign Asset FB"
 
     var
         LeaseCountText: Text[30];
+        LatestDocumentText: Text[100];
         LatestStatusText: Text[30];
         LatestUpdatedAt: DateTime;
 }

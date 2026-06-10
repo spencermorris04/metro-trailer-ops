@@ -380,6 +380,7 @@ export function BusinessCentralESignEditorClient({
   });
   const [customerName, setCustomerName] = useState(draft.customerName);
   const [customerEmail, setCustomerEmail] = useState(draft.customerEmail);
+  const [rentalOrderNo, setRentalOrderNo] = useState(draft.values.rental_order_number ?? "");
   const [subject, setSubject] = useState(draft.subject);
   const [message, setMessage] = useState(draft.message);
   const [customerQuery, setCustomerQuery] = useState(draft.customerName);
@@ -394,6 +395,42 @@ export function BusinessCentralESignEditorClient({
   const disabled = Boolean(busy) || currentDraft.status === "sent";
   const filledCount = currentTemplate.fields.filter((field) => values[field.name]?.trim()).length;
   const messageHasSigningLink = includesSigningLink(message);
+  const location = getEquipmentStoreKey(selectedEquipment) || currentDraft.location;
+
+  function publishEditorState(next?: {
+    draft?: DocusealDraft;
+    values?: Record<string, string>;
+    customerName?: string;
+    customerEmail?: string;
+    rentalOrderNo?: string;
+    location?: string;
+  }) {
+    const draftToPublish = next?.draft ?? currentDraft;
+    const valuesToPublish = next?.values ?? values;
+
+    window.parent.postMessage(
+      {
+        type: "metro-esign-editor-state",
+        payload: {
+          customerNo: valuesToPublish.customer_number ?? "",
+          customerName: next?.customerName ?? customerName,
+          customerEmail: next?.customerEmail ?? customerEmail,
+          unitNo: valuesToPublish.unit_number ?? "",
+          unitDescription: valuesToPublish.unit_description ?? "",
+          rentalOrderNo: next?.rentalOrderNo ?? rentalOrderNo,
+          location: next?.location ?? location,
+          status: draftToPublish.status,
+          signingUrl: draftToPublish.docusealSubmitterUrl ?? "",
+          docusealSubmissionId: draftToPublish.docusealSubmissionId ?? 0,
+        },
+      },
+      "*",
+    );
+  }
+
+  useEffect(() => {
+    publishEditorState();
+  });
 
   useEffect(() => {
     if (currentDraft.status === "sent") {
@@ -470,6 +507,7 @@ export function BusinessCentralESignEditorClient({
     setValues({ ...emptyValues(payload.template), ...payload.draft.values });
     setCustomerName(payload.draft.customerName);
     setCustomerEmail(payload.draft.customerEmail);
+    setRentalOrderNo(payload.draft.values.rental_order_number ?? "");
     setSubject(payload.draft.subject);
     setMessage(payload.draft.message);
     setCustomerQuery(payload.draft.customerName);
@@ -478,6 +516,9 @@ export function BusinessCentralESignEditorClient({
 
   function updateValue(name: string, value: string) {
     setValues((current) => ({ ...current, [name]: value }));
+    if (name === "rental_order_number") {
+      setRentalOrderNo(value);
+    }
     setFeedback("Unsaved changes");
   }
 
@@ -544,11 +585,22 @@ export function BusinessCentralESignEditorClient({
           customerEmail,
           subject,
           message,
-          values,
+          values: {
+            ...values,
+            rental_order_number: rentalOrderNo,
+          },
         },
       );
       if (result.data) {
         loadPayload(result.data);
+        publishEditorState({
+          draft: result.data.draft,
+          values: result.data.draft.values,
+          customerName: result.data.draft.customerName,
+          customerEmail: result.data.draft.customerEmail,
+          rentalOrderNo: result.data.draft.values.rental_order_number ?? rentalOrderNo,
+          location: result.data.draft.location,
+        });
       }
       setFeedback(result.message ?? "Saved.");
       return true;
@@ -574,7 +626,10 @@ export function BusinessCentralESignEditorClient({
           token,
           templateKey,
           location: getEquipmentStoreKey(selectedEquipment) || currentDraft.location,
-          values,
+          values: {
+            ...values,
+            rental_order_number: rentalOrderNo,
+          },
         },
       );
       if (result.data) {
@@ -604,6 +659,14 @@ export function BusinessCentralESignEditorClient({
       );
       if (result.data) {
         loadPayload(result.data);
+        publishEditorState({
+          draft: result.data.draft,
+          values: result.data.draft.values,
+          customerName: result.data.draft.customerName,
+          customerEmail: result.data.draft.customerEmail,
+          rentalOrderNo: result.data.draft.values.rental_order_number ?? rentalOrderNo,
+          location: result.data.draft.location,
+        });
         if (action === "prepare" && result.data.draft.docusealSubmitterUrl) {
           window.open(result.data.draft.docusealSubmitterUrl, "_blank", "noopener,noreferrer");
         }
@@ -682,7 +745,7 @@ export function BusinessCentralESignEditorClient({
       </header>
 
       <div className="mx-auto max-w-[1500px] border-x border-slate-300 bg-white">
-        <section className="grid gap-3 p-4 lg:grid-cols-4">
+        <section className="grid gap-3 p-4 lg:grid-cols-5">
           <label className="grid gap-1">
             <span className="text-[0.72rem] font-semibold text-slate-600">Template</span>
             <select
@@ -756,6 +819,19 @@ export function BusinessCentralESignEditorClient({
                 ))}
               </div>
             ) : null}
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-[0.72rem] font-semibold text-slate-600">Rental order no.</span>
+            <input
+              value={rentalOrderNo}
+              disabled={disabled}
+              onChange={(event) => {
+                setRentalOrderNo(event.target.value);
+                updateValue("rental_order_number", event.target.value);
+              }}
+              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
+            />
           </label>
 
           <label className="flex items-end gap-2 pb-2 text-[0.76rem] font-semibold text-slate-700">

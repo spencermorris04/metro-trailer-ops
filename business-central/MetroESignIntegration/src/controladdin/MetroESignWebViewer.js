@@ -47,4 +47,16 @@
     frame.removeAttribute("src");
     frame.srcdoc = html || "";
   };
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+
+    if (!data || data.type !== "metro-esign-editor-state") {
+      return;
+    }
+
+    Microsoft.Dynamics.NAV.InvokeExtensibilityMethod("EditorStateChanged", [
+      JSON.stringify(data.payload || {}),
+    ]);
+  });
 })();
