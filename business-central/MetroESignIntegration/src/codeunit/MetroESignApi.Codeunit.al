@@ -80,17 +80,18 @@ codeunit 50370 "MTE ESign API"
         ResponseObject: JsonObject;
     begin
         PopulateLeaseFields(Lease);
+        SyncTypedLeaseFields(Lease);
         EnsureDraft(Lease);
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/prepare');
         ApplyDraftResponse(Lease, ResponseObject);
+        ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/preview-url');
+        ApplyPreviewUrlResponse(Lease, ResponseObject);
         Lease."Last Error" := '';
         Lease.Modify();
 
-        if Lease."Signing URL" = '' then
+        if Lease."Preview URL" = '' then
             Error('Metro E-Sign did not return a preview URL.');
-
-        Hyperlink(Lease."Signing URL");
     end;
 
     procedure SendLease(var Lease: Record "MTE ESign Lease")
@@ -98,6 +99,7 @@ codeunit 50370 "MTE ESign API"
         ResponseObject: JsonObject;
     begin
         PopulateLeaseFields(Lease);
+        SyncTypedLeaseFields(Lease);
         EnsureDraft(Lease);
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/send');
@@ -195,6 +197,8 @@ codeunit 50370 "MTE ESign API"
                     LeaseField.Modify();
                 end;
             until TemplateField.Next() = 0;
+
+        SyncTypedLeaseFields(Lease);
     end;
 
     local procedure SeedBuiltInTemplateFields(TemplateCode: Code[30])
@@ -341,8 +345,13 @@ codeunit 50370 "MTE ESign API"
         if Lease.Status = Lease.Status::Sent then
             Error('This Metro E-Sign lease has already been sent. Void the sent document before sending again.');
 
-        if Lease."DocuSeal Draft ID" <> '' then
+        if Lease."DocuSeal Draft ID" <> '' then begin
+            ResponseObject := PostJson('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/update', BuildDraftBody(Lease));
+            ApplyDraftResponse(Lease, ResponseObject);
+            Lease."Last Error" := '';
+            Lease.Modify();
             exit;
+        end;
 
         if Lease."Backend Template Key" = '' then
             Error('Select a Metro E-Sign template before sending.');
@@ -358,17 +367,63 @@ codeunit 50370 "MTE ESign API"
         Field: Record "MTE ESign Lease Field";
         Values: JsonObject;
     begin
-        Values.Add('customer_number', Lease."Customer No.");
-        Values.Add('customer_name', Lease."Customer Name");
-        Values.Add('unit_number', Lease."Fixed Asset No.");
-        Values.Add('unit_description', Lease."Unit Description");
-        Values.Add('rental_order_number', Lease."Rental Order No.");
+        AddDraftValue(Values, 'customer_number', Lease."Customer No.");
+        AddDraftValue(Values, 'customer_name', Lease."Customer Name");
+        AddDraftValue(Values, 'lessee_name', Lease."Customer Name");
+        AddDraftValue(Values, 'lessee_location', BuildCustomerLocation(Lease));
+        AddDraftValue(Values, 'customer_phone', Lease."Phone Number");
+        AddDraftValue(Values, 'ordered_by', Lease."Ordered By");
+        AddDraftValue(Values, 'order_number', Lease."Order No.");
+        AddDraftValue(Values, 'rental_order_number', Lease."Rental Order No.");
+        AddDraftValue(Values, 'purchase_order_number', Lease."PO No.");
+        AddDraftValue(Values, 'agreement_date', FormatDateBlank(Lease."Date Signed"));
+        AddDraftValue(Values, 'unit_number', Lease."Unit No.");
+        AddDraftValue(Values, 'unit_description', Lease."Unit Description");
+        AddDraftValue(Values, 'unit_type', Lease."Product No.");
+        AddDraftValue(Values, 'vin_number', Lease.VIN);
+        AddDraftValue(Values, 'tag_number', Lease."Tag No.");
+        AddDraftValue(Values, 'rental_rate_per_day', FormatDecimalBlank(Lease."Per Day Rate"));
+        AddDraftValue(Values, 'rental_rate_per_week', FormatDecimalBlank(Lease."Per Week Rate"));
+        AddDraftValue(Values, 'rental_rate_per_month', FormatDecimalBlank(Lease."Per Month Rate"));
+        AddDraftValue(Values, 'minimum_lease_period', Lease."Minimum Period");
+        AddDraftValue(Values, 'special_instructions_cpu', FormatCpu(Lease.CPU));
+        AddDraftValue(Values, 'special_instructions_pickup', Lease.Pickup);
+        AddDraftValue(Values, 'special_instructions_line_1', Lease."Special Instructions");
+        AddDraftValue(Values, 'inspection_out_brakes', Lease."Outbound Brakes");
+        AddDraftValue(Values, 'inspection_out_landing_gear', Lease."Outbound Landing Gear");
+        AddDraftValue(Values, 'inspection_out_lights', Lease."Outbound Lights");
+        AddDraftValue(Values, 'inspection_out_undercarriage', Lease."Outbound Undercarriage");
+        AddDraftValue(Values, 'inspection_out_doors', Lease."Outbound Doors");
+        AddDraftValue(Values, 'inspection_out_flaps', Lease."Outbound Flaps");
+        AddDraftValue(Values, 'inspection_out_fhwa', FormatDateBlank(Lease.FHWA));
+        AddDraftValue(Values, 'inspection_out_comments_line_1', Lease."Outbound Comments");
+        AddDraftValue(Values, 'tire_lo_front_gauge_out', Lease."LFO Reading");
+        AddDraftValue(Values, 'tire_li_front_gauge_out', Lease."LFI Reading");
+        AddDraftValue(Values, 'tire_lo_rear_gauge_out', Lease."LRO Reading");
+        AddDraftValue(Values, 'tire_li_rear_gauge_out', Lease."LRI Reading");
+        AddDraftValue(Values, 'tire_ro_front_gauge_out', Lease."RFO Reading");
+        AddDraftValue(Values, 'tire_ri_front_gauge_out', Lease."RFI Reading");
+        AddDraftValue(Values, 'tire_ro_rear_gauge_out', Lease."RRO Reading");
+        AddDraftValue(Values, 'tire_ri_rear_gauge_out', Lease."RRI Reading");
+        AddDraftValue(Values, 'tire_lo_front_gauge_in', Lease."Inbound LFO Reading");
+        AddDraftValue(Values, 'tire_li_front_gauge_in', Lease."Inbound LFI Reading");
+        AddDraftValue(Values, 'tire_lo_rear_gauge_in', Lease."Inbound LRO Reading");
+        AddDraftValue(Values, 'tire_li_rear_gauge_in', Lease."Inbound LRI Reading");
+        AddDraftValue(Values, 'tire_ro_front_gauge_in', Lease."Inbound RFO Reading");
+        AddDraftValue(Values, 'tire_ri_front_gauge_in', Lease."Inbound RFI Reading");
+        AddDraftValue(Values, 'tire_ro_rear_gauge_in', Lease."Inbound RRO Reading");
+        AddDraftValue(Values, 'tire_ri_rear_gauge_in', Lease."Inbound RRI Reading");
+        AddDraftValue(Values, 'inspection_in_notes_line_1', Lease."Inspection In 1");
+        AddDraftValue(Values, 'inspection_in_notes_line_2', Lease."Inspection In 2");
+        AddDraftValue(Values, 'inspection_in_month', FormatDatePartBlank(Lease."Inbound Inspection Date", 2));
+        AddDraftValue(Values, 'inspection_in_day', FormatDatePartBlank(Lease."Inbound Inspection Date", 1));
+        AddDraftValue(Values, 'inspection_in_year', FormatDatePartBlank(Lease."Inbound Inspection Date", 3));
 
         Field.SetRange("Lease ID", Lease."Lease ID");
         if Field.FindSet() then
             repeat
                 if Field."Field Name" <> '' then
-                    Values.Replace(Field."Field Name", Field.Value);
+                    AddDraftValue(Values, Field."Field Name", Field.Value);
             until Field.Next() = 0;
 
         Body.Add('templateKey', Lease."Backend Template Key");
@@ -382,6 +437,139 @@ codeunit 50370 "MTE ESign API"
         Body.Add('subject', Lease.Subject);
         Body.Add('message', Lease.Message);
         Body.Add('values', Values);
+    end;
+
+    local procedure SyncTypedLeaseFields(var Lease: Record "MTE ESign Lease")
+    begin
+        SetLeaseFieldValue(Lease, 'customer_phone', Lease."Phone Number");
+        SetLeaseFieldValue(Lease, 'ordered_by', Lease."Ordered By");
+        SetLeaseFieldValue(Lease, 'customer_number', Lease."Customer No.");
+        SetLeaseFieldValue(Lease, 'order_number', Lease."Order No.");
+        SetLeaseFieldValue(Lease, 'purchase_order_number', Lease."PO No.");
+        SetLeaseFieldValue(Lease, 'agreement_date', FormatDateBlank(Lease."Date Signed"));
+        SetLeaseFieldValue(Lease, 'lessee_name', Lease."Customer Name");
+        SetLeaseFieldValue(Lease, 'lessee_location', BuildCustomerLocation(Lease));
+        SetLeaseFieldValue(Lease, 'unit_number', Lease."Unit No.");
+        SetLeaseFieldValue(Lease, 'unit_type', Lease."Product No.");
+        SetLeaseFieldValue(Lease, 'vin_number', Lease.VIN);
+        SetLeaseFieldValue(Lease, 'tag_number', Lease."Tag No.");
+        SetLeaseFieldValue(Lease, 'rental_rate_per_day', FormatDecimalBlank(Lease."Per Day Rate"));
+        SetLeaseFieldValue(Lease, 'rental_rate_per_week', FormatDecimalBlank(Lease."Per Week Rate"));
+        SetLeaseFieldValue(Lease, 'rental_rate_per_month', FormatDecimalBlank(Lease."Per Month Rate"));
+        SetLeaseFieldValue(Lease, 'minimum_lease_period', Lease."Minimum Period");
+        SetLeaseFieldValue(Lease, 'special_instructions_cpu', FormatCpu(Lease.CPU));
+        SetLeaseFieldValue(Lease, 'special_instructions_pickup', Lease.Pickup);
+        SetLeaseFieldValue(Lease, 'special_instructions_line_1', Lease."Special Instructions");
+        SetLeaseFieldValue(Lease, 'inspection_out_brakes', Lease."Outbound Brakes");
+        SetLeaseFieldValue(Lease, 'inspection_out_landing_gear', Lease."Outbound Landing Gear");
+        SetLeaseFieldValue(Lease, 'inspection_out_lights', Lease."Outbound Lights");
+        SetLeaseFieldValue(Lease, 'inspection_out_undercarriage', Lease."Outbound Undercarriage");
+        SetLeaseFieldValue(Lease, 'inspection_out_doors', Lease."Outbound Doors");
+        SetLeaseFieldValue(Lease, 'inspection_out_flaps', Lease."Outbound Flaps");
+        SetLeaseFieldValue(Lease, 'inspection_out_fhwa', FormatDateBlank(Lease.FHWA));
+        SetLeaseFieldValue(Lease, 'inspection_out_comments_line_1', Lease."Outbound Comments");
+        SetLeaseFieldValue(Lease, 'tire_lo_front_gauge_out', Lease."LFO Reading");
+        SetLeaseFieldValue(Lease, 'tire_li_front_gauge_out', Lease."LFI Reading");
+        SetLeaseFieldValue(Lease, 'tire_lo_rear_gauge_out', Lease."LRO Reading");
+        SetLeaseFieldValue(Lease, 'tire_li_rear_gauge_out', Lease."LRI Reading");
+        SetLeaseFieldValue(Lease, 'tire_ro_front_gauge_out', Lease."RFO Reading");
+        SetLeaseFieldValue(Lease, 'tire_ri_front_gauge_out', Lease."RFI Reading");
+        SetLeaseFieldValue(Lease, 'tire_ro_rear_gauge_out', Lease."RRO Reading");
+        SetLeaseFieldValue(Lease, 'tire_ri_rear_gauge_out', Lease."RRI Reading");
+        SetLeaseFieldValue(Lease, 'tire_lo_front_gauge_in', Lease."Inbound LFO Reading");
+        SetLeaseFieldValue(Lease, 'tire_li_front_gauge_in', Lease."Inbound LFI Reading");
+        SetLeaseFieldValue(Lease, 'tire_lo_rear_gauge_in', Lease."Inbound LRO Reading");
+        SetLeaseFieldValue(Lease, 'tire_li_rear_gauge_in', Lease."Inbound LRI Reading");
+        SetLeaseFieldValue(Lease, 'tire_ro_front_gauge_in', Lease."Inbound RFO Reading");
+        SetLeaseFieldValue(Lease, 'tire_ri_front_gauge_in', Lease."Inbound RFI Reading");
+        SetLeaseFieldValue(Lease, 'tire_ro_rear_gauge_in', Lease."Inbound RRO Reading");
+        SetLeaseFieldValue(Lease, 'tire_ri_rear_gauge_in', Lease."Inbound RRI Reading");
+        SetLeaseFieldValue(Lease, 'inspection_in_notes_line_1', Lease."Inspection In 1");
+        SetLeaseFieldValue(Lease, 'inspection_in_notes_line_2', Lease."Inspection In 2");
+        SetLeaseFieldValue(Lease, 'inspection_in_month', FormatDatePartBlank(Lease."Inbound Inspection Date", 2));
+        SetLeaseFieldValue(Lease, 'inspection_in_day', FormatDatePartBlank(Lease."Inbound Inspection Date", 1));
+        SetLeaseFieldValue(Lease, 'inspection_in_year', FormatDatePartBlank(Lease."Inbound Inspection Date", 3));
+    end;
+
+    local procedure SetLeaseFieldValue(Lease: Record "MTE ESign Lease"; FieldName: Text[100]; FieldValue: Text)
+    var
+        LeaseField: Record "MTE ESign Lease Field";
+    begin
+        if IsNullGuid(Lease."Lease ID") then
+            exit;
+
+        if not LeaseField.Get(Lease."Lease ID", FieldName) then
+            exit;
+
+        if LeaseField.Value = CopyStr(FieldValue, 1, MaxStrLen(LeaseField.Value)) then
+            exit;
+
+        LeaseField.Value := CopyStr(FieldValue, 1, MaxStrLen(LeaseField.Value));
+        LeaseField.Modify();
+    end;
+
+    local procedure AddDraftValue(var Values: JsonObject; Name: Text; Value: Text)
+    begin
+        if Values.Contains(Name) then
+            Values.Replace(Name, Value)
+        else
+            Values.Add(Name, Value);
+    end;
+
+    local procedure BuildCustomerLocation(Lease: Record "MTE ESign Lease"): Text
+    var
+        LocationText: Text;
+    begin
+        LocationText := Lease."Customer Address";
+
+        if Lease."Customer City" <> '' then
+            LocationText := AddTextPart(LocationText, Lease."Customer City");
+        if Lease."Customer State" <> '' then
+            LocationText := AddTextPart(LocationText, Lease."Customer State");
+        if Lease."Customer ZIP Code" <> '' then
+            LocationText := AddTextPart(LocationText, Lease."Customer ZIP Code");
+
+        exit(LocationText);
+    end;
+
+    local procedure AddTextPart(Value: Text; Part: Text): Text
+    begin
+        if Value = '' then
+            exit(Part);
+
+        exit(Value + ', ' + Part);
+    end;
+
+    local procedure FormatCpu(Cpu: Boolean): Text
+    begin
+        if Cpu then
+            exit('Yes');
+
+        exit('');
+    end;
+
+    local procedure FormatDateBlank(Value: Date): Text
+    begin
+        if Value = 0D then
+            exit('');
+
+        exit(Format(Value));
+    end;
+
+    local procedure FormatDatePartBlank(Value: Date; PartNo: Integer): Text
+    begin
+        if Value = 0D then
+            exit('');
+
+        exit(Format(Date2DMY(Value, PartNo)));
+    end;
+
+    local procedure FormatDecimalBlank(Value: Decimal): Text
+    begin
+        if Value = 0 then
+            exit('');
+
+        exit(Format(Value));
     end;
 
     local procedure RefreshTemplateFields(TemplateCode: Code[30]; TemplateObject: JsonObject)
@@ -443,6 +631,19 @@ codeunit 50370 "MTE ESign API"
         else
             if StatusText = 'draft' then
                 Lease.Status := Lease.Status::Draft;
+    end;
+
+    local procedure ApplyPreviewUrlResponse(var Lease: Record "MTE ESign Lease"; Root: JsonObject)
+    var
+        DataToken: JsonToken;
+        Data: JsonObject;
+    begin
+        if Root.Get('data', DataToken) then
+            Data := DataToken.AsObject()
+        else
+            Data := Root;
+
+        Lease."Preview URL" := CopyStr(GetJsonText(Data, 'url'), 1, MaxStrLen(Lease."Preview URL"));
     end;
 
     local procedure PostWithoutBody(Path: Text) Root: JsonObject

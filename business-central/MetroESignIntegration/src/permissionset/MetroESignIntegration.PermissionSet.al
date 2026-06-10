@@ -20,6 +20,7 @@ permissionset 50370 "MTE ESIGN"
         page "MTE ESign Field Part" = X,
         page "MTE ESign Leases" = X,
         page "MTE ESign Lease Card" = X,
+        page "MTE ESign Preview Part" = X,
         page "MTE ESign Asset FB" = X,
         page "MTE ESign Customer FB" = X;
 }

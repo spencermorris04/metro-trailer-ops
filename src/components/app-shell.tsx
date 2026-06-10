@@ -34,7 +34,16 @@ const fallbackActor: WorkspaceActorSummary = {
 };
 
 function isPublicPage(pathname: string) {
-  return pathname === "/login" || pathname.startsWith("/login/") || pathname.startsWith("/sign/");
+  return (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname.startsWith("/sign/") ||
+    pathname.startsWith("/esign/bc-preview/")
+  );
+}
+
+function isBarePage(pathname: string) {
+  return pathname.startsWith("/esign/bc-preview/");
 }
 async function getShellWorkspaceLayout(
   inputHeaders: Headers,
@@ -67,6 +76,10 @@ export async function AppShell({ children }: { children: ReactNode }) {
   const requestHeaders = new Headers(await headers());
   const pathname = requestHeaders.get("x-metro-pathname") ?? "/";
   const publicPage = isPublicPage(pathname);
+
+  if (isBarePage(pathname)) {
+    return children;
+  }
 
   if (publicPage) {
     return (

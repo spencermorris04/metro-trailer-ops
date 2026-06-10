@@ -1,17 +1,23 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { z } from "zod";
 
-import { type DocusealDraft, listDocusealPrefillTemplates } from "@/lib/server/docuseal-prefill";
+import {
+  getDocusealDraft,
+  type DocusealDraft,
+  listDocusealPrefillTemplates,
+} from "@/lib/server/docuseal-prefill";
 import {
   createDocusealDraft,
   invalidateDocusealDraft,
   prepareDocusealDraftPreview,
   sendDocusealDraft,
+  updateDocusealDraft,
 } from "@/lib/server/docuseal-prefill";
 import { ApiError } from "@/lib/server/api";
 
 const bcApiKeyHeader = "x-metro-sync-key";
+const previewTokenMaxAgeMs = 30 * 60 * 1000;
 
 const bcDraftSchema = z.object({
   templateKey: z.string().min(1),
@@ -38,6 +44,27 @@ function getConfiguredApiKeys() {
   ]
     .map((value) => value?.trim() ?? "")
     .filter((value, index, values) => value && values.indexOf(value) === index);
+}
+
+function getPreviewTokenPayload(draftId: string, expiresAt: number) {
+  return `${draftId}.${expiresAt}`;
+}
+
+function signPreviewToken(draftId: string, expiresAt: number, secret: string) {
+  return createHmac("sha256", secret)
+    .update(getPreviewTokenPayload(draftId, expiresAt))
+    .digest("base64url");
+}
+
+function isValidPreviewToken(draftId: string, expiresAt: number, token: string) {
+  if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) {
+    return false;
+  }
+
+  return getConfiguredApiKeys().some((secret) => {
+    const expected = signPreviewToken(draftId, expiresAt, secret);
+    return isEqualSecret(token, expected);
+  });
 }
 
 function isEqualSecret(received: string, expected: string) {
@@ -127,6 +154,22 @@ export async function createBusinessCentralESignDraft(input: BusinessCentralDraf
   return mapBusinessCentralDraft(draft);
 }
 
+export async function updateBusinessCentralESignDraft(
+  draftId: string,
+  input: BusinessCentralDraftInput,
+) {
+  const draft = await updateDocusealDraft(draftId, {
+    location: input.location,
+    customerName: input.customerName,
+    customerEmail: input.customerEmail,
+    subject: input.subject,
+    message: input.message,
+    values: mergeCommonValues(input),
+  });
+
+  return mapBusinessCentralDraft(draft);
+}
+
 export async function sendBusinessCentralESignDraft(draftId: string) {
   return mapBusinessCentralDraft(await sendDocusealDraft(draftId));
 }
@@ -137,4 +180,57 @@ export async function prepareBusinessCentralESignDraftPreview(draftId: string) {
 
 export async function invalidateBusinessCentralESignDraft(draftId: string) {
   return mapBusinessCentralDraft(await invalidateDocusealDraft(draftId));
+}
+
+export async function createBusinessCentralESignPreviewUrl(
+  draftId: string,
+  baseUrl: string,
+) {
+  await getDocusealDraft(draftId);
+
+  const expectedKeys = getConfiguredApiKeys();
+  if (expectedKeys.length === 0) {
+    throw new ApiError(500, "Business Central E-Sign API key is not configured.");
+  }
+
+  const expiresAt = Date.now() + previewTokenMaxAgeMs;
+  const token = signPreviewToken(draftId, expiresAt, expectedKeys[0]);
+  const url = new URL(`/esign/bc-preview/${encodeURIComponent(draftId)}`, baseUrl);
+  url.searchParams.set("expires", String(expiresAt));
+  url.searchParams.set("token", token);
+
+  return {
+    url: url.toString(),
+    expiresAt,
+  };
+}
+
+export async function getBusinessCentralESignPreviewDraft(
+  draftId: string,
+  expires: string | string[] | undefined,
+  token: string | string[] | undefined,
+) {
+  const expiresValue = Array.isArray(expires) ? expires[0] : expires;
+  const tokenValue = Array.isArray(token) ? token[0] : token;
+  const expiresAt = Number(expiresValue);
+
+  if (!expiresValue || !tokenValue || !isValidPreviewToken(draftId, expiresAt, tokenValue)) {
+    throw new ApiError(401, "This Metro E-Sign preview link is invalid or expired.");
+  }
+
+  const [draft, templates] = await Promise.all([
+    getDocusealDraft(draftId),
+    listDocusealPrefillTemplates(),
+  ]);
+  const template = templates.find((candidate) => candidate.key === draft.templateKey);
+
+  if (!template) {
+    throw new ApiError(404, "Metro E-Sign template was not found for this draft.");
+  }
+
+  return {
+    draft,
+    template,
+    expiresAt,
+  };
 }
