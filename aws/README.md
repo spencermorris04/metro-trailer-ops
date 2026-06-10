@@ -121,7 +121,7 @@ DocuSeal runtime:
 - ACM certificate: `arn:aws:acm:us-east-2:452391802972:certificate/dbc186a4-eed8-4b21-8dd1-ece6a1ebdedd`
 - ECS cluster: `metro-trailer-docuseal`
 - ECR repository: `452391802972.dkr.ecr.us-east-2.amazonaws.com/metro-trailer-docuseal`
-- Current branded image tag: `branded-20260610-app-shell`
+- Current deployed image tag: `48bed3c53f3a7eaf15c8ca61258ae568c6584162`
 - Active Storage bucket: `metro-trailer-docuseal-attachments-452391802972-us-east-2`
 - Secrets:
   - `metro-trailer/docuseal/app`
@@ -130,11 +130,15 @@ DocuSeal runtime:
 
 DocuSeal email is configured through Resend SMTP using the already verified `lumpkindevelopment.com` domain. The ECS task reads `SMTP_PASSWORD` and `SMTP_FROM` from `metro-trailer/docuseal/smtp`; the current sender is `Metro Trailer E-Sign <documents@lumpkindevelopment.com>`. Email invitation links use `EMAIL_HOST=esign.lumpkindevelopment.com`, and DocuSeal runs with `APP_URL=https://esign.lumpkindevelopment.com` and `FORCE_SSL=true`.
 
-Metro Trailer branding is maintained in the local clone at `C:\Users\NewOwner\Software\docuseal` and deployed as a custom ECR image. Upload a ZIP of that repo to `s3://metro-trailer-docuseal-source-452391802972-us-east-2/source/docuseal.zip`, run the CodeBuild project `metro-trailer-docuseal-image`, then deploy the resulting tag:
+Metro Trailer branding is maintained in the private GitHub repository `spencermorris04/metro-trailer-esign`, with a local clone at `C:\Users\NewOwner\Software\docuseal`. Normal app-only changes should be committed and pushed to that repo's `main` branch. Its `.github/workflows/deploy-metro-esign.yml` workflow builds the Docker image, pushes it to the ECR repository above using the commit SHA as the tag, registers a new ECS task definition revision, and updates the `metro-trailer-docuseal` ECS service.
+
+Use the CDK deploy path below when the AWS infrastructure itself changes or when manually pinning a known image tag:
 
 ```bash
 npm run docuseal:deploy -- MetroTrailerDocuseal --require-approval never -c docusealDomainName=esign.lumpkindevelopment.com -c docusealCertificateArn=arn:aws:acm:us-east-2:452391802972:certificate/dbc186a4-eed8-4b21-8dd1-ece6a1ebdedd -c docusealUseCustomImage=true -c docusealImageTag=<image-tag>
 ```
+
+The older S3/CodeBuild image flow remains available as a fallback: upload a ZIP of the DocuSeal repo to `s3://metro-trailer-docuseal-source-452391802972-us-east-2/source/docuseal.zip`, run the CodeBuild project `metro-trailer-docuseal-image`, then deploy the resulting tag with the CDK command above.
 
 Completed lease evidence archive:
 
