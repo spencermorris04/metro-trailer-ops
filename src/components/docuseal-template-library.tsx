@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/icons";
+import { DocusealModeTabs } from "@/components/docuseal-mode-tabs";
 import type {
   DocusealTemplateCategory,
   DocusealTemplateDefinition,
@@ -261,30 +261,31 @@ export function DocusealTemplateLibrary({
   }
 
   return (
-    <main className="panel overflow-hidden">
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-white px-3 py-2">
-        <div className="min-w-0">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
-            Template workspace
-          </p>
-          <h2 className="truncate text-[0.95rem] font-semibold text-slate-950">
-            {selectedTemplate ? selectedTemplate.name : "No template selected"}
-          </h2>
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="panel flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <DocusealModeTabs active="manage" />
+          <span className="hidden h-7 w-px bg-[var(--line)] xl:block" />
+          <div className="hidden min-w-0 leading-tight xl:block">
+            <p className="eyebrow">Template</p>
+            <p className="truncate text-[0.78rem] font-semibold text-slate-900">
+              {selectedTemplate ? selectedTemplate.name : "No template selected"}
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Link href="/docuseal" className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]">
-            <Icon name="file-text" size={14} />
-            Create draft
-          </Link>
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
+            className={`btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem] ${
+              showUpload ? "border-slate-400 bg-slate-100" : ""
+            }`}
             onClick={() => setShowUpload((current) => !current)}
           >
             <Icon name="folder" size={14} />
             Upload PDF
           </button>
+          <span className="mx-0.5 hidden h-6 w-px bg-[var(--line)] sm:block" />
           <button
             type="button"
             className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
@@ -293,15 +294,6 @@ export function DocusealTemplateLibrary({
           >
             <Icon name="clipboard" size={14} />
             Save details
-          </button>
-          <button
-            type="button"
-            className="btn-primary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
-            disabled={pending || !selectedTemplate}
-            onClick={() => selectedTemplate && runFieldDetection(selectedTemplate)}
-          >
-            <Icon name="search" size={14} />
-            Detect fields
           </button>
           {selectedTemplate ? (
             <a
@@ -314,14 +306,23 @@ export function DocusealTemplateLibrary({
               Open full editor
             </a>
           ) : null}
+          <button
+            type="button"
+            className="btn-primary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
+            disabled={pending || !selectedTemplate}
+            onClick={() => selectedTemplate && runFieldDetection(selectedTemplate)}
+          >
+            <Icon name="search" size={14} />
+            Detect fields
+          </button>
         </div>
       </div>
 
-      <div className="grid min-h-[calc(100vh-210px)] lg:grid-cols-[340px_minmax(0,1fr)]">
-        <aside className="border-b border-[var(--line)] bg-[var(--surface-soft)] lg:border-b-0 lg:border-r">
-          <div className="space-y-2 p-3">
-            <label className="block space-y-1 text-[0.7rem] font-medium text-slate-600">
-              <span>Find template</span>
+      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="panel flex min-h-0 flex-col overflow-hidden bg-[var(--surface-soft)]">
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-2.5 py-2">
+            <label className="flex-1">
+              <span className="sr-only">Find template</span>
               <input
                 value={templateQuery}
                 onChange={(event) => setTemplateQuery(event.target.value)}
@@ -329,6 +330,9 @@ export function DocusealTemplateLibrary({
                 className="workspace-input h-8 w-full bg-white"
               />
             </label>
+            <span className="workspace-chip shrink-0">{filteredTemplates.length}</span>
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2">
 
             {showUpload ? (
               <section className="border border-[var(--line)] bg-white">
@@ -419,7 +423,7 @@ export function DocusealTemplateLibrary({
               </section>
             ) : null}
 
-            <div className="max-h-[calc(100vh-335px)] overflow-auto border border-[var(--line)] bg-white">
+            <div className="border border-[var(--line)] bg-white">
               {filteredTemplates.length ? (
                 filteredTemplates.map((template) => {
                   const selected =
@@ -467,9 +471,9 @@ export function DocusealTemplateLibrary({
           </div>
         </aside>
 
-        <section className="min-w-0 bg-white">
+        <section className="panel flex min-h-0 min-w-0 flex-col overflow-hidden bg-white">
           {selectedTemplate && selectedEdit ? (
-            <div className="flex h-full flex-col">
+            <div className="flex min-h-0 flex-1 flex-col">
               <div className="border-b border-[var(--line)] bg-slate-50 px-3 py-2">
                 <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_180px_160px_160px_170px_90px]">
                   <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
@@ -569,7 +573,7 @@ export function DocusealTemplateLibrary({
                 key={selectedTemplate.editorUrl}
                 title={`${selectedTemplate.name} E-Sign editor`}
                 src={selectedTemplate.editorUrl}
-                className="h-[calc(100vh-345px)] min-h-[640px] w-full flex-1 border-0 bg-white"
+                className="min-h-0 w-full flex-1 border-0 bg-white"
               />
             </div>
           ) : (
@@ -579,6 +583,6 @@ export function DocusealTemplateLibrary({
           )}
         </section>
       </div>
-    </main>
+    </div>
   );
 }

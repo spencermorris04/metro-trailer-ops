@@ -13,6 +13,8 @@ import type {
   DocusealPrefillDefault,
 } from "@/lib/server/docuseal-prefill";
 import { formatDate } from "@/lib/format";
+import { DocusealModeTabs } from "@/components/docuseal-mode-tabs";
+import { Icon } from "@/components/icons";
 
 type ApiResult<T> = {
   data?: T;
@@ -513,7 +515,12 @@ export function DocusealPrefillWorkspace({
     },
   );
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<string>("");
   const groupedFields = useMemo(() => sectionFields(selectedTemplate), [selectedTemplate]);
+  const sectionNames = useMemo(() => Object.keys(groupedFields), [groupedFields]);
+  const currentSection = sectionNames.includes(activeSection)
+    ? activeSection
+    : sectionNames[0] ?? "";
   const filledCount = getFilledCount(selectedTemplate, values);
   const messageHasSigningLink = includesSigningLink(message);
   const selectedDraftIsSent = selectedDraft?.status === "sent";
@@ -977,90 +984,166 @@ export function DocusealPrefillWorkspace({
     });
   }
 
-  return (
-    <div className="grid gap-2 xl:grid-cols-[300px_minmax(0,1fr)]">
-      <aside className="panel overflow-hidden">
-        <div className="border-b border-[var(--line)] px-3 py-2">
-          <p className="eyebrow">Drafts</p>
-          <h2 className="mt-1 text-[0.85rem] font-semibold text-slate-900">
-            Employee prep queue
-          </h2>
-        </div>
-        <div className="max-h-[calc(100vh-220px)] divide-y divide-[var(--line)] overflow-auto">
-          {drafts.length === 0 ? (
-            <div className="px-3 py-4 text-[0.75rem] text-slate-500">
-              No prefill drafts yet.
-            </div>
-          ) : (
-            drafts.map((draft) => (
-              <button
-                key={draft.id}
-                type="button"
-                onClick={() => loadDraft(draft)}
-                className={`block w-full px-3 py-2 text-left ${
-                  draft.id === selectedDraftId ? "bg-slate-100" : "bg-white hover:bg-slate-50"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[0.8rem] font-semibold text-slate-900">
-                    {draft.customerName || "Unnamed customer"}
-                  </span>
-                  <span className="rounded-sm border border-[var(--line)] px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.06em] text-slate-500">
-                    {draft.status}
-                  </span>
-                </div>
-                <p className="mt-1 truncate text-[0.68rem] text-slate-500">
-                  {draft.values.unit_number?.trim() || "No unit selected"} - {draft.templateName}
-                </p>
-                <p className="mt-1 truncate text-[0.65rem] text-slate-400">
-                  Store {draft.location || "Unassigned"}
-                </p>
-                <p className="mt-1 text-[0.65rem] text-slate-400">
-                  Updated {formatDate(draft.updatedAt)}
-                </p>
-              </button>
-            ))
-          )}
-        </div>
-      </aside>
+  const sectionFieldList = groupedFields[currentSection] ?? [];
+  const sectionSupportsDefaults = defaultSections.has(currentSection);
+  const companyDefault = findDefault(defaults, selectedTemplate, "global", "global");
+  const storeDefault = selectedStoreKey
+    ? findDefault(defaults, selectedTemplate, "location", selectedStoreKey)
+    : null;
+  const trailerTypeKey = values.unit_type?.trim();
+  const trailerTypeDefault = trailerTypeKey
+    ? findDefault(defaults, selectedTemplate, "trailer_type", trailerTypeKey)
+    : null;
 
-      <main className="space-y-2">
-        <section className="panel overflow-hidden">
-          <div className="grid gap-px border-b border-[var(--line)] bg-[var(--line)] md:grid-cols-4">
-            <div className="bg-white px-3 py-2">
-              <p className="workspace-metric-label">Template</p>
-              <p className="truncate text-[0.8rem] font-semibold text-slate-900">
-                {selectedTemplate.name}
-              </p>
-            </div>
-            <div className="bg-white px-3 py-2">
-              <p className="workspace-metric-label">Fields complete</p>
-              <p className="text-[0.8rem] font-semibold text-slate-900">
-                {filledCount}/{selectedTemplate.fields.length}
-              </p>
-            </div>
-            <div className="bg-white px-3 py-2">
-              <p className="workspace-metric-label">E-Sign template</p>
-              <p className="text-[0.8rem] font-semibold text-slate-900">
-                #{selectedTemplate.docusealTemplateId}
-              </p>
-            </div>
-            <div className="bg-white px-3 py-2">
-              <p className="workspace-metric-label">Customer link</p>
-              {selectedDraft?.docusealSubmitterUrl ? (
-                <a
-                  href={selectedDraft.docusealSubmitterUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[0.8rem] font-semibold text-[var(--brand)]"
-                >
-                  Open E-Sign document
-                </a>
-              ) : (
-                <p className="text-[0.8rem] font-semibold text-slate-900">Not sent</p>
-              )}
-            </div>
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="panel flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <DocusealModeTabs active="create" />
+          <span className="hidden h-7 w-px bg-[var(--line)] xl:block" />
+          <div className="hidden min-w-0 leading-tight xl:block">
+            <p className="eyebrow">E-Sign draft</p>
+            <p className="truncate text-[0.78rem] font-semibold text-slate-900">
+              {selectedDraft?.customerName?.trim() || customerName.trim() || "New document"}
+            </p>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className="btn-secondary h-8 text-[0.7rem]"
+            disabled={pending || selectedDraftIsSent}
+            onClick={fillRandomTestData}
+          >
+            Fill test data
+          </button>
+          <button
+            type="button"
+            className="btn-secondary h-8 text-[0.7rem]"
+            disabled={pending || selectedDraftIsSent}
+            onClick={applyDefaults}
+          >
+            Apply defaults
+          </button>
+          <span className="mx-0.5 hidden h-6 w-px bg-[var(--line)] sm:block" />
+          <button
+            type="button"
+            className="btn-secondary h-8 text-[0.7rem]"
+            disabled={pending}
+            onClick={createDraft}
+          >
+            New
+          </button>
+          <button
+            type="button"
+            className="btn-secondary h-8 text-[0.7rem]"
+            disabled={pending || selectedDraftIsSent}
+            onClick={saveDraft}
+          >
+            Save
+          </button>
+          {selectedDraftIsSent ? (
+            <button
+              type="button"
+              className="btn-secondary h-8 border-red-200 text-[0.7rem] text-red-700 hover:border-red-300 hover:bg-red-50"
+              disabled={pending}
+              onClick={invalidateDraft}
+            >
+              Invalidate &amp; edit
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn-primary h-8 text-[0.7rem]"
+            disabled={pending || selectedDraftIsSent}
+            onClick={sendDraft}
+          >
+            <Icon name="file-text" size={14} />
+            Send E-Sign
+          </button>
+        </div>
+      </div>
+
+      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[248px_minmax(0,1fr)]">
+        <aside className="panel hidden min-h-0 flex-col overflow-hidden lg:flex">
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
+            <div className="leading-tight">
+              <p className="eyebrow">Prep queue</p>
+              <h2 className="text-[0.8rem] font-semibold text-slate-900">Drafts</h2>
+            </div>
+            <span className="workspace-chip">{drafts.length}</span>
+          </div>
+          <div className="min-h-0 flex-1 divide-y divide-[var(--line)] overflow-auto">
+            {drafts.length === 0 ? (
+              <div className="px-3 py-4 text-[0.75rem] text-slate-500">
+                No prefill drafts yet. Use &ldquo;New&rdquo; to start one.
+              </div>
+            ) : (
+              drafts.map((draft) => (
+                <button
+                  key={draft.id}
+                  type="button"
+                  onClick={() => loadDraft(draft)}
+                  className={`block w-full px-3 py-2 text-left ${
+                    draft.id === selectedDraftId ? "bg-slate-100" : "bg-white hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[0.8rem] font-semibold text-slate-900">
+                      {draft.customerName || "Unnamed customer"}
+                    </span>
+                    <span className="rounded-sm border border-[var(--line)] px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.06em] text-slate-500">
+                      {draft.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-[0.68rem] text-slate-500">
+                    {draft.values.unit_number?.trim() || "No unit selected"} - {draft.templateName}
+                  </p>
+                  <p className="mt-1 truncate text-[0.65rem] text-slate-400">
+                    Store {draft.location || "Unassigned"}
+                  </p>
+                  <p className="mt-1 text-[0.65rem] text-slate-400">
+                    Updated {formatDate(draft.updatedAt)}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        </aside>
+
+        <main className="panel flex min-h-0 flex-col overflow-hidden">
+          <div className="border-b border-[var(--line)] bg-[var(--surface-raised)]">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-[var(--line)] px-3 py-1.5">
+              <span className="flex items-center gap-1.5">
+                <span className="workspace-metric-label">Fields</span>
+                <span className="text-[0.78rem] font-semibold text-slate-900">
+                  {filledCount}/{selectedTemplate.fields.length}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="workspace-metric-label">Template</span>
+                <span className="mono text-[0.74rem] font-semibold text-slate-900">
+                  #{selectedTemplate.docusealTemplateId}
+                </span>
+              </span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="workspace-metric-label">Status</span>
+                {selectedDraft?.docusealSubmitterUrl ? (
+                  <a
+                    href={selectedDraft.docusealSubmitterUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate text-[0.74rem] font-semibold text-[var(--brand)]"
+                  >
+                    Open E-Sign document
+                  </a>
+                ) : (
+                  <span className="text-[0.74rem] font-semibold text-slate-900">
+                    {selectedDraft ? selectedDraft.status : "Not sent"}
+                  </span>
+                )}
+              </span>
+            </div>
 
           <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="space-y-1 text-[0.75rem] text-slate-600">
@@ -1204,142 +1287,99 @@ export function DocusealPrefillWorkspace({
             </label>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] px-3 py-2">
-            <p className="max-w-3xl text-[0.72rem] text-slate-500">
-              {selectedDraftIsSent
-                ? "This draft has already been sent, so it is locked. Invalidate the sent document to stop the old customer link and reopen this draft for edits."
-                : "Filled fields are sent to E-Sign as read-only. Empty fields remain available to the customer."}
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={pending || selectedDraftIsSent}
-                onClick={fillRandomTestData}
-              >
-                Fill test data
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={pending || selectedDraftIsSent}
-                onClick={applyDefaults}
-              >
-                Apply defaults
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={pending}
-                onClick={createDraft}
-              >
-                New draft
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={pending || selectedDraftIsSent}
-                onClick={saveDraft}
-              >
-                Save
-              </button>
-              {selectedDraftIsSent ? (
-                <button
-                  type="button"
-                  className="btn-secondary border-red-200 text-red-700 hover:border-red-300 hover:bg-red-50"
-                  disabled={pending}
-                  onClick={invalidateDraft}
-                >
-                  Invalidate and edit
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={pending || selectedDraftIsSent}
-                onClick={sendDraft}
-              >
-                Send E-Sign Document
-              </button>
-            </div>
           </div>
-          {feedback ? (
-            <div className="border-t border-[var(--line)] px-3 py-2 text-[0.75rem] text-slate-600">
-              {feedback}
-            </div>
-          ) : null}
-        </section>
 
-        {Object.entries(groupedFields).map(([section, fields]) => {
-          const sectionCanSaveDefaults = defaultSections.has(section);
-          const companyDefault = findDefault(defaults, selectedTemplate, "global", "global");
-          const storeDefault = selectedStoreKey
-            ? findDefault(defaults, selectedTemplate, "location", selectedStoreKey)
-            : null;
-          const trailerTypeKey = values.unit_type?.trim();
-          const trailerTypeDefault = trailerTypeKey
-            ? findDefault(defaults, selectedTemplate, "trailer_type", trailerTypeKey)
-            : null;
-
-          return (
-          <section key={section} className="panel overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
-              <div>
-                <h3 className="text-[0.82rem] font-semibold text-slate-900">{section}</h3>
-                {sectionCanSaveDefaults ? (
-                  <p className="mt-0.5 text-[0.65rem] text-slate-500">
-                    Company {countDefaultValuesForSection(selectedTemplate, companyDefault, section)} /
-                    Store {countDefaultValuesForSection(selectedTemplate, storeDefault, section)} /
-                    Trailer type{" "}
-                    {countDefaultValuesForSection(
-                      selectedTemplate,
-                      trailerTypeDefault,
-                      section,
-                    )}
-                  </p>
-                ) : null}
-              </div>
-              {sectionCanSaveDefaults ? (
-                <details className="relative">
-                  <summary
-                    className={`btn-secondary h-8 cursor-pointer list-none px-2 text-[0.68rem] ${
-                      pending || selectedDraftIsSent ? "pointer-events-none opacity-50" : ""
+          <div className="grid min-h-0 flex-1 lg:grid-cols-[196px_minmax(0,1fr)]">
+            <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--line)] bg-[var(--surface-soft)] p-2 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:border-b-0 lg:border-r">
+              {sectionNames.map((section) => {
+                const secFields = groupedFields[section] ?? [];
+                const filled = secFields.filter((field) => values[field.name]?.trim()).length;
+                const isActive = section === currentSection;
+                return (
+                  <button
+                    key={section}
+                    type="button"
+                    onClick={() => setActiveSection(section)}
+                    className={`flex shrink-0 items-center justify-between gap-2 rounded-[3px] px-2.5 py-1.5 text-left text-[0.72rem] font-medium transition ${
+                      isActive
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-600 hover:bg-white"
                     }`}
                   >
-                    Save defaults
-                  </summary>
-                  <div className="absolute right-0 z-20 mt-1 min-w-52 overflow-hidden border border-[var(--line)] bg-white text-[0.72rem] shadow-lg">
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-2 text-left hover:bg-slate-50"
-                      disabled={pending || selectedDraftIsSent}
-                      onClick={() => saveSectionDefaults(section, "global")}
+                    <span className="truncate">{section}</span>
+                    <span
+                      className={`shrink-0 text-[0.62rem] tabular-nums ${
+                        isActive ? "text-slate-300" : "text-slate-400"
+                      }`}
                     >
-                      Save to company
-                    </button>
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:text-slate-400"
-                      disabled={pending || selectedDraftIsSent || !selectedStoreKey}
-                      onClick={() => saveSectionDefaults(section, "location")}
+                      {filled}/{secFields.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            <div className="flex min-h-0 flex-col">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
+                <div className="leading-tight">
+                  <h3 className="text-[0.82rem] font-semibold text-slate-900">{currentSection}</h3>
+                  {sectionSupportsDefaults ? (
+                    <p className="mt-0.5 text-[0.64rem] text-slate-500">
+                      Saved defaults — Company{" "}
+                      {countDefaultValuesForSection(selectedTemplate, companyDefault, currentSection)} /
+                      Store {countDefaultValuesForSection(selectedTemplate, storeDefault, currentSection)} /
+                      Trailer type{" "}
+                      {countDefaultValuesForSection(selectedTemplate, trailerTypeDefault, currentSection)}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[0.64rem] text-slate-500">
+                      {sectionFieldList.length} field{sectionFieldList.length === 1 ? "" : "s"} in this section
+                    </p>
+                  )}
+                </div>
+                {sectionSupportsDefaults ? (
+                  <details className="relative">
+                    <summary
+                      className={`btn-secondary h-8 cursor-pointer list-none px-2.5 text-[0.68rem] ${
+                        pending || selectedDraftIsSent ? "pointer-events-none opacity-50" : ""
+                      }`}
                     >
-                      Save to store{selectedStoreKey ? `: ${selectedStoreKey}` : ""}
-                    </button>
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:text-slate-400"
-                      disabled={pending || selectedDraftIsSent || !trailerTypeKey}
-                      onClick={() => saveSectionDefaults(section, "trailer_type")}
-                    >
-                      Save to trailer type{trailerTypeKey ? `: ${trailerTypeKey}` : ""}
-                    </button>
-                  </div>
-                </details>
-              ) : null}
-            </div>
-            <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-              {fields.map((field) => {
-                if (field.name === "unit_number") {
+                      Save defaults
+                    </summary>
+                    <div className="absolute right-0 z-20 mt-1 min-w-52 overflow-hidden border border-[var(--line)] bg-white text-[0.72rem] shadow-lg">
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left hover:bg-slate-50"
+                        disabled={pending || selectedDraftIsSent}
+                        onClick={() => saveSectionDefaults(currentSection, "global")}
+                      >
+                        Save to company
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:text-slate-400"
+                        disabled={pending || selectedDraftIsSent || !selectedStoreKey}
+                        onClick={() => saveSectionDefaults(currentSection, "location")}
+                      >
+                        Save to store{selectedStoreKey ? `: ${selectedStoreKey}` : ""}
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:text-slate-400"
+                        disabled={pending || selectedDraftIsSent || !trailerTypeKey}
+                        onClick={() => saveSectionDefaults(currentSection, "trailer_type")}
+                      >
+                        Save to trailer type{trailerTypeKey ? `: ${trailerTypeKey}` : ""}
+                      </button>
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto p-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {sectionFieldList.map((field) => {
+                    if (field.name === "unit_number") {
                   return (
                     <div
                       key={field.name}
@@ -1438,12 +1478,22 @@ export function DocusealPrefillWorkspace({
                     )}
                   </label>
                 );
-              })}
+                  })}
+                </div>
+              </div>
             </div>
-          </section>
-          );
-        })}
-      </main>
+          </div>
+
+          <div className="flex items-center gap-3 border-t border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
+            <p className="text-[0.72rem] text-slate-600">
+              {selectedDraftIsSent
+                ? "Sent and locked — invalidate to stop the old customer link and reopen this draft for edits."
+                : feedback ??
+                  "Filled fields are sent to E-Sign as read-only; empty fields stay open to the customer."}
+            </p>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
