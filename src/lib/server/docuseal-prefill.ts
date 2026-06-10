@@ -1108,6 +1108,19 @@ export async function updateDocusealDraft(
     updates.values = normalizeValues(template, input.values);
   }
 
+  if (draft.docusealSubmissionId || draft.docusealSubmitterSlug || draft.docusealSubmitterUrl) {
+    const submissionId =
+      draft.docusealSubmissionId ?? (await findSubmissionIdBySubmitterSlug(draft.docusealSubmitterSlug));
+
+    if (submissionId) {
+      await deleteDocusealSubmission(submissionId);
+    }
+
+    updates.docusealSubmissionId = null;
+    updates.docusealSubmitterSlug = null;
+    updates.docusealSubmitterUrl = null;
+  }
+
   const [updatedDraft] = await db
     .update(schema.docusealPrefillDrafts)
     .set(updates)

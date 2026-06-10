@@ -554,6 +554,12 @@ table 50372 "MTE ESign Lease"
             DataClassification = CustomerContent;
             Editable = false;
         }
+        field(89; "Editor URL"; Text[2048])
+        {
+            Caption = 'Editor URL';
+            DataClassification = CustomerContent;
+            Editable = false;
+        }
     }
 
     keys

@@ -38,12 +38,13 @@ function isPublicPage(pathname: string) {
     pathname === "/login" ||
     pathname.startsWith("/login/") ||
     pathname.startsWith("/sign/") ||
-    pathname.startsWith("/esign/bc-preview/")
+    pathname.startsWith("/esign/bc-preview/") ||
+    pathname.startsWith("/esign/bc-editor/")
   );
 }
 
 function isBarePage(pathname: string) {
-  return pathname.startsWith("/esign/bc-preview/");
+  return pathname.startsWith("/esign/bc-preview/") || pathname.startsWith("/esign/bc-editor/");
 }
 async function getShellWorkspaceLayout(
   inputHeaders: Headers,

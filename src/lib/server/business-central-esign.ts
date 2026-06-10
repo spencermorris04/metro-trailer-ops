@@ -18,6 +18,7 @@ import { ApiError } from "@/lib/server/api";
 
 const bcApiKeyHeader = "x-metro-sync-key";
 const previewTokenMaxAgeMs = 30 * 60 * 1000;
+const editorTokenMaxAgeMs = 4 * 60 * 60 * 1000;
 
 const bcDraftSchema = z.object({
   templateKey: z.string().min(1),
@@ -205,6 +206,29 @@ export async function createBusinessCentralESignPreviewUrl(
   };
 }
 
+export async function createBusinessCentralESignEditorUrl(
+  draftId: string,
+  baseUrl: string,
+) {
+  await getDocusealDraft(draftId);
+
+  const expectedKeys = getConfiguredApiKeys();
+  if (expectedKeys.length === 0) {
+    throw new ApiError(500, "Business Central E-Sign API key is not configured.");
+  }
+
+  const expiresAt = Date.now() + editorTokenMaxAgeMs;
+  const token = signPreviewToken(draftId, expiresAt, expectedKeys[0]);
+  const url = new URL(`/esign/bc-editor/${encodeURIComponent(draftId)}`, baseUrl);
+  url.searchParams.set("expires", String(expiresAt));
+  url.searchParams.set("token", token);
+
+  return {
+    url: url.toString(),
+    expiresAt,
+  };
+}
+
 export async function getBusinessCentralESignPreviewDraft(
   draftId: string,
   expires: string | string[] | undefined,
@@ -232,5 +256,28 @@ export async function getBusinessCentralESignPreviewDraft(
     draft,
     template,
     expiresAt,
+  };
+}
+
+export const getBusinessCentralESignEditorDraft = getBusinessCentralESignPreviewDraft;
+
+export async function updateBusinessCentralESignEditorDraft(
+  draftId: string,
+  expires: string | string[] | undefined,
+  token: string | string[] | undefined,
+  values: Record<string, unknown>,
+) {
+  const { draft } = await getBusinessCentralESignEditorDraft(draftId, expires, token);
+  const updatedDraft = await updateDocusealDraft(draft.id, { values });
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find((candidate) => candidate.key === updatedDraft.templateKey);
+
+  if (!template) {
+    throw new ApiError(404, "Metro E-Sign template was not found for this draft.");
+  }
+
+  return {
+    draft: updatedDraft,
+    template,
   };
 }

@@ -81,7 +81,7 @@ codeunit 50370 "MTE ESign API"
     begin
         PopulateLeaseFields(Lease);
         SyncTypedLeaseFields(Lease);
-        EnsureDraft(Lease);
+        EnsureDraft(Lease, false);
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/prepare');
         ApplyDraftResponse(Lease, ResponseObject);
@@ -100,7 +100,7 @@ codeunit 50370 "MTE ESign API"
     begin
         PopulateLeaseFields(Lease);
         SyncTypedLeaseFields(Lease);
-        EnsureDraft(Lease);
+        EnsureDraft(Lease, false);
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/send');
         ApplyDraftResponse(Lease, ResponseObject);
@@ -110,6 +110,23 @@ codeunit 50370 "MTE ESign API"
         Lease.Modify();
 
         Message('Metro E-Sign document sent.');
+    end;
+
+    procedure OpenEditor(var Lease: Record "MTE ESign Lease")
+    var
+        ResponseObject: JsonObject;
+    begin
+        PopulateLeaseFields(Lease);
+        SyncTypedLeaseFields(Lease);
+        EnsureDraft(Lease, false);
+
+        ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/editor-url');
+        ApplyEditorUrlResponse(Lease, ResponseObject);
+        Lease."Last Error" := '';
+        Lease.Modify();
+
+        if Lease."Editor URL" = '' then
+            Error('Metro E-Sign did not return an editor URL.');
     end;
 
     procedure InvalidateLease(var Lease: Record "MTE ESign Lease")
@@ -338,7 +355,7 @@ codeunit 50370 "MTE ESign API"
             Lease.Modify();
     end;
 
-    local procedure EnsureDraft(var Lease: Record "MTE ESign Lease")
+    local procedure EnsureDraft(var Lease: Record "MTE ESign Lease"; UpdateExisting: Boolean)
     var
         ResponseObject: JsonObject;
     begin
@@ -346,6 +363,9 @@ codeunit 50370 "MTE ESign API"
             Error('This Metro E-Sign lease has already been sent. Void the sent document before sending again.');
 
         if Lease."DocuSeal Draft ID" <> '' then begin
+            if not UpdateExisting then
+                exit;
+
             ResponseObject := PostJson('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/update', BuildDraftBody(Lease));
             ApplyDraftResponse(Lease, ResponseObject);
             Lease."Last Error" := '';
@@ -644,6 +664,19 @@ codeunit 50370 "MTE ESign API"
             Data := Root;
 
         Lease."Preview URL" := CopyStr(GetJsonText(Data, 'url'), 1, MaxStrLen(Lease."Preview URL"));
+    end;
+
+    local procedure ApplyEditorUrlResponse(var Lease: Record "MTE ESign Lease"; Root: JsonObject)
+    var
+        DataToken: JsonToken;
+        Data: JsonObject;
+    begin
+        if Root.Get('data', DataToken) then
+            Data := DataToken.AsObject()
+        else
+            Data := Root;
+
+        Lease."Editor URL" := CopyStr(GetJsonText(Data, 'url'), 1, MaxStrLen(Lease."Editor URL"));
     end;
 
     local procedure PostWithoutBody(Path: Text) Root: JsonObject

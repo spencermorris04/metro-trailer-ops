@@ -423,6 +423,11 @@ page 50374 "MTE ESign Lease Card"
                     ApplicationArea = All;
                     ExtendedDatatype = URL;
                 }
+                field("Editor URL"; Rec."Editor URL")
+                {
+                    ApplicationArea = All;
+                    ExtendedDatatype = URL;
+                }
                 field("Last Error"; Rec."Last Error")
                 {
                     ApplicationArea = All;
@@ -441,12 +446,6 @@ page 50374 "MTE ESign Lease Card"
             {
                 ApplicationArea = All;
                 SubPageLink = "Lease ID" = field("Lease ID");
-            }
-            part(Fields; "MTE ESign Field Part")
-            {
-                ApplicationArea = All;
-                SubPageLink = "Lease ID" = field("Lease ID");
-                Editable = IsDraftEditable;
             }
         }
     }
@@ -486,6 +485,23 @@ page 50374 "MTE ESign Lease Card"
                 begin
                     CurrPage.SaveRecord();
                     Api.PreviewLease(Rec);
+                    CurrPage.Update(false);
+                end;
+            }
+            action(OpenESignEditor)
+            {
+                Caption = 'Open E-Sign Editor';
+                ApplicationArea = All;
+                Image = EditLines;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                var
+                    Api: Codeunit "MTE ESign API";
+                begin
+                    CurrPage.SaveRecord();
+                    Api.OpenEditor(Rec);
                     CurrPage.Update(false);
                 end;
             }
