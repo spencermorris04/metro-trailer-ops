@@ -105,26 +105,6 @@ export function DocusealTemplateLibrary({
     templateList[0] ??
     null;
   const selectedEdit = selectedTemplate ? getTemplateEdit(selectedTemplate) : null;
-  const fieldsBySection = useMemo(() => {
-    if (!selectedTemplate) {
-      return [];
-    }
-
-    const groups = selectedTemplate.fields.reduce<
-      Array<{ section: string; fields: DocusealTemplateDefinition["fields"] }>
-    >((acc, field) => {
-      const group = acc.find((item) => item.section === field.section);
-      if (group) {
-        group.fields.push(field);
-      } else {
-        acc.push({ section: field.section, fields: [field] });
-      }
-
-      return acc;
-    }, []);
-
-    return groups;
-  }, [selectedTemplate]);
 
   function getTemplateEdit(template: DocusealTemplateDefinition) {
     return templateEdits[template.key] ?? buildTemplateEditState(template);
@@ -617,64 +597,12 @@ export function DocusealTemplateLibrary({
               </div>
 
               <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
-                {embedMode === "bc" ? (
-                  <div className="min-h-[540px] overflow-auto bg-slate-50 p-3 xl:min-h-0">
-                    <section className="border border-[var(--line)] bg-white">
-                      <div className="border-b border-[var(--line)] px-3 py-2">
-                        <p className="eyebrow">Template field map</p>
-                        <h3 className="text-[0.9rem] font-semibold text-slate-950">
-                          {selectedTemplate.name}
-                        </h3>
-                        <p className="mt-1 max-w-3xl text-[0.68rem] leading-4 text-slate-500">
-                          Business Central uses this Metro-managed view so template rules do not
-                          depend on a separate DocuSeal login inside an iframe. Use Open full editor
-                          when you need to place or move PDF fields in DocuSeal.
-                        </p>
-                      </div>
-                      <div className="grid gap-2 p-3 md:grid-cols-2 xl:grid-cols-3">
-                        {fieldsBySection.map((group) => (
-                          <section
-                            key={group.section}
-                            className="border border-[var(--line)] bg-white"
-                          >
-                            <div className="border-b border-[var(--line)] bg-slate-50 px-2.5 py-2">
-                              <h4 className="text-[0.72rem] font-semibold text-slate-900">
-                                {group.section}
-                              </h4>
-                              <p className="mt-0.5 text-[0.62rem] text-slate-500">
-                                {group.fields.length} fields
-                              </p>
-                            </div>
-                            <div className="divide-y divide-[var(--line)]">
-                              {group.fields.map((field) => (
-                                <div key={field.name} className="px-2.5 py-2">
-                                  <div className="truncate text-[0.7rem] font-semibold text-slate-900">
-                                    {field.label}
-                                  </div>
-                                  <div className="mt-0.5 truncate font-mono text-[0.62rem] text-slate-500">
-                                    {field.name}
-                                  </div>
-                                  {field.customerEditable ? (
-                                    <div className="mt-1 inline-flex rounded-sm border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.08em] text-blue-800">
-                                      Customer fillable
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        ))}
-                      </div>
-                    </section>
-                  </div>
-                ) : (
-                  <iframe
-                    key={selectedTemplate.editorUrl}
-                    title={`${selectedTemplate.name} E-Sign editor`}
-                    src={selectedTemplate.editorUrl}
-                    className="min-h-[540px] w-full border-0 bg-white xl:min-h-0"
-                  />
-                )}
+                <iframe
+                  key={selectedTemplate.editorUrl}
+                  title={`${selectedTemplate.name} E-Sign editor`}
+                  src={selectedTemplate.editorUrl}
+                  className="min-h-[720px] w-full border-0 bg-white xl:min-h-0"
+                />
                 <aside className="min-h-0 overflow-auto border-t border-[var(--line)] bg-white xl:border-l xl:border-t-0">
                   <div className="sticky top-0 z-10 border-b border-[var(--line)] bg-white px-3 py-2">
                     <p className="eyebrow">Customer fields</p>

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
@@ -165,6 +165,24 @@ function getDocusealAuthHeaders() {
   return {
     "X-Auth-Token": getDocusealApiToken(),
   };
+}
+
+function createDocusealEmbeddedEditorUrl(docusealTemplateId: number) {
+  const apiToken = getDocusealApiToken();
+  const keySha = createHash("sha256").update(apiToken).digest("hex");
+  const expiresAt = Math.floor(Date.now() / 1000) + 4 * 60 * 60;
+  const payload = `${docusealTemplateId}.${expiresAt}.${keySha}`;
+  const token = createHmac("sha256", apiToken).update(payload).digest("hex");
+  const url = new URL(
+    `/metro_embed/templates/${encodeURIComponent(docusealTemplateId)}/edit`,
+    getDocusealApiUrl(),
+  );
+
+  url.searchParams.set("expires", String(expiresAt));
+  url.searchParams.set("key_sha", keySha);
+  url.searchParams.set("token", token);
+
+  return url.toString();
 }
 
 function humanizeFieldName(name: string) {
@@ -370,7 +388,7 @@ function mapDocusealApiTemplate(
       alias?.submitterRole ||
       "First Party",
     active: alias?.active ?? true,
-    editorUrl: `${getDocusealApiUrl()}/templates/${docusealTemplateId}/edit`,
+    editorUrl: createDocusealEmbeddedEditorUrl(docusealTemplateId),
     fields: (apiTemplate.fields ?? [])
       .map(mapDocusealApiField)
       .filter((field): field is DocusealTemplateDefinition["fields"][number] =>
