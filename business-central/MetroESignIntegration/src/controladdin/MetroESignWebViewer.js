@@ -38,6 +38,9 @@
 
   window.Navigate = function (url) {
     var frame = ensureFrame();
+    if (frame.getAttribute("src") === (url || "about:blank")) {
+      return;
+    }
     frame.removeAttribute("srcdoc");
     frame.src = url || "about:blank";
   };

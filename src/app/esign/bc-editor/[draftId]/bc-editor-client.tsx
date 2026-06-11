@@ -75,6 +75,18 @@ type EquipmentSearchResult = {
   bookValue: number;
 };
 
+type RentalOrderSearchResult = {
+  rentalOrderNo: string;
+  customerNumber: string;
+  customerName: string;
+  assetNumbers: string[];
+  branchCode: string;
+  shipDate: string;
+  lastActivityAt: string;
+  equipmentCount: number;
+  grossAmount: string;
+};
+
 type EditorProps = {
   draft: DocusealDraft;
   template: DocusealTemplateDefinition;
@@ -182,6 +194,23 @@ function getEquipmentStoreKey(equipment: EquipmentSearchResult | null) {
 
 function getEquipmentType(equipment: EquipmentSearchResult) {
   return equipment.subtype?.trim() || equipment.type;
+}
+
+function formatShortDate(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function applyEquipmentToValues(
@@ -400,12 +429,16 @@ export function BusinessCentralESignEditorClient({
   const [customerName, setCustomerName] = useState(draft.customerName);
   const [customerEmail, setCustomerEmail] = useState(draft.customerEmail);
   const [rentalOrderNo, setRentalOrderNo] = useState(draft.values.rental_order_number ?? "");
+  const [rentalOrderQuery, setRentalOrderQuery] = useState(
+    draft.values.rental_order_number ?? "",
+  );
   const [subject, setSubject] = useState(draft.subject);
   const [message, setMessage] = useState(draft.message);
   const [customerQuery, setCustomerQuery] = useState(draft.customerName);
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [equipmentQuery, setEquipmentQuery] = useState(draft.values.unit_number ?? "");
   const [equipmentResults, setEquipmentResults] = useState<EquipmentSearchResult[]>([]);
+  const [rentalOrderResults, setRentalOrderResults] = useState<RentalOrderSearchResult[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentSearchResult | null>(null);
   const [rentableOnly, setRentableOnly] = useState(true);
   const [busy, setBusy] = useState("");
@@ -454,10 +487,6 @@ export function BusinessCentralESignEditorClient({
       "*",
     );
   }
-
-  useEffect(() => {
-    publishEditorState();
-  });
 
   useEffect(() => {
     if (currentDraft.status === "sent") {
@@ -530,6 +559,54 @@ export function BusinessCentralESignEditorClient({
     };
   }, [currentDraft.id, currentDraft.status, equipmentQuery, expires, rentableOnly, session, token]);
 
+  useEffect(() => {
+    if (currentDraft.status === "sent") {
+      return;
+    }
+    const query = rentalOrderQuery.trim();
+    const customerNo = values.customer_number?.trim() ?? "";
+    const unitNo = values.unit_number?.trim() ?? "";
+    if (query.length < 2 && !customerNo && !unitNo) {
+      setRentalOrderResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      const params = new URLSearchParams({
+        q: query,
+        pageSize: "8",
+        customerNo,
+        unitNo,
+        expires: String(expires),
+        session,
+        token,
+      });
+      const response = await fetch(
+        `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/rental-orders?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | ApiResult<RentalOrderSearchResult[]>
+        | null;
+      setRentalOrderResults(response.ok ? payload?.data ?? [] : []);
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [
+    currentDraft.id,
+    currentDraft.status,
+    expires,
+    rentalOrderQuery,
+    session,
+    token,
+    values.customer_number,
+    values.unit_number,
+  ]);
+
   function loadPayload(payload: EditorPayload) {
     setCurrentDraft(payload.draft);
     setCurrentTemplate(payload.template);
@@ -537,6 +614,7 @@ export function BusinessCentralESignEditorClient({
     setCustomerName(payload.draft.customerName);
     setCustomerEmail(payload.draft.customerEmail);
     setRentalOrderNo(payload.draft.values.rental_order_number ?? "");
+    setRentalOrderQuery(payload.draft.values.rental_order_number ?? "");
     setSubject(payload.draft.subject);
     setMessage(payload.draft.message);
     setCustomerQuery(payload.draft.customerName);
@@ -585,6 +663,29 @@ export function BusinessCentralESignEditorClient({
     setFeedback(`Selected ${equipment.assetNumber} from ${equipment.branch}.`);
   }
 
+  function selectRentalOrder(order: RentalOrderSearchResult) {
+    setRentalOrderNo(order.rentalOrderNo);
+    setRentalOrderQuery(order.rentalOrderNo);
+    setValues((current) => ({
+      ...current,
+      rental_order_number: order.rentalOrderNo,
+      order_number: order.rentalOrderNo,
+      customer_number: current.customer_number || order.customerNumber,
+      lessee_name: current.lessee_name || order.customerName,
+      customer_name: current.customer_name || order.customerName,
+      unit_number: current.unit_number || order.assetNumbers[0] || "",
+    }));
+    if (!customerName && order.customerName) {
+      setCustomerName(order.customerName);
+      setCustomerQuery(order.customerName);
+    }
+    if (!equipmentQuery && order.assetNumbers[0]) {
+      setEquipmentQuery(order.assetNumbers[0]);
+    }
+    setRentalOrderResults([]);
+    setFeedback(`Selected rental order ${order.rentalOrderNo}.`);
+  }
+
   async function submitJson<T>(url: string, body: unknown) {
     const response = await fetch(url, {
       method: "POST",
@@ -621,6 +722,7 @@ export function BusinessCentralESignEditorClient({
           values: {
             ...values,
             rental_order_number: rentalOrderNo,
+            order_number: values.order_number || rentalOrderNo,
           },
         },
       );
@@ -665,6 +767,7 @@ export function BusinessCentralESignEditorClient({
           values: {
             ...values,
             rental_order_number: rentalOrderNo,
+            order_number: values.order_number || rentalOrderNo,
           },
         },
       );
@@ -869,17 +972,41 @@ export function BusinessCentralESignEditorClient({
             ) : null}
           </label>
 
-          <label className="grid gap-1">
+          <label className="relative grid gap-1">
             <span className="text-[0.72rem] font-semibold text-slate-600">Rental order no.</span>
             <input
-              value={rentalOrderNo}
+              value={rentalOrderQuery}
               disabled={disabled}
               onChange={(event) => {
+                setRentalOrderQuery(event.target.value);
                 setRentalOrderNo(event.target.value);
                 updateValue("rental_order_number", event.target.value);
               }}
               className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
             />
+            {rentalOrderResults.length > 0 ? (
+              <div className="absolute left-0 right-0 top-full z-40 max-h-72 overflow-auto border border-slate-300 bg-white shadow-lg">
+                {rentalOrderResults.map((order) => (
+                  <button
+                    key={order.rentalOrderNo}
+                    type="button"
+                    onClick={() => selectRentalOrder(order)}
+                    className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-slate-100"
+                  >
+                    <span className="font-semibold">{order.rentalOrderNo}</span>
+                    <span className="block text-slate-500">
+                      {order.customerName || order.customerNumber || "No customer"} /{" "}
+                      {order.assetNumbers.length ? order.assetNumbers.join(", ") : "No unit"}
+                    </span>
+                    <span className="block text-slate-500">
+                      {order.branchCode ? `${order.branchCode} / ` : ""}
+                      {order.shipDate ? `Ship ${formatShortDate(order.shipDate)} / ` : ""}
+                      {order.equipmentCount} unit{order.equipmentCount === 1 ? "" : "s"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </label>
 
           <label className="flex items-end gap-2 pb-2 text-[0.76rem] font-semibold text-slate-700">

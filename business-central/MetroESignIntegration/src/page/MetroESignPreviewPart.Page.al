@@ -56,9 +56,21 @@ page 50377 "MTE ESign Preview Part"
         end;
 
         if Rec."Editor URL" <> '' then
-            CurrPage.Preview.Navigate(Rec."Editor URL")
+            NavigateOnce(Rec."Editor URL")
         else
-            CurrPage.Preview.Navigate(Rec."Preview URL");
+            NavigateOnce(Rec."Preview URL");
+    end;
+
+    local procedure NavigateOnce(Url: Text)
+    begin
+        if Url = '' then
+            exit;
+
+        if LoadedUrl = Url then
+            exit;
+
+        LoadedUrl := CopyStr(Url, 1, MaxStrLen(LoadedUrl));
+        CurrPage.Preview.Navigate(Url);
     end;
 
     local procedure ApplyEditorState(Payload: Text)
@@ -160,7 +172,6 @@ page 50377 "MTE ESign Preview Part"
 
         if Changed then begin
             Rec.Modify(true);
-            CurrPage.Update(false);
         end;
     end;
 
@@ -188,4 +199,5 @@ page 50377 "MTE ESign Preview Part"
 
     var
         ControlReady: Boolean;
+        LoadedUrl: Text[2048];
 }
