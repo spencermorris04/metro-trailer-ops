@@ -16,6 +16,9 @@ type RentalOrderSearchRow = {
   last_activity_at: Date | null;
   equipment_count: number;
   gross_amount: string | null;
+  customer_match: number;
+  unit_match: number;
+  search_rank: number;
 };
 
 function likePattern(value: string) {
@@ -33,7 +36,7 @@ export async function GET(request: Request, context: EditorRentalOrderSearchRout
     });
 
     const pageSize = Math.min(12, Math.max(1, Number(searchParams.get("pageSize") ?? "8")));
-    const conditions = ["coalesce(nullif(lease_key, ''), document_no) is not null"];
+    const conditions = ["ls.lease_key is not null", "ls.source = 'business_central'"];
     const params: Array<string | number | null> = [];
     const query = searchParams.get("q")?.trim();
     const customerNo = searchParams.get("customerNo")?.trim();
@@ -42,52 +45,78 @@ export async function GET(request: Request, context: EditorRentalOrderSearchRout
     if (query) {
       params.push(likePattern(query));
       conditions.push(`(
-        coalesce(nullif(lease_key, ''), document_no) ilike $${params.length} escape E'\\\\'
-        or coalesce(document_no, '') ilike $${params.length} escape E'\\\\'
-        or coalesce(customer_number, '') ilike $${params.length} escape E'\\\\'
-        or coalesce(customer_name, '') ilike $${params.length} escape E'\\\\'
-        or coalesce(asset_number, '') ilike $${params.length} escape E'\\\\'
+        ls.lease_key ilike $${params.length} escape E'\\\\'
+        or coalesce(ls.customer_number, '') ilike $${params.length} escape E'\\\\'
+        or coalesce(ls.customer_name, '') ilike $${params.length} escape E'\\\\'
+        or coalesce(ls.search_text, '') ilike $${params.length} escape E'\\\\'
+        or exists (
+          select 1
+          from lease_equipment_summary les
+          where les.lease_key = ls.lease_key
+            and coalesce(les.asset_number, '') ilike $${params.length} escape E'\\\\'
+        )
       )`);
     }
 
     if (!query && customerNo) {
       params.push(customerNo);
-      conditions.push(`customer_number = $${params.length}`);
+      conditions.push(`ls.customer_number = $${params.length}`);
     }
 
     if (!query && unitNo) {
       params.push(unitNo);
-      conditions.push(`asset_number = $${params.length}`);
+      conditions.push(`exists (
+        select 1
+        from lease_equipment_summary les
+        where les.lease_key = ls.lease_key
+          and les.asset_number = $${params.length}
+      )`);
     }
 
     params.push(customerNo || null);
     const customerRankParam = params.length;
     params.push(unitNo || null);
     const unitRankParam = params.length;
+    params.push(query ? likePattern(query) : null);
+    const searchRankPatternParam = params.length;
+    params.push(query ? (query.toUpperCase().startsWith("RO") ? query : `RO${query}`) : null);
+    const searchRankExactParam = params.length;
     params.push(pageSize);
     const limitParam = params.length;
 
     const result = await pool.query<RentalOrderSearchRow>(
       `
         select
-          coalesce(nullif(lease_key, ''), document_no) as rental_order_no,
-          (array_agg(customer_number order by posting_date desc nulls last) filter (where customer_number is not null))[1] as customer_number,
-          (array_agg(customer_name order by posting_date desc nulls last) filter (where customer_name is not null))[1] as customer_name,
-          array_remove(array_agg(distinct asset_number), null) as asset_numbers,
-          (array_agg(branch_code order by posting_date desc nulls last) filter (where branch_code is not null))[1] as branch_code,
-          min(service_period_start) as ship_date,
-          max(coalesce(service_period_end, service_period_start, posting_date)) as last_activity_at,
-          count(distinct asset_number)::integer as equipment_count,
-          coalesce(sum(gross_amount), 0)::numeric(18, 2)::text as gross_amount,
-          max(case when $${customerRankParam}::text is not null and customer_number = $${customerRankParam}::text then 1 else 0 end) as customer_match,
-          max(case when $${unitRankParam}::text is not null and asset_number = $${unitRankParam}::text then 1 else 0 end) as unit_match
-        from rental_activity_facts
+          ls.lease_key as rental_order_no,
+          ls.customer_number,
+          ls.customer_name,
+          coalesce(assets.asset_numbers, '{}'::text[]) as asset_numbers,
+          null::text as branch_code,
+          ls.first_invoice_date as ship_date,
+          coalesce(ls.latest_activity_at, ls.latest_invoice_date, ls.first_invoice_date) as last_activity_at,
+          ls.equipment_count,
+          coalesce(ls.gross_revenue, 0)::numeric(18, 2)::text as gross_amount,
+          case when $${customerRankParam}::text is not null and ls.customer_number = $${customerRankParam}::text then 1 else 0 end as customer_match,
+          case when $${unitRankParam}::text is not null and coalesce(assets.asset_numbers, '{}'::text[]) @> array[$${unitRankParam}::text] then 1 else 0 end as unit_match,
+          case
+            when $${searchRankExactParam}::text is not null and upper(ls.lease_key) = upper($${searchRankExactParam}::text) then 0
+            when $${searchRankPatternParam}::text is not null and ls.lease_key ilike $${searchRankPatternParam}::text escape E'\\\\' then 1
+            when $${searchRankPatternParam}::text is not null and coalesce(ls.customer_number, '') ilike $${searchRankPatternParam}::text escape E'\\\\' then 2
+            when $${searchRankPatternParam}::text is not null and coalesce(ls.customer_name, '') ilike $${searchRankPatternParam}::text escape E'\\\\' then 3
+            else 4
+          end as search_rank
+        from lease_summary ls
+        left join lateral (
+          select array_remove(array_agg(distinct les.asset_number order by les.asset_number), null) as asset_numbers
+          from lease_equipment_summary les
+          where les.lease_key = ls.lease_key
+        ) assets on true
         where ${conditions.join(" and ")}
-        group by coalesce(nullif(lease_key, ''), document_no)
-        order by customer_match desc,
+        order by search_rank,
+          customer_match desc,
           unit_match desc,
-          max(coalesce(service_period_end, service_period_start, posting_date)) desc nulls last,
-          coalesce(nullif(lease_key, ''), document_no) desc
+          coalesce(ls.latest_activity_at, ls.latest_invoice_date, ls.first_invoice_date) desc nulls last,
+          ls.lease_key desc
         limit $${limitParam}
       `,
       params,

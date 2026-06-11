@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import type {
   DocusealFieldDefinition,
@@ -104,6 +104,11 @@ type EditorProps = {
 
 const signingLinkVariable = "{submitter.link}";
 const signingLinkMarkdown = `[Review and Submit](${signingLinkVariable})`;
+const legacyDefaultEmailMessages = new Set([
+  `Please review the prepared Metro Trailer document and complete any remaining fields.\n\n${signingLinkMarkdown}`,
+  `Please review the prepared Metro Trailer document and complete any remaining fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} ${signingLinkMarkdown}`,
+  `Hello, Metro Trailer has prepared an E-Sign document for your review. Please click the Review and Submit link to open the document and complete any remaining fields. ${signingLinkMarkdown} If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} Thank you, Metro Trailer`,
+]);
 const defaultEmailMessage = `Hello,
 
 Metro Trailer has prepared an E-Sign document for your review.
@@ -251,6 +256,14 @@ function includesSigningLink(value: string) {
   return /\{+submitter\.link\}+/i.test(value);
 }
 
+function normalizeEmailMessage(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || legacyDefaultEmailMessages.has(trimmed)) {
+    return defaultEmailMessage;
+  }
+  return value;
+}
+
 function renderMessagePreview(value: string) {
   const tokenRegex = /(\[Review and Submit\]\(\{submitter\.link\}\)|\{submitter\.link\})/gi;
   return value.split(tokenRegex).map((part, index) => {
@@ -323,6 +336,48 @@ function FieldInput({
       onChange={(event) => onChange(field.name, event.target.value)}
       className={`${commonClass} h-8`}
     />
+  );
+}
+
+function EmailMessageEditor({
+  disabled,
+  value,
+  textareaRef,
+  onChange,
+}: {
+  disabled: boolean;
+  value: string;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onChange: (value: string) => void;
+}) {
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+
+  return (
+    <div className="relative min-h-48 rounded-sm border border-slate-300 bg-white focus-within:border-[#0071f4] focus-within:ring-1 focus-within:ring-[#0071f4]">
+      <div
+        ref={overlayRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-[0.82rem] leading-6 text-slate-950"
+      >
+        {renderMessagePreview(value)}
+        {value.endsWith("\n") ? " " : null}
+      </div>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        disabled={disabled}
+        rows={8}
+        spellCheck={false}
+        onScroll={(event) => {
+          if (overlayRef.current) {
+            overlayRef.current.scrollTop = event.currentTarget.scrollTop;
+            overlayRef.current.scrollLeft = event.currentTarget.scrollLeft;
+          }
+        }}
+        onChange={(event) => onChange(event.target.value)}
+        className="relative z-10 min-h-48 w-full resize-y rounded-sm border-0 bg-transparent px-3 py-2 text-[0.82rem] leading-6 text-transparent caret-slate-950 outline-none selection:bg-[#0071f4]/25 disabled:bg-slate-100/70 disabled:caret-transparent"
+      />
+    </div>
   );
 }
 
@@ -489,7 +544,7 @@ export function BusinessCentralESignEditorClient({
     draft.values.rental_order_number ?? "",
   );
   const [subject, setSubject] = useState(draft.subject);
-  const [message, setMessage] = useState(draft.message?.trim() ? draft.message : defaultEmailMessage);
+  const [message, setMessage] = useState(normalizeEmailMessage(draft.message));
   const [customerQuery, setCustomerQuery] = useState(draft.customerName);
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [equipmentQuery, setEquipmentQuery] = useState(draft.values.unit_number ?? "");
@@ -743,7 +798,7 @@ export function BusinessCentralESignEditorClient({
     setRentalOrderNo(payload.draft.values.rental_order_number ?? "");
     setRentalOrderQuery(payload.draft.values.rental_order_number ?? "");
     setSubject(payload.draft.subject);
-    setMessage(payload.draft.message?.trim() ? payload.draft.message : defaultEmailMessage);
+    setMessage(normalizeEmailMessage(payload.draft.message));
     setCustomerQuery(payload.draft.customerName);
     setEquipmentQuery(payload.draft.values.unit_number ?? "");
     setCustomerResults([]);
@@ -1278,20 +1333,15 @@ export function BusinessCentralESignEditorClient({
                 Insert signing link
               </button>
             </span>
-            <textarea
-              ref={messageTextareaRef}
+            <EmailMessageEditor
+              textareaRef={messageTextareaRef}
               value={message}
               disabled={disabled}
-              rows={7}
-              onChange={(event) => {
-                setMessage(event.target.value);
+              onChange={(nextMessage) => {
+                setMessage(nextMessage);
                 setNotice("Unsaved email changes", "warning");
               }}
-              className="min-h-40 rounded-sm border border-slate-300 bg-white px-2 py-1.5 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
-            <div className="rounded-sm border border-slate-200 bg-slate-50 px-2 py-2 text-[0.76rem] leading-5 text-slate-700">
-              {renderMessagePreview(message)}
-            </div>
             {!messageHasSigningLink ? (
               <span className="text-[0.7rem] font-semibold text-amber-700">
                 Add {"{submitter.link}"} so the email includes the live signing link.
