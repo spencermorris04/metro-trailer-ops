@@ -15,7 +15,9 @@ export type DocusealFieldDefinition = {
   uuid: string;
   label: string;
   section: DocusealFieldSection;
+  type?: string;
   multiline?: boolean;
+  customerEditable?: boolean;
 };
 
 export type DocusealTemplateDefinition = {

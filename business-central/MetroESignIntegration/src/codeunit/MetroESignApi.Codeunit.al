@@ -129,6 +129,27 @@ codeunit 50370 "MTE ESign API"
             Error('Metro E-Sign did not return an editor URL.');
     end;
 
+    procedure GetTemplateManagerUrl(): Text
+    var
+        ResponseObject: JsonObject;
+        DataToken: JsonToken;
+        Data: JsonObject;
+        Url: Text;
+    begin
+        ResponseObject := PostJson('/api/integrations/business-central/esign/template-manager-url', BuildTemplateManagerSessionBody());
+
+        if ResponseObject.Get('data', DataToken) then
+            Data := DataToken.AsObject()
+        else
+            Data := ResponseObject;
+
+        Url := GetJsonText(Data, 'url');
+        if Url = '' then
+            Error('Metro E-Sign did not return a template manager URL.');
+
+        exit(Url);
+    end;
+
     procedure InvalidateLease(var Lease: Record "MTE ESign Lease")
     var
         ResponseObject: JsonObject;
@@ -168,6 +189,19 @@ codeunit 50370 "MTE ESign API"
         Lease."Lease ID" := CreateGuid();
         ApplyDefaultTemplate(Lease);
         Lease.Validate("Fixed Asset No.", FixedAssetNo);
+        Lease.Insert(true);
+        PopulateLeaseFields(Lease);
+        exit(Lease."Lease ID");
+    end;
+
+    procedure CreateLeaseForRentalOrder(RentalOrderNo: Code[30]): Guid
+    var
+        Lease: Record "MTE ESign Lease";
+    begin
+        Lease.Init();
+        Lease."Lease ID" := CreateGuid();
+        ApplyDefaultTemplate(Lease);
+        Lease."Rental Order No." := RentalOrderNo;
         Lease.Insert(true);
         PopulateLeaseFields(Lease);
         exit(Lease."Lease ID");
@@ -470,6 +504,17 @@ codeunit 50370 "MTE ESign API"
         Body.Add('canManageTemplates', false);
     end;
 
+    local procedure BuildTemplateManagerSessionBody() Body: JsonObject
+    begin
+        Body.Add('bcUserId', UserId());
+        Body.Add('bcUserSecurityId', Format(UserSecurityId()));
+        Body.Add('companyName', CompanyName());
+        Body.Add('canEdit', false);
+        Body.Add('canSend', false);
+        Body.Add('canVoid', false);
+        Body.Add('canManageTemplates', true);
+    end;
+
     local procedure SyncTypedLeaseFields(var Lease: Record "MTE ESign Lease")
     begin
         SetLeaseFieldValue(Lease, 'customer_phone', Lease."Phone Number");
@@ -632,6 +677,7 @@ codeunit 50370 "MTE ESign API"
                 TemplateField."Field Label" := CopyStr(GetJsonText(FieldObject, 'label'), 1, MaxStrLen(TemplateField."Field Label"));
                 TemplateField.Section := CopyStr(GetJsonText(FieldObject, 'section'), 1, MaxStrLen(TemplateField.Section));
                 TemplateField."Sort Order" := SortOrder;
+                TemplateField."Customer Editable" := GetJsonBoolean(FieldObject, 'customerEditable', false);
                 TemplateField.Insert();
             end;
         end;

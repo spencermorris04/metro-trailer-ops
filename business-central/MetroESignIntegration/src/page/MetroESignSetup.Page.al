@@ -61,7 +61,7 @@ page 50370 "MTE ESign Setup"
 
                 trigger OnAction()
                 begin
-                    Hyperlink('https://esign.lumpkindevelopment.com');
+                    Hyperlink('https://esign.metrotrailer.com');
                 end;
             }
         }

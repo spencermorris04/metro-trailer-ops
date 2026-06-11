@@ -169,6 +169,13 @@
       "when": 1781038800000,
       "tag": "0023_customer_rental_yearly_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1781203260000,
+      "tag": "0024_docuseal_customer_editable_fields",
+      "breakpoints": true
     }
   ]
 }

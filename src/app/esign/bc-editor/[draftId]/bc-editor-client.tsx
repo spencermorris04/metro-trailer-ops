@@ -105,15 +105,15 @@ type EditorProps = {
 const signingLinkVariable = "{submitter.link}";
 const signingLinkMarkdown = `[Review and Submit](${signingLinkVariable})`;
 const legacyDefaultEmailMessages = new Set([
-  `Please review the prepared Metro Trailer document and complete any remaining fields.\n\n${signingLinkMarkdown}`,
-  `Please review the prepared Metro Trailer document and complete any remaining fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} ${signingLinkMarkdown}`,
-  `Hello, Metro Trailer has prepared an E-Sign document for your review. Please click the Review and Submit link to open the document and complete any remaining fields. ${signingLinkMarkdown} If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} Thank you, Metro Trailer`,
+  `Please review the prepared Metro Trailer document and complete the requested signer fields.\n\n${signingLinkMarkdown}`,
+  `Please review the prepared Metro Trailer document and complete the requested signer fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} ${signingLinkMarkdown}`,
+  `Hello, Metro Trailer has prepared an E-Sign document for your review. Please click the Review and Submit link to open the document and complete the requested signer fields. ${signingLinkMarkdown} If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} Thank you, Metro Trailer`,
 ]);
 const defaultEmailMessage = `Hello,
 
 Metro Trailer has prepared an E-Sign document for your review.
 
-Please click the Review and Submit link below to open the document and complete any remaining fields.
+Please click the Review and Submit link below to open the document and complete the requested signer fields.
 
 ${signingLinkMarkdown}
 

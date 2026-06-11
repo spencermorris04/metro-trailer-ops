@@ -463,7 +463,7 @@ function buildRandomTestData(template: DocusealTemplateDefinition) {
   return {
     customerEmail: contact.email,
     customerName: contact.name,
-    message: `Please review the prepared Metro Trailer document for ${unitNumber} and complete any remaining fields.`,
+    message: `Please review the prepared Metro Trailer document for ${unitNumber} and complete the requested signer fields.`,
     subject: "Your signature is requested for a Metro Trailer Document",
     values: fieldValues,
   };
@@ -498,7 +498,7 @@ export function DocusealPrefillWorkspace({
   );
   const [message, setMessage] = useState(
     selectedDraft?.message ??
-      `Please review the prepared Metro Trailer document and complete any remaining fields.\n\n${signingLinkMarkdown}`,
+      `Please review the prepared Metro Trailer document and complete the requested signer fields.\n\n${signingLinkMarkdown}`,
   );
   const [, setSelectedCustomer] = useState<CustomerSearchResult | null>(null);
   const [customerQuery, setCustomerQuery] = useState(selectedDraft?.customerName ?? "");
@@ -1489,7 +1489,7 @@ export function DocusealPrefillWorkspace({
               {selectedDraftIsSent
                 ? "Sent and locked — invalidate to stop the old customer link and reopen this draft for edits."
                 : feedback ??
-                  "Filled fields are sent to E-Sign as read-only; empty fields stay open to the customer."}
+                  "Only fields marked customer-fillable in the template manager stay editable on the customer signing link."}
             </p>
           </div>
         </main>

@@ -1,42 +1,24 @@
 page 50371 "MTE ESign Templates"
 {
-    PageType = List;
-    SourceTable = "MTE ESign Template";
+    PageType = Card;
+    SourceTable = "MTE ESign Setup";
     ApplicationArea = All;
-    UsageCategory = Lists;
-    Caption = 'Metro E-Sign Templates';
-    Editable = true;
+    UsageCategory = Administration;
+    Caption = 'Metro E-Sign Template Manager';
 
     layout
     {
         area(Content)
         {
-            repeater(Templates)
+            usercontrol(TemplateManager; "MTE ESign Web Viewer")
             {
-                field(Code; Rec.Code)
-                {
-                    ApplicationArea = All;
-                }
-                field(Name; Rec.Name)
-                {
-                    ApplicationArea = All;
-                }
-                field("Backend Template Key"; Rec."Backend Template Key")
-                {
-                    ApplicationArea = All;
-                }
-                field("DocuSeal Template ID"; Rec."DocuSeal Template ID")
-                {
-                    ApplicationArea = All;
-                }
-                field(Active; Rec.Active)
-                {
-                    ApplicationArea = All;
-                }
-                field("Last Synced At"; Rec."Last Synced At")
-                {
-                    ApplicationArea = All;
-                }
+                ApplicationArea = All;
+
+                trigger ControlAddInReady()
+                begin
+                    ControlReady := true;
+                    LoadTemplateManager();
+                end;
             }
         }
     }
@@ -61,19 +43,49 @@ page 50371 "MTE ESign Templates"
                     CurrPage.Update(false);
                 end;
             }
-            action(OpenESignAdmin)
+            action(ReloadTemplateManager)
             {
-                Caption = 'Open E-Sign Admin';
+                Caption = 'Reload Manager';
                 ApplicationArea = All;
-                Image = LinkWeb;
+                Image = Refresh;
                 Promoted = true;
                 PromotedCategory = Process;
 
                 trigger OnAction()
                 begin
-                    Hyperlink('https://esign.lumpkindevelopment.com');
+                    LoadedUrl := '';
+                    LoadTemplateManager();
                 end;
             }
         }
     }
+
+    trigger OnOpenPage()
+    begin
+        if not Rec.Get('DEFAULT') then begin
+            Rec.Init();
+            Rec."Primary Key" := 'DEFAULT';
+            Rec.Insert();
+        end;
+    end;
+
+    local procedure LoadTemplateManager()
+    var
+        Api: Codeunit "MTE ESign API";
+        Url: Text;
+    begin
+        if not ControlReady then
+            exit;
+
+        Url := Api.GetTemplateManagerUrl();
+        if Url = LoadedUrl then
+            exit;
+
+        LoadedUrl := CopyStr(Url, 1, MaxStrLen(LoadedUrl));
+        CurrPage.TemplateManager.Navigate(Url);
+    end;
+
+    var
+        ControlReady: Boolean;
+        LoadedUrl: Text[2048];
 }

@@ -32,6 +32,11 @@ table 50374 "MTE ESign Template Field"
             Caption = 'Sort Order';
             DataClassification = SystemMetadata;
         }
+        field(6; "Customer Editable"; Boolean)
+        {
+            Caption = 'Customer Editable';
+            DataClassification = CustomerContent;
+        }
     }
 
     keys

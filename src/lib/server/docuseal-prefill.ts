@@ -53,6 +53,7 @@ export type DocusealTemplateClassification = {
   folderName: string;
   location: string;
   submitterRole: string;
+  customerEditableFields: string[];
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -299,6 +300,26 @@ function inferFieldSection(name: string): DocusealFieldSection {
   return "Other";
 }
 
+function isDefaultCustomerEditableField(field: {
+  name: string;
+  type?: string | null;
+}) {
+  const normalizedName = field.name.trim().toLowerCase();
+  const normalizedType = field.type?.trim().toLowerCase() ?? "";
+
+  return (
+    normalizedType === "signature" ||
+    normalizedName === "lessee_authorized_agent" ||
+    normalizedName === "lessee_authorized_agent_title" ||
+    normalizedName === "authorized_agent" ||
+    normalizedName === "authorized_agent_title" ||
+    normalizedName === "customer_authorized_agent" ||
+    normalizedName === "customer_authorized_agent_title" ||
+    normalizedName.includes("customer_signature") ||
+    normalizedName.includes("lessee_signature")
+  );
+}
+
 function mapDocusealApiField(
   field: DocusealApiField,
 ): DocusealTemplateDefinition["fields"][number] | null {
@@ -312,7 +333,12 @@ function mapDocusealApiField(
     uuid: field.uuid?.trim() || name,
     label: field.title?.trim() || humanizeFieldName(name),
     section: inferFieldSection(name),
+    type: field.type?.trim() || undefined,
     multiline: field.type === "textarea" || (field.areas?.length ?? 0) > 1,
+    customerEditable: isDefaultCustomerEditableField({
+      name,
+      type: field.type,
+    }),
   };
 }
 
@@ -403,6 +429,9 @@ function mapTemplateClassificationRow(
     folderName: row.folderName,
     location: row.location,
     submitterRole: row.submitterRole,
+    customerEditableFields: Array.isArray(row.customerEditableFields)
+      ? row.customerEditableFields.filter((field): field is string => typeof field === "string")
+      : [],
     active: row.active,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -426,6 +455,8 @@ function mergeTemplateClassifications(
       return template;
     }
 
+    const customerEditableFields = classification.customerEditableFields;
+
     return {
       ...template,
       key: classification.templateKey || template.key,
@@ -434,6 +465,12 @@ function mergeTemplateClassifications(
       folderName: classification.folderName,
       location: classification.location || classification.folderName,
       submitterRole: classification.submitterRole || template.submitterRole,
+      fields: template.fields.map((field) => ({
+        ...field,
+        customerEditable: customerEditableFields.length
+          ? customerEditableFields.includes(field.name)
+          : Boolean(field.customerEditable),
+      })),
       active: classification.active,
     };
   });
@@ -456,6 +493,7 @@ export async function upsertDocusealTemplateClassification(input: {
   folderName?: string;
   location?: string;
   submitterRole?: string;
+  customerEditableFields?: string[];
   active?: boolean;
 }) {
   const existing = await db.query.docusealTemplateClassifications.findFirst({
@@ -469,6 +507,10 @@ export async function upsertDocusealTemplateClassification(input: {
   const folderName = input.folderName?.trim() ?? existing?.folderName ?? "";
   const location = input.location?.trim() ?? existing?.location ?? folderName;
   const submitterRole = input.submitterRole?.trim() || existing?.submitterRole || "First Party";
+  const customerEditableFields =
+    input.customerEditableFields?.map((field) => field.trim()).filter(Boolean) ??
+    existing?.customerEditableFields ??
+    [];
   const values = {
     templateKey,
     name: input.name.trim(),
@@ -476,6 +518,7 @@ export async function upsertDocusealTemplateClassification(input: {
     folderName,
     location,
     submitterRole,
+    customerEditableFields,
     active: input.active ?? existing?.active ?? true,
     updatedAt: new Date(),
   };
@@ -589,10 +632,19 @@ function normalizeDefaultScope(scopeType: string, scopeKey?: string) {
   };
 }
 
-function buildReadonlyFields(values: Record<string, string>) {
-  return Object.entries(values)
-    .filter(([, value]) => value.trim().length > 0)
-    .map(([name]) => name);
+function buildReadonlyFields(template: DocusealTemplateDefinition) {
+  return template.fields
+    .filter((field) => !field.customerEditable)
+    .map((field) => field.name);
+}
+
+function buildSubmissionValues(
+  template: DocusealTemplateDefinition,
+  values: Record<string, string>,
+) {
+  return Object.fromEntries(
+    template.fields.map((field) => [field.name, values[field.name] ?? ""]),
+  );
 }
 
 function buildDocusealSubmitterUrl(slug: string | null) {
@@ -669,7 +721,9 @@ async function deleteDocusealSubmission(submissionId: number) {
 }
 
 async function createDocusealSubmission(draft: DocusealDraft, sendEmail: boolean) {
-  const readonlyFields = buildReadonlyFields(draft.values);
+  const template = await requireTemplate(draft.templateKey);
+  const readonlyFields = buildReadonlyFields(template);
+  const submissionValues = buildSubmissionValues(template, draft.values);
   const response = await fetchDocuseal("/api/submissions", {
     method: "POST",
     headers: {
@@ -684,7 +738,7 @@ async function createDocusealSubmission(draft: DocusealDraft, sendEmail: boolean
           role: draft.submitterRole,
           name: draft.customerName,
           email: draft.customerEmail,
-          values: draft.values,
+          values: submissionValues,
           readonly_fields: readonlyFields,
           message: {
             subject: draft.subject,
@@ -796,6 +850,7 @@ export async function updateDocusealTemplateClassification(input: {
   folderName?: string;
   location?: string;
   submitterRole?: string;
+  customerEditableFields?: string[];
   active?: boolean;
 }) {
   const folderName = input.folderName?.trim() ?? "";

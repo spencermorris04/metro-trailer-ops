@@ -58,6 +58,19 @@ const editorSessionSchema = z.object({
   }),
 });
 
+const templateManagerSessionSchema = z.object({
+  expiresAt: z.number().finite(),
+  bcUserId: z.string().optional().default("Business Central"),
+  bcUserSecurityId: z.string().optional().default(""),
+  companyName: z.string().optional().default(""),
+  capabilities: editorCapabilitiesSchema.default({
+    canEdit: false,
+    canSend: false,
+    canVoid: false,
+    canManageTemplates: true,
+  }),
+});
+
 const editorSessionRequestSchema = z.object({
   bcUserId: z.string().optional().default("Business Central"),
   bcUserSecurityId: z.string().optional().default(""),
@@ -69,6 +82,9 @@ const editorSessionRequestSchema = z.object({
 });
 
 export type BusinessCentralEditorSession = z.infer<typeof editorSessionSchema>;
+export type BusinessCentralTemplateManagerSession = z.infer<
+  typeof templateManagerSessionSchema
+>;
 export type BusinessCentralEditorSessionRequest = z.infer<
   typeof editorSessionRequestSchema
 >;
@@ -104,6 +120,10 @@ function encodeEditorSession(session: BusinessCentralEditorSession) {
   return Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
 }
 
+function encodeTemplateManagerSession(session: BusinessCentralTemplateManagerSession) {
+  return Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
+}
+
 function signEditorSession(session: string, secret: string) {
   return createHmac("sha256", secret).update(session).digest("base64url");
 }
@@ -115,6 +135,16 @@ function decodeEditorSession(value: string) {
     );
   } catch {
     throw new ApiError(401, "This Metro E-Sign editor session is invalid.");
+  }
+}
+
+function decodeTemplateManagerSession(value: string) {
+  try {
+    return templateManagerSessionSchema.parse(
+      JSON.parse(Buffer.from(value, "base64url").toString("utf8")),
+    );
+  } catch {
+    throw new ApiError(401, "This Metro E-Sign template manager session is invalid.");
   }
 }
 
@@ -204,6 +234,8 @@ export async function listBusinessCentralESignTemplates() {
       name: field.name,
       label: field.label,
       section: field.section,
+      type: field.type ?? "",
+      customerEditable: Boolean(field.customerEditable),
     })),
   }));
 }
@@ -324,6 +356,42 @@ export async function createBusinessCentralESignEditorUrl(
   };
 }
 
+export async function createBusinessCentralESignTemplateManagerUrl(
+  baseUrl: string,
+  input: BusinessCentralEditorSessionRequest = parseBusinessCentralEditorSessionRequest({
+    canManageTemplates: true,
+  }),
+) {
+  const expectedKeys = getConfiguredApiKeys();
+  if (expectedKeys.length === 0) {
+    throw new ApiError(500, "Business Central E-Sign API key is not configured.");
+  }
+
+  const expiresAt = Date.now() + editorTokenMaxAgeMs;
+  const session = encodeTemplateManagerSession({
+    expiresAt,
+    bcUserId: input.bcUserId,
+    bcUserSecurityId: input.bcUserSecurityId,
+    companyName: input.companyName,
+    capabilities: {
+      canEdit: false,
+      canSend: false,
+      canVoid: false,
+      canManageTemplates: true,
+    },
+  });
+  const token = signEditorSession(session, expectedKeys[0]);
+  const url = new URL("/esign/bc-templates", baseUrl);
+  url.searchParams.set("expires", String(expiresAt));
+  url.searchParams.set("session", session);
+  url.searchParams.set("token", token);
+
+  return {
+    url: url.toString(),
+    expiresAt,
+  };
+}
+
 function getLegacyEditorSession(
   draftId: string,
   expires: string | string[] | number | undefined,
@@ -378,6 +446,28 @@ function validateBusinessCentralEditorAuth(
   }
 
   return legacySession;
+}
+
+export function validateBusinessCentralTemplateManagerAuth(
+  auth: BusinessCentralEditorAuthInput,
+) {
+  const sessionValue = getFirstString(auth.session);
+  const tokenValue = getFirstString(auth.token);
+
+  if (!sessionValue || !tokenValue || !isValidEditorSession(sessionValue, tokenValue)) {
+    throw new ApiError(401, "This Metro E-Sign template manager link is invalid.");
+  }
+
+  const session = decodeTemplateManagerSession(sessionValue);
+  if (session.expiresAt < Date.now()) {
+    throw new ApiError(401, "This Metro E-Sign template manager session is expired.");
+  }
+
+  if (!session.capabilities.canManageTemplates) {
+    throw new ApiError(403, "This Business Central session cannot manage E-Sign templates.");
+  }
+
+  return session;
 }
 
 function requireEditorCapability(

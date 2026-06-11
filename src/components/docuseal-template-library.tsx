@@ -22,6 +22,7 @@ type TemplateEditState = {
   folderName: string;
   location: string;
   submitterRole: string;
+  customerEditableFields: string[];
   active: boolean;
 };
 
@@ -39,6 +40,9 @@ function buildTemplateEditState(template: DocusealTemplateDefinition): TemplateE
     folderName: template.folderName,
     location: template.location,
     submitterRole: template.submitterRole,
+    customerEditableFields: template.fields
+      .filter((field) => field.customerEditable)
+      .map((field) => field.name),
     active: template.active,
   };
 }
@@ -49,8 +53,12 @@ function formatCategory(category: DocusealTemplateCategory) {
 
 export function DocusealTemplateLibrary({
   templates,
+  embedMode = "app",
+  apiAuthQuery = "",
 }: {
   templates: DocusealTemplateDefinition[];
+  embedMode?: "app" | "bc";
+  apiAuthQuery?: string;
 }) {
   const router = useRouter();
   const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -115,6 +123,23 @@ export function DocusealTemplateLibrary({
     }));
   }
 
+  function buildApiUrl(path: string) {
+    if (!apiAuthQuery) {
+      return path;
+    }
+
+    return `${path}${path.includes("?") ? "&" : "?"}${apiAuthQuery}`;
+  }
+
+  function toggleCustomerEditableField(template: DocusealTemplateDefinition, fieldName: string) {
+    const edit = getTemplateEdit(template);
+    const customerEditableFields = edit.customerEditableFields.includes(fieldName)
+      ? edit.customerEditableFields.filter((name) => name !== fieldName)
+      : [...edit.customerEditableFields, fieldName];
+
+    updateTemplateEdit(template, { customerEditableFields });
+  }
+
   function replaceTemplate(template: DocusealTemplateDefinition) {
     setTemplateList((current) => {
       const exists = current.some(
@@ -140,7 +165,7 @@ export function DocusealTemplateLibrary({
       detectedFieldCount: number;
       template: DocusealTemplateDefinition;
     }>(
-      `/api/docuseal/templates/${template.docusealTemplateId}/detect-fields`,
+      buildApiUrl(`/api/docuseal/templates/${template.docusealTemplateId}/detect-fields`),
       "POST",
     );
 
@@ -183,7 +208,7 @@ export function DocusealTemplateLibrary({
         formData.set("submitterRole", uploadSubmitterRole);
         formData.set("active", "true");
 
-        const response = await fetch("/api/docuseal/templates", {
+        const response = await fetch(buildApiUrl("/api/docuseal/templates"), {
           method: "POST",
           body: formData,
         });
@@ -223,7 +248,7 @@ export function DocusealTemplateLibrary({
       try {
         setFeedback(null);
         const result = await submitJson<{ template: DocusealTemplateDefinition }>(
-          "/api/docuseal/templates",
+          buildApiUrl("/api/docuseal/templates"),
           "PATCH",
           {
             docusealTemplateId: template.docusealTemplateId,
@@ -264,8 +289,10 @@ export function DocusealTemplateLibrary({
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="panel flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <DocusealModeTabs active="manage" />
-          <span className="hidden h-7 w-px bg-[var(--line)] xl:block" />
+          {embedMode === "app" ? <DocusealModeTabs active="manage" /> : null}
+          {embedMode === "app" ? (
+            <span className="hidden h-7 w-px bg-[var(--line)] xl:block" />
+          ) : null}
           <div className="hidden min-w-0 leading-tight xl:block">
             <p className="eyebrow">Template</p>
             <p className="truncate text-[0.78rem] font-semibold text-slate-900">
@@ -569,12 +596,58 @@ export function DocusealTemplateLibrary({
                 </div>
               </div>
 
-              <iframe
-                key={selectedTemplate.editorUrl}
-                title={`${selectedTemplate.name} E-Sign editor`}
-                src={selectedTemplate.editorUrl}
-                className="min-h-0 w-full flex-1 border-0 bg-white"
-              />
+              <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
+                <iframe
+                  key={selectedTemplate.editorUrl}
+                  title={`${selectedTemplate.name} E-Sign editor`}
+                  src={selectedTemplate.editorUrl}
+                  className="min-h-[540px] w-full border-0 bg-white xl:min-h-0"
+                />
+                <aside className="min-h-0 overflow-auto border-t border-[var(--line)] bg-white xl:border-l xl:border-t-0">
+                  <div className="sticky top-0 z-10 border-b border-[var(--line)] bg-white px-3 py-2">
+                    <p className="eyebrow">Customer fields</p>
+                    <h3 className="text-[0.82rem] font-semibold text-slate-950">
+                      Allowed to complete
+                    </h3>
+                    <p className="mt-1 text-[0.66rem] leading-4 text-slate-500">
+                      Every field is locked on the customer signing link unless it is checked here.
+                    </p>
+                  </div>
+                  <div className="divide-y divide-[var(--line)]">
+                    {selectedTemplate.fields.map((field) => {
+                      const checked = selectedEdit.customerEditableFields.includes(field.name);
+
+                      return (
+                        <label
+                          key={field.name}
+                          className="flex cursor-pointer gap-2 px-3 py-2 hover:bg-slate-50"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={pending}
+                            onChange={() =>
+                              toggleCustomerEditableField(selectedTemplate, field.name)
+                            }
+                            className="mt-0.5 h-4 w-4 shrink-0"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate text-[0.72rem] font-semibold text-slate-900">
+                              {field.label}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[0.62rem] text-slate-500">
+                              {field.name}
+                            </span>
+                            <span className="mt-0.5 block text-[0.6rem] uppercase tracking-[0.1em] text-slate-400">
+                              {field.section}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </aside>
+              </div>
             </div>
           ) : (
             <div className="flex min-h-[420px] items-center justify-center text-[0.78rem] text-slate-500">
