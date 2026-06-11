@@ -88,7 +88,12 @@ page 50377 "MTE ESign Preview Part"
         LocationCode: Code[30];
         StatusText: Text;
         SigningUrl: Text[2048];
+        EmailRecipient: Text[250];
+        EmailSubject: Text[250];
+        BcUserId: Text[80];
         SubmissionId: Integer;
+        PreviousSubmissionId: Integer;
+        WasSent: Boolean;
     begin
         if Payload = '' then
             exit;
@@ -105,7 +110,12 @@ page 50377 "MTE ESign Preview Part"
         LocationCode := CopyStr(GetJsonText(Root, 'location'), 1, MaxStrLen(LocationCode));
         StatusText := LowerCase(GetJsonText(Root, 'status'));
         SigningUrl := CopyStr(GetJsonText(Root, 'signingUrl'), 1, MaxStrLen(SigningUrl));
+        EmailRecipient := CopyStr(GetJsonText(Root, 'emailRecipient'), 1, MaxStrLen(EmailRecipient));
+        EmailSubject := CopyStr(GetJsonText(Root, 'emailSubject'), 1, MaxStrLen(EmailSubject));
+        BcUserId := CopyStr(GetJsonText(Root, 'bcUserId'), 1, MaxStrLen(BcUserId));
         SubmissionId := GetJsonInteger(Root, 'docusealSubmissionId');
+        PreviousSubmissionId := Rec."DocuSeal Submission ID";
+        WasSent := Rec.Status = Rec.Status::Sent;
 
         if (CustomerNo <> '') and (Rec."Customer No." <> CustomerNo) then begin
             if Customer.Get(CustomerNo) then
@@ -173,6 +183,46 @@ page 50377 "MTE ESign Preview Part"
         if Changed then begin
             Rec.Modify(true);
         end;
+
+        if StatusText = 'sent' then
+            if (not WasSent) or ((SubmissionId <> 0) and (PreviousSubmissionId <> SubmissionId)) then
+                RecordEmailAttempt(SubmissionId, SigningUrl, EmailRecipient, EmailSubject, BcUserId);
+    end;
+
+    local procedure RecordEmailAttempt(SubmissionId: Integer; SigningUrl: Text[2048]; EmailRecipient: Text[250]; EmailSubject: Text[250]; BcUserId: Text[80])
+    var
+        EmailAttempt: Record "MTE ESign Email Attempt";
+    begin
+        if SubmissionId = 0 then
+            exit;
+
+        EmailAttempt.SetRange("Lease ID", Rec."Lease ID");
+        EmailAttempt.SetRange("E-Sign Submission ID", SubmissionId);
+        if not EmailAttempt.IsEmpty() then
+            exit;
+
+        EmailAttempt.Init();
+        EmailAttempt."Lease ID" := Rec."Lease ID";
+        EmailAttempt."Attempted At" := CurrentDateTime();
+        if EmailRecipient <> '' then
+            EmailAttempt."Recipient Email" := EmailRecipient
+        else
+            EmailAttempt."Recipient Email" := Rec."Customer Email";
+        if EmailSubject <> '' then
+            EmailAttempt.Subject := EmailSubject
+        else
+            EmailAttempt.Subject := Rec.Subject;
+        EmailAttempt."Delivery Status" := 'Submitted';
+        EmailAttempt."E-Sign Submission ID" := SubmissionId;
+        if SigningUrl <> '' then
+            EmailAttempt."Signing URL" := SigningUrl
+        else
+            EmailAttempt."Signing URL" := Rec."Signing URL";
+        if BcUserId <> '' then
+            EmailAttempt."BC User ID" := BcUserId
+        else
+            EmailAttempt."BC User ID" := UserId();
+        EmailAttempt.Insert(true);
     end;
 
     local procedure GetJsonText(Object: JsonObject; Name: Text): Text

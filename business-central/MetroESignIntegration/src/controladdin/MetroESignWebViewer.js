@@ -16,7 +16,7 @@
     host.style.padding = "0";
     host.style.width = "100%";
     host.style.height = "100%";
-    host.style.minHeight = "420px";
+    host.style.minHeight = "720px";
     host.style.overflow = "hidden";
 
     frame = document.createElement("iframe");
@@ -25,7 +25,7 @@
     frame.style.border = "0";
     frame.style.width = "100%";
     frame.style.height = "100%";
-    frame.style.minHeight = "420px";
+    frame.style.minHeight = "720px";
     frame.setAttribute(
       "sandbox",
       "allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"

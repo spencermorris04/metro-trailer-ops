@@ -1034,7 +1034,19 @@ export async function createDocusealDraft(input: {
     subject: input.subject?.trim() || "Your signature is requested for a Metro Trailer Document",
     message:
       input.message?.trim() ||
-      `Please review the prepared Metro Trailer document and complete any remaining fields.\n\n[Review and Submit](${docusealSigningLinkVariable})`,
+      `Hello,
+
+Metro Trailer has prepared an E-Sign document for your review.
+
+Please click the Review and Submit link below to open the document and complete any remaining fields.
+
+[Review and Submit](${docusealSigningLinkVariable})
+
+If the button is missing, copy and paste this link into your browser:
+${docusealSigningLinkVariable}
+
+Thank you,
+Metro Trailer`,
     values: normalizeValues(template, input.values),
     status: "draft",
     createdAt: timestamp,

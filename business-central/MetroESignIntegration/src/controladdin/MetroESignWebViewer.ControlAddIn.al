@@ -4,8 +4,8 @@ controladdin "MTE ESign Web Viewer"
     StartupScript = 'src/controladdin/MetroESignWebViewerStartup.js';
     HorizontalStretch = true;
     VerticalStretch = true;
-    RequestedHeight = 720;
-    MinimumHeight = 420;
+    RequestedHeight = 1100;
+    MinimumHeight = 720;
 
     event ControlAddInReady()
     event EditorStateChanged(Payload: Text)

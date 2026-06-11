@@ -598,7 +598,7 @@ table 50372 "MTE ESign Lease"
             Subject := 'Your signature is requested for a Metro Trailer Document';
 
         if Message = '' then
-            Message := 'Please review the prepared Metro Trailer document and complete any remaining fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: {submitter.link} [Review and Submit]({submitter.link})';
+            Message := 'Hello, Metro Trailer has prepared an E-Sign document for your review. Please click the Review and Submit link to open the document and complete any remaining fields. [Review and Submit]({submitter.link}) If the button is missing, copy and paste this link into your browser: {submitter.link} Thank you, Metro Trailer';
     end;
 
     trigger OnRename()

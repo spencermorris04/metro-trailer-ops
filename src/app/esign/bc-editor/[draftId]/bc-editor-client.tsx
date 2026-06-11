@@ -14,6 +14,10 @@ type ApiResult<T> = {
   message?: string;
 };
 
+type NoticeTone = "neutral" | "success" | "warning" | "error";
+type SearchState = "idle" | "loading" | "done" | "error";
+type ActiveSearch = "customer" | "equipment" | "rentalOrder" | null;
+
 type EditorPayload = {
   draft: DocusealDraft;
   template: DocusealTemplateDefinition;
@@ -100,6 +104,19 @@ type EditorProps = {
 
 const signingLinkVariable = "{submitter.link}";
 const signingLinkMarkdown = `[Review and Submit](${signingLinkVariable})`;
+const defaultEmailMessage = `Hello,
+
+Metro Trailer has prepared an E-Sign document for your review.
+
+Please click the Review and Submit link below to open the document and complete any remaining fields.
+
+${signingLinkMarkdown}
+
+If the button is missing, copy and paste this link into your browser:
+${signingLinkVariable}
+
+Thank you,
+Metro Trailer`;
 const sectionOrder = [
   "Customer and order",
   "Equipment",
@@ -234,16 +251,43 @@ function includesSigningLink(value: string) {
   return /\{+submitter\.link\}+/i.test(value);
 }
 
+function renderMessagePreview(value: string) {
+  const tokenRegex = /(\[Review and Submit\]\(\{submitter\.link\}\)|\{submitter\.link\})/gi;
+  return value.split(tokenRegex).map((part, index) => {
+    if (!part) {
+      return null;
+    }
+
+    if (
+      /^\[Review and Submit\]\(\{submitter\.link\}\)$/i.test(part) ||
+      /^\{submitter\.link\}$/i.test(part)
+    ) {
+      return (
+        <span
+          key={`${part}-${index}`}
+          className="mx-0.5 inline-flex rounded-sm border border-[#0071f4]/30 bg-[#0071f4]/10 px-1.5 py-0.5 font-semibold text-[#002b5c]"
+        >
+          {part}
+        </span>
+      );
+    }
+
+    return <span key={`${part}-${index}`}>{part}</span>;
+  });
+}
+
 function FieldInput({
   disabled,
   field,
   value,
   onChange,
+  missing,
 }: {
   disabled: boolean;
   field: DocusealFieldDefinition;
   value: string;
   onChange: (name: string, value: string) => void;
+  missing: boolean;
 }) {
   if (isSignatureField(field)) {
     return (
@@ -254,7 +298,11 @@ function FieldInput({
   }
 
   const commonClass =
-    "w-full rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950 shadow-inner outline-none focus:border-cyan-700 focus:ring-1 focus:ring-cyan-700 disabled:bg-slate-100 disabled:text-slate-600";
+    `w-full rounded-sm border bg-white px-2 text-[0.8rem] text-slate-950 shadow-inner outline-none disabled:bg-slate-100 disabled:text-slate-600 ${
+      missing
+        ? "border-red-500 ring-1 ring-red-500 focus:border-red-600 focus:ring-red-600"
+        : "border-slate-300 focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
+    }`;
 
   if (field.multiline) {
     return (
@@ -283,12 +331,14 @@ function GenericSection({
   section,
   fields,
   values,
+  missingFields,
   onChange,
 }: {
   disabled: boolean;
   section: string;
   fields: DocusealFieldDefinition[];
   values: Record<string, string>;
+  missingFields: Set<string>;
   onChange: (name: string, value: string) => void;
 }) {
   return (
@@ -306,6 +356,7 @@ function GenericSection({
               disabled={disabled}
               field={field}
               value={values[field.name] ?? ""}
+              missing={missingFields.has(field.name)}
               onChange={onChange}
             />
           </label>
@@ -319,11 +370,13 @@ function TireSection({
   disabled,
   fields,
   values,
+  missingFields,
   onChange,
 }: {
   disabled: boolean;
   fields: DocusealFieldDefinition[];
   values: Record<string, string>;
+  missingFields: Set<string>;
   onChange: (name: string, value: string) => void;
 }) {
   const byName = new Map(fields.map((field) => [field.name, field]));
@@ -366,6 +419,7 @@ function TireSection({
                         disabled={disabled}
                         field={outField}
                         value={values[outField.name] ?? ""}
+                        missing={missingFields.has(outField.name)}
                         onChange={onChange}
                       />
                     ) : null}
@@ -376,6 +430,7 @@ function TireSection({
                         disabled={disabled}
                         field={inField}
                         value={values[inField.name] ?? ""}
+                        missing={missingFields.has(inField.name)}
                         onChange={onChange}
                       />
                     ) : null}
@@ -399,6 +454,7 @@ function TireSection({
                   disabled={disabled}
                   field={field}
                   value={values[field.name] ?? ""}
+                  missing={missingFields.has(field.name)}
                   onChange={onChange}
                 />
               </label>
@@ -433,7 +489,7 @@ export function BusinessCentralESignEditorClient({
     draft.values.rental_order_number ?? "",
   );
   const [subject, setSubject] = useState(draft.subject);
-  const [message, setMessage] = useState(draft.message);
+  const [message, setMessage] = useState(draft.message?.trim() ? draft.message : defaultEmailMessage);
   const [customerQuery, setCustomerQuery] = useState(draft.customerName);
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [equipmentQuery, setEquipmentQuery] = useState(draft.values.unit_number ?? "");
@@ -443,6 +499,13 @@ export function BusinessCentralESignEditorClient({
   const [rentableOnly, setRentableOnly] = useState(true);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState("Ready");
+  const [noticeTone, setNoticeTone] = useState<NoticeTone>("neutral");
+  const [activeSearch, setActiveSearch] = useState<ActiveSearch>(null);
+  const [customerSearchState, setCustomerSearchState] = useState<SearchState>("idle");
+  const [equipmentSearchState, setEquipmentSearchState] = useState<SearchState>("idle");
+  const [rentalOrderSearchState, setRentalOrderSearchState] = useState<SearchState>("idle");
+  const [validationAttempted, setValidationAttempted] = useState(false);
+  const [forceSend, setForceSend] = useState(false);
   const groupedFields = useMemo(() => groupFields(currentTemplate.fields), [currentTemplate]);
   const disabled = Boolean(busy) || currentDraft.status === "sent" || !capabilities.canEdit;
   const actionAuth = useMemo(
@@ -454,8 +517,33 @@ export function BusinessCentralESignEditorClient({
     [expires, session, token],
   );
   const filledCount = currentTemplate.fields.filter((field) => values[field.name]?.trim()).length;
+  const requiredFields = useMemo(
+    () => currentTemplate.fields.filter((field) => !isSignatureField(field)),
+    [currentTemplate.fields],
+  );
+  const missingRequiredFields = useMemo(
+    () => requiredFields.filter((field) => !String(values[field.name] ?? "").trim()),
+    [requiredFields, values],
+  );
+  const missingFields = useMemo(
+    () => new Set(validationAttempted ? missingRequiredFields.map((field) => field.name) : []),
+    [missingRequiredFields, validationAttempted],
+  );
   const messageHasSigningLink = includesSigningLink(message);
   const location = getEquipmentStoreKey(selectedEquipment) || currentDraft.location;
+  const noticeClass =
+    noticeTone === "error"
+      ? "border-red-400 bg-red-50 text-red-800"
+      : noticeTone === "warning"
+        ? "border-amber-300 bg-amber-50 text-amber-800"
+        : noticeTone === "success"
+          ? "border-[#0071f4]/30 bg-[#0071f4]/10 text-[#002b5c]"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+
+  function setNotice(message: string, tone: NoticeTone = "neutral") {
+    setFeedback(message);
+    setNoticeTone(tone);
+  }
 
   function publishEditorState(next?: {
     draft?: DocusealDraft;
@@ -482,6 +570,9 @@ export function BusinessCentralESignEditorClient({
           status: draftToPublish.status,
           signingUrl: draftToPublish.docusealSubmitterUrl ?? "",
           docusealSubmissionId: draftToPublish.docusealSubmissionId ?? 0,
+          emailRecipient: customerEmail,
+          emailSubject: subject,
+          bcUserId: actor.bcUserId,
         },
       },
       "*",
@@ -495,27 +586,39 @@ export function BusinessCentralESignEditorClient({
     const query = customerQuery.trim();
     if (query.length < 2) {
       setCustomerResults([]);
+      setCustomerSearchState("idle");
       return;
     }
 
     const controller = new AbortController();
+    setCustomerSearchState("loading");
     const timer = window.setTimeout(async () => {
-      const params = new URLSearchParams({
-        q: query,
-        pageSize: "8",
-        expires: String(expires),
-        session,
-        token,
-      });
-      const response = await fetch(
-        `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/customers?${params.toString()}`,
-        { signal: controller.signal },
-      );
-      const payload = (await response.json().catch(() => null)) as
-        | ApiResult<CustomerSearchResult[]>
-        | null;
-      setCustomerResults(response.ok ? payload?.data ?? [] : []);
-    }, 180);
+      try {
+        const params = new URLSearchParams({
+          q: query,
+          pageSize: "8",
+          expires: String(expires),
+          session,
+          token,
+        });
+        const response = await fetch(
+          `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/customers?${params.toString()}`,
+          { signal: controller.signal },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | ApiResult<CustomerSearchResult[]>
+          | null;
+        if (!controller.signal.aborted) {
+          setCustomerResults(response.ok ? payload?.data ?? [] : []);
+          setCustomerSearchState(response.ok ? "done" : "error");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setCustomerResults([]);
+          setCustomerSearchState("error");
+        }
+      }
+    }, 80);
 
     return () => {
       controller.abort();
@@ -530,28 +633,40 @@ export function BusinessCentralESignEditorClient({
     const query = equipmentQuery.trim();
     if (query.length < 2) {
       setEquipmentResults([]);
+      setEquipmentSearchState("idle");
       return;
     }
 
     const controller = new AbortController();
+    setEquipmentSearchState("loading");
     const timer = window.setTimeout(async () => {
-      const params = new URLSearchParams({
-        q: query,
-        pageSize: "8",
-        rentableOnly: String(rentableOnly),
-        expires: String(expires),
-        session,
-        token,
-      });
-      const response = await fetch(
-        `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/equipment?${params.toString()}`,
-        { signal: controller.signal },
-      );
-      const payload = (await response.json().catch(() => null)) as
-        | ApiResult<EquipmentSearchResult[]>
-        | null;
-      setEquipmentResults(response.ok ? payload?.data ?? [] : []);
-    }, 180);
+      try {
+        const params = new URLSearchParams({
+          q: query,
+          pageSize: "8",
+          rentableOnly: String(rentableOnly),
+          expires: String(expires),
+          session,
+          token,
+        });
+        const response = await fetch(
+          `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/equipment?${params.toString()}`,
+          { signal: controller.signal },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | ApiResult<EquipmentSearchResult[]>
+          | null;
+        if (!controller.signal.aborted) {
+          setEquipmentResults(response.ok ? payload?.data ?? [] : []);
+          setEquipmentSearchState(response.ok ? "done" : "error");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setEquipmentResults([]);
+          setEquipmentSearchState("error");
+        }
+      }
+    }, 80);
 
     return () => {
       controller.abort();
@@ -568,29 +683,41 @@ export function BusinessCentralESignEditorClient({
     const unitNo = values.unit_number?.trim() ?? "";
     if (query.length < 2 && !customerNo && !unitNo) {
       setRentalOrderResults([]);
+      setRentalOrderSearchState("idle");
       return;
     }
 
     const controller = new AbortController();
+    setRentalOrderSearchState("loading");
     const timer = window.setTimeout(async () => {
-      const params = new URLSearchParams({
-        q: query,
-        pageSize: "8",
-        customerNo,
-        unitNo,
-        expires: String(expires),
-        session,
-        token,
-      });
-      const response = await fetch(
-        `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/rental-orders?${params.toString()}`,
-        { signal: controller.signal },
-      );
-      const payload = (await response.json().catch(() => null)) as
-        | ApiResult<RentalOrderSearchResult[]>
-        | null;
-      setRentalOrderResults(response.ok ? payload?.data ?? [] : []);
-    }, 180);
+      try {
+        const params = new URLSearchParams({
+          q: query,
+          pageSize: "8",
+          customerNo,
+          unitNo,
+          expires: String(expires),
+          session,
+          token,
+        });
+        const response = await fetch(
+          `/api/esign/bc-editor/${encodeURIComponent(currentDraft.id)}/rental-orders?${params.toString()}`,
+          { signal: controller.signal },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | ApiResult<RentalOrderSearchResult[]>
+          | null;
+        if (!controller.signal.aborted) {
+          setRentalOrderResults(response.ok ? payload?.data ?? [] : []);
+          setRentalOrderSearchState(response.ok ? "done" : "error");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setRentalOrderResults([]);
+          setRentalOrderSearchState("error");
+        }
+      }
+    }, 80);
 
     return () => {
       controller.abort();
@@ -616,9 +743,13 @@ export function BusinessCentralESignEditorClient({
     setRentalOrderNo(payload.draft.values.rental_order_number ?? "");
     setRentalOrderQuery(payload.draft.values.rental_order_number ?? "");
     setSubject(payload.draft.subject);
-    setMessage(payload.draft.message);
+    setMessage(payload.draft.message?.trim() ? payload.draft.message : defaultEmailMessage);
     setCustomerQuery(payload.draft.customerName);
     setEquipmentQuery(payload.draft.values.unit_number ?? "");
+    setCustomerResults([]);
+    setEquipmentResults([]);
+    setRentalOrderResults([]);
+    setActiveSearch(null);
   }
 
   function updateValue(name: string, value: string) {
@@ -626,13 +757,15 @@ export function BusinessCentralESignEditorClient({
     if (name === "rental_order_number") {
       setRentalOrderNo(value);
     }
-    setFeedback("Unsaved changes");
+    setForceSend(false);
+    setNotice("Unsaved changes", "warning");
   }
 
   function insertSigningLink() {
     const textarea = messageTextareaRef.current;
     if (!textarea) {
       setMessage((current) => `${current.trimEnd()}\n\n${signingLinkMarkdown}`);
+      setNotice("Signing link inserted.", "success");
       return;
     }
 
@@ -644,6 +777,7 @@ export function BusinessCentralESignEditorClient({
       textarea.focus();
       textarea.setSelectionRange(start + signingLinkMarkdown.length, start + signingLinkMarkdown.length);
     }, 0);
+    setNotice("Signing link inserted.", "success");
   }
 
   function selectCustomer(customer: CustomerSearchResult) {
@@ -651,16 +785,20 @@ export function BusinessCentralESignEditorClient({
     setCustomerQuery(customer.name);
     setCustomerEmail(customer.contactInfo?.email ?? customerEmail);
     setValues((current) => applyCustomerToValues(current, customer));
+    setActiveSearch(null);
     setCustomerResults([]);
-    setFeedback(`Selected ${customer.name} (${customer.customerNumber}).`);
+    setCustomerSearchState("idle");
+    setNotice(`Selected ${customer.name} (${customer.customerNumber}).`, "success");
   }
 
   function selectEquipment(equipment: EquipmentSearchResult) {
     setSelectedEquipment(equipment);
     setEquipmentQuery(equipment.assetNumber);
     setValues((current) => applyEquipmentToValues(current, equipment));
+    setActiveSearch(null);
     setEquipmentResults([]);
-    setFeedback(`Selected ${equipment.assetNumber} from ${equipment.branch}.`);
+    setEquipmentSearchState("idle");
+    setNotice(`Selected ${equipment.assetNumber} from ${equipment.branch}.`, "success");
   }
 
   function selectRentalOrder(order: RentalOrderSearchResult) {
@@ -682,8 +820,10 @@ export function BusinessCentralESignEditorClient({
     if (!equipmentQuery && order.assetNumbers[0]) {
       setEquipmentQuery(order.assetNumbers[0]);
     }
+    setActiveSearch(null);
     setRentalOrderResults([]);
-    setFeedback(`Selected rental order ${order.rentalOrderNo}.`);
+    setRentalOrderSearchState("idle");
+    setNotice(`Selected rental order ${order.rentalOrderNo}.`, "success");
   }
 
   async function submitJson<T>(url: string, body: unknown) {
@@ -704,7 +844,7 @@ export function BusinessCentralESignEditorClient({
 
   async function saveDraft() {
     if (!capabilities.canEdit || currentDraft.status === "sent") {
-      setFeedback("This Business Central session cannot edit this E-Sign draft.");
+      setNotice("This Business Central session cannot edit this E-Sign draft.", "error");
       return false;
     }
 
@@ -737,10 +877,10 @@ export function BusinessCentralESignEditorClient({
           location: result.data.draft.location,
         });
       }
-      setFeedback(result.message ?? "Saved.");
+      setNotice(result.message ?? "Saved.", "success");
       return true;
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Unable to save.");
+      setNotice(error instanceof Error ? error.message : "Unable to save.", "error");
       return false;
     } finally {
       setBusy("");
@@ -774,21 +914,32 @@ export function BusinessCentralESignEditorClient({
       if (result.data) {
         loadPayload(result.data);
       }
-      setFeedback(result.message ?? "Template changed.");
+      setValidationAttempted(false);
+      setForceSend(false);
+      setNotice(result.message ?? "Template changed.", "success");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Unable to change template.");
+      setNotice(error instanceof Error ? error.message : "Unable to change template.", "error");
     } finally {
       setBusy("");
     }
   }
 
-  async function runAction(action: "prepare" | "send" | "invalidate") {
+  async function runAction(action: "prepare" | "send" | "invalidate", forceOverride = false) {
     if (
       (action === "prepare" && !capabilities.canEdit) ||
       (action === "send" && !capabilities.canSend) ||
       (action === "invalidate" && !capabilities.canVoid)
     ) {
-      setFeedback("This Business Central session cannot perform that E-Sign action.");
+      setNotice("This Business Central session cannot perform that E-Sign action.", "error");
+      return;
+    }
+
+    if (action === "send" && missingRequiredFields.length > 0 && !forceSend && !forceOverride) {
+      setValidationAttempted(true);
+      setNotice(
+        `${missingRequiredFields.length} required field${missingRequiredFields.length === 1 ? " is" : "s are"} empty. Review the highlighted fields or use Send anyway to force continue.`,
+        "error",
+      );
       return;
     }
 
@@ -819,26 +970,31 @@ export function BusinessCentralESignEditorClient({
           window.open(result.data.draft.docusealSubmitterUrl, "_blank", "noopener,noreferrer");
         }
       }
-      setFeedback(
+      if (action === "send") {
+        setValidationAttempted(false);
+        setForceSend(false);
+      }
+      setNotice(
         action === "send"
           ? "E-Sign document sent."
           : action === "prepare"
             ? "Preview opened."
             : "Sent document invalidated.",
+        "success",
       );
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : `Unable to ${action}.`);
+      setNotice(error instanceof Error ? error.message : `Unable to ${action}.`, "error");
     } finally {
       setBusy("");
     }
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-950">
+    <main className="min-h-[calc(100vh-8px)] bg-slate-100 text-slate-950">
       <header className="sticky top-0 z-30 border-b border-slate-300 bg-white px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            <p className="text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-[#002b5c]">
               Metro E-Sign
             </p>
             <h1 className="truncate text-lg font-semibold leading-tight text-slate-950">
@@ -852,7 +1008,7 @@ export function BusinessCentralESignEditorClient({
             <span className="rounded-sm border border-slate-300 bg-slate-50 px-2 py-1 text-[0.72rem] font-semibold text-slate-700">
               {currentDraft.status}
             </span>
-            <span className="rounded-sm border border-cyan-200 bg-cyan-50 px-2 py-1 text-[0.72rem] font-semibold text-cyan-900">
+            <span className="rounded-sm border border-[#0071f4]/30 bg-[#0071f4]/10 px-2 py-1 text-[0.72rem] font-semibold text-[#002b5c]">
               BC: {actor.bcUserId || "Business Central"}
             </span>
             <button
@@ -885,17 +1041,38 @@ export function BusinessCentralESignEditorClient({
                 type="button"
                 onClick={() => runAction("send")}
                 disabled={Boolean(busy) || !capabilities.canSend}
-                className="h-8 rounded-sm bg-slate-950 px-4 text-[0.76rem] font-semibold text-white disabled:bg-slate-400"
+                className="h-8 rounded-sm bg-[#002b5c] px-4 text-[0.76rem] font-semibold text-white disabled:bg-slate-400"
               >
                 Send E-Sign Document
               </button>
             )}
           </div>
         </div>
-        <div className="mt-2 text-[0.76rem] font-semibold text-slate-600">{busy ? "Working..." : feedback}</div>
+        <div className={`mt-2 rounded-sm border px-3 py-2 text-[0.76rem] font-semibold ${noticeClass}`}>
+          {busy ? "Working..." : feedback}
+        </div>
+        {validationAttempted && missingRequiredFields.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-red-500 bg-red-50 px-3 py-2 text-[0.78rem] font-semibold text-red-800">
+            <span>
+              {missingRequiredFields.length} required field
+              {missingRequiredFields.length === 1 ? " is" : "s are"} empty. Highlighted fields must be reviewed before sending.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setForceSend(true);
+                void runAction("send", true);
+              }}
+              disabled={Boolean(busy) || !capabilities.canSend}
+              className="h-8 rounded-sm bg-red-700 px-3 text-[0.74rem] font-semibold text-white disabled:bg-red-300"
+            >
+              Send anyway
+            </button>
+          </div>
+        ) : null}
       </header>
 
-      <div className="mx-auto max-w-[1500px] border-x border-slate-300 bg-white">
+      <div className="mx-auto min-h-[calc(100vh-116px)] max-w-[1500px] border-x border-slate-300 bg-white">
         <section className="grid gap-3 p-4 lg:grid-cols-5">
           <label className="grid gap-1">
             <span className="text-[0.72rem] font-semibold text-slate-600">Template</span>
@@ -920,27 +1097,41 @@ export function BusinessCentralESignEditorClient({
             <input
               value={customerQuery}
               disabled={disabled}
+              onFocus={() => setActiveSearch("customer")}
               onChange={(event) => {
+                setActiveSearch("customer");
                 setCustomerQuery(event.target.value);
                 setCustomerName(event.target.value);
               }}
-              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
+              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
-            {customerResults.length > 0 ? (
+            {activeSearch === "customer" && customerQuery.trim().length >= 2 ? (
               <div className="absolute left-0 right-0 top-full z-40 max-h-64 overflow-auto border border-slate-300 bg-white shadow-lg">
-                {customerResults.map((customer) => (
-                  <button
-                    key={customer.id}
-                    type="button"
-                    onClick={() => selectCustomer(customer)}
-                    className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-slate-100"
-                  >
-                    <span className="font-semibold">{customer.name}</span>
-                    <span className="block text-slate-500">
-                      {customer.customerNumber} {customer.billingCity ? `/ ${customer.billingCity}` : ""}
-                    </span>
-                  </button>
-                ))}
+                {customerSearchState === "loading" ? (
+                  <div className="px-2 py-2 text-[0.78rem] font-semibold text-[#002b5c]">
+                    Searching customers...
+                  </div>
+                ) : customerSearchState === "error" ? (
+                  <div className="px-2 py-2 text-[0.78rem] font-semibold text-red-700">
+                    Customer search failed.
+                  </div>
+                ) : customerResults.length > 0 ? (
+                  customerResults.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onClick={() => selectCustomer(customer)}
+                      className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-[#0071f4]/10"
+                    >
+                      <span className="font-semibold">{customer.name}</span>
+                      <span className="block text-slate-500">
+                        {customer.customerNumber} {customer.billingCity ? `/ ${customer.billingCity}` : ""}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-2 py-2 text-[0.78rem] text-slate-600">No customers found.</div>
+                )}
               </div>
             ) : null}
           </label>
@@ -950,24 +1141,40 @@ export function BusinessCentralESignEditorClient({
             <input
               value={equipmentQuery}
               disabled={disabled}
-              onChange={(event) => setEquipmentQuery(event.target.value)}
-              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
+              onFocus={() => setActiveSearch("equipment")}
+              onChange={(event) => {
+                setActiveSearch("equipment");
+                setEquipmentQuery(event.target.value);
+              }}
+              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
-            {equipmentResults.length > 0 ? (
+            {activeSearch === "equipment" && equipmentQuery.trim().length >= 2 ? (
               <div className="absolute left-0 right-0 top-full z-40 max-h-72 overflow-auto border border-slate-300 bg-white shadow-lg">
-                {equipmentResults.map((equipment) => (
-                  <button
-                    key={equipment.id}
-                    type="button"
-                    onClick={() => selectEquipment(equipment)}
-                    className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-slate-100"
-                  >
-                    <span className="font-semibold">{equipment.assetNumber}</span>
-                    <span className="block text-slate-500">
-                      {getEquipmentType(equipment)} / {equipment.branch} / {equipment.status}
-                    </span>
-                  </button>
-                ))}
+                {equipmentSearchState === "loading" ? (
+                  <div className="px-2 py-2 text-[0.78rem] font-semibold text-[#002b5c]">
+                    Searching trailers...
+                  </div>
+                ) : equipmentSearchState === "error" ? (
+                  <div className="px-2 py-2 text-[0.78rem] font-semibold text-red-700">
+                    Trailer search failed.
+                  </div>
+                ) : equipmentResults.length > 0 ? (
+                  equipmentResults.map((equipment) => (
+                    <button
+                      key={equipment.id}
+                      type="button"
+                      onClick={() => selectEquipment(equipment)}
+                      className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-[#0071f4]/10"
+                    >
+                      <span className="font-semibold">{equipment.assetNumber}</span>
+                      <span className="block text-slate-500">
+                        {getEquipmentType(equipment)} / {equipment.branch} / {equipment.status}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-2 py-2 text-[0.78rem] text-slate-600">No rentable trailers found.</div>
+                )}
               </div>
             ) : null}
           </label>
@@ -977,34 +1184,48 @@ export function BusinessCentralESignEditorClient({
             <input
               value={rentalOrderQuery}
               disabled={disabled}
+              onFocus={() => setActiveSearch("rentalOrder")}
               onChange={(event) => {
+                setActiveSearch("rentalOrder");
                 setRentalOrderQuery(event.target.value);
                 setRentalOrderNo(event.target.value);
                 updateValue("rental_order_number", event.target.value);
               }}
-              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
+              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
-            {rentalOrderResults.length > 0 ? (
+            {activeSearch === "rentalOrder" && (rentalOrderQuery.trim().length >= 2 || values.customer_number || values.unit_number) ? (
               <div className="absolute left-0 right-0 top-full z-40 max-h-72 overflow-auto border border-slate-300 bg-white shadow-lg">
-                {rentalOrderResults.map((order) => (
-                  <button
-                    key={order.rentalOrderNo}
-                    type="button"
-                    onClick={() => selectRentalOrder(order)}
-                    className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-slate-100"
-                  >
-                    <span className="font-semibold">{order.rentalOrderNo}</span>
-                    <span className="block text-slate-500">
-                      {order.customerName || order.customerNumber || "No customer"} /{" "}
-                      {order.assetNumbers.length ? order.assetNumbers.join(", ") : "No unit"}
-                    </span>
-                    <span className="block text-slate-500">
-                      {order.branchCode ? `${order.branchCode} / ` : ""}
-                      {order.shipDate ? `Ship ${formatShortDate(order.shipDate)} / ` : ""}
-                      {order.equipmentCount} unit{order.equipmentCount === 1 ? "" : "s"}
-                    </span>
-                  </button>
-                ))}
+                {rentalOrderSearchState === "loading" ? (
+                  <div className="px-2 py-2 text-[0.78rem] font-semibold text-[#002b5c]">
+                    Searching rental orders...
+                  </div>
+                ) : rentalOrderSearchState === "error" ? (
+                  <div className="px-2 py-2 text-[0.78rem] font-semibold text-red-700">
+                    Rental order search failed.
+                  </div>
+                ) : rentalOrderResults.length > 0 ? (
+                  rentalOrderResults.map((order) => (
+                    <button
+                      key={order.rentalOrderNo}
+                      type="button"
+                      onClick={() => selectRentalOrder(order)}
+                      className="block w-full border-b border-slate-100 px-2 py-2 text-left text-[0.78rem] hover:bg-[#0071f4]/10"
+                    >
+                      <span className="font-semibold">{order.rentalOrderNo}</span>
+                      <span className="block text-slate-500">
+                        {order.customerName || order.customerNumber || "No customer"} /{" "}
+                        {order.assetNumbers.length ? order.assetNumbers.join(", ") : "No unit"}
+                      </span>
+                      <span className="block text-slate-500">
+                        {order.branchCode ? `${order.branchCode} / ` : ""}
+                        {order.shipDate ? `Ship ${formatShortDate(order.shipDate)} / ` : ""}
+                        {order.equipmentCount} unit{order.equipmentCount === 1 ? "" : "s"}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-2 py-2 text-[0.78rem] text-slate-600">No rental orders found.</div>
+                )}
               </div>
             ) : null}
           </label>
@@ -1026,8 +1247,11 @@ export function BusinessCentralESignEditorClient({
             <input
               value={customerEmail}
               disabled={disabled}
-              onChange={(event) => setCustomerEmail(event.target.value)}
-              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
+              onChange={(event) => {
+                setCustomerEmail(event.target.value);
+                setNotice("Unsaved email changes", "warning");
+              }}
+              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
           </label>
           <label className="grid gap-1">
@@ -1035,8 +1259,11 @@ export function BusinessCentralESignEditorClient({
             <input
               value={subject}
               disabled={disabled}
-              onChange={(event) => setSubject(event.target.value)}
-              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950"
+              onChange={(event) => {
+                setSubject(event.target.value);
+                setNotice("Unsaved email changes", "warning");
+              }}
+              className="h-9 rounded-sm border border-slate-300 bg-white px-2 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
           </label>
           <label className="grid gap-1">
@@ -1046,7 +1273,7 @@ export function BusinessCentralESignEditorClient({
                 type="button"
                 onClick={insertSigningLink}
                 disabled={disabled}
-                className="rounded-sm border border-slate-300 bg-white px-2 py-1 text-[0.68rem] font-semibold text-slate-700 disabled:opacity-50"
+                className="rounded-sm border border-[#0071f4]/40 bg-white px-2 py-1 text-[0.68rem] font-semibold text-[#002b5c] disabled:opacity-50"
               >
                 Insert signing link
               </button>
@@ -1055,10 +1282,16 @@ export function BusinessCentralESignEditorClient({
               ref={messageTextareaRef}
               value={message}
               disabled={disabled}
-              rows={3}
-              onChange={(event) => setMessage(event.target.value)}
-              className="min-h-20 rounded-sm border border-slate-300 bg-white px-2 py-1.5 text-[0.8rem] text-slate-950"
+              rows={7}
+              onChange={(event) => {
+                setMessage(event.target.value);
+                setNotice("Unsaved email changes", "warning");
+              }}
+              className="min-h-40 rounded-sm border border-slate-300 bg-white px-2 py-1.5 text-[0.8rem] text-slate-950 outline-none focus:border-[#0071f4] focus:ring-1 focus:ring-[#0071f4]"
             />
+            <div className="rounded-sm border border-slate-200 bg-slate-50 px-2 py-2 text-[0.76rem] leading-5 text-slate-700">
+              {renderMessagePreview(message)}
+            </div>
             {!messageHasSigningLink ? (
               <span className="text-[0.7rem] font-semibold text-amber-700">
                 Add {"{submitter.link}"} so the email includes the live signing link.
@@ -1074,6 +1307,7 @@ export function BusinessCentralESignEditorClient({
               disabled={disabled}
               fields={fields}
               values={values}
+              missingFields={missingFields}
               onChange={updateValue}
             />
           ) : (
@@ -1083,6 +1317,7 @@ export function BusinessCentralESignEditorClient({
               section={section}
               fields={fields}
               values={values}
+              missingFields={missingFields}
               onChange={updateValue}
             />
           ),

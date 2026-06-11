@@ -34,7 +34,7 @@ export async function GET(request: Request, context: EditorRentalOrderSearchRout
 
     const pageSize = Math.min(12, Math.max(1, Number(searchParams.get("pageSize") ?? "8")));
     const conditions = ["coalesce(nullif(lease_key, ''), document_no) is not null"];
-    const params: Array<string | number> = [];
+    const params: Array<string | number | null> = [];
     const query = searchParams.get("q")?.trim();
     const customerNo = searchParams.get("customerNo")?.trim();
     const unitNo = searchParams.get("unitNo")?.trim();
@@ -42,24 +42,28 @@ export async function GET(request: Request, context: EditorRentalOrderSearchRout
     if (query) {
       params.push(likePattern(query));
       conditions.push(`(
-        coalesce(nullif(lease_key, ''), document_no) ilike $${params.length} escape '\\'
-        or coalesce(document_no, '') ilike $${params.length} escape '\\'
-        or coalesce(customer_number, '') ilike $${params.length} escape '\\'
-        or coalesce(customer_name, '') ilike $${params.length} escape '\\'
-        or coalesce(asset_number, '') ilike $${params.length} escape '\\'
+        coalesce(nullif(lease_key, ''), document_no) ilike $${params.length} escape E'\\\\'
+        or coalesce(document_no, '') ilike $${params.length} escape E'\\\\'
+        or coalesce(customer_number, '') ilike $${params.length} escape E'\\\\'
+        or coalesce(customer_name, '') ilike $${params.length} escape E'\\\\'
+        or coalesce(asset_number, '') ilike $${params.length} escape E'\\\\'
       )`);
     }
 
-    if (customerNo) {
+    if (!query && customerNo) {
       params.push(customerNo);
       conditions.push(`customer_number = $${params.length}`);
     }
 
-    if (unitNo) {
+    if (!query && unitNo) {
       params.push(unitNo);
       conditions.push(`asset_number = $${params.length}`);
     }
 
+    params.push(customerNo || null);
+    const customerRankParam = params.length;
+    params.push(unitNo || null);
+    const unitRankParam = params.length;
     params.push(pageSize);
     const limitParam = params.length;
 
@@ -74,11 +78,15 @@ export async function GET(request: Request, context: EditorRentalOrderSearchRout
           min(service_period_start) as ship_date,
           max(coalesce(service_period_end, service_period_start, posting_date)) as last_activity_at,
           count(distinct asset_number)::integer as equipment_count,
-          coalesce(sum(gross_amount), 0)::numeric(18, 2)::text as gross_amount
+          coalesce(sum(gross_amount), 0)::numeric(18, 2)::text as gross_amount,
+          max(case when $${customerRankParam}::text is not null and customer_number = $${customerRankParam}::text then 1 else 0 end) as customer_match,
+          max(case when $${unitRankParam}::text is not null and asset_number = $${unitRankParam}::text then 1 else 0 end) as unit_match
         from rental_activity_facts
         where ${conditions.join(" and ")}
         group by coalesce(nullif(lease_key, ''), document_no)
-        order by max(coalesce(service_period_end, service_period_start, posting_date)) desc nulls last,
+        order by customer_match desc,
+          unit_match desc,
+          max(coalesce(service_period_end, service_period_start, posting_date)) desc nulls last,
           coalesce(nullif(lease_key, ''), document_no) desc
         limit $${limitParam}
       `,
