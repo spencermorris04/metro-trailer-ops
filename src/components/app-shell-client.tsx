@@ -863,7 +863,9 @@ export function AppShellClient({
     publicPage ||
     effectivePathname === "/login" ||
     effectivePathname.startsWith("/login/") ||
-    effectivePathname.startsWith("/sign/");
+    effectivePathname.startsWith("/sign/") ||
+    effectivePathname === "/esign/bc-templates" ||
+    effectivePathname.startsWith("/esign/bc-templates/");
   const [authGateState, setAuthGateState] = useState<AuthGateState>(
     isPublicPath ? "public" : "checking",
   );

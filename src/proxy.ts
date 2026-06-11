@@ -1,7 +1,13 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-const publicPagePrefixes = ["/login", "/sign", "/esign/bc-preview", "/esign/bc-editor"];
+const publicPagePrefixes = [
+  "/login",
+  "/sign",
+  "/esign/bc-preview",
+  "/esign/bc-editor",
+  "/esign/bc-templates",
+];
 const sessionCookieNames = [
   "better-auth.session_token",
   "__Secure-better-auth.session_token",

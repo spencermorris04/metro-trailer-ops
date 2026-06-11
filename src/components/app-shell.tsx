@@ -39,12 +39,19 @@ function isPublicPage(pathname: string) {
     pathname.startsWith("/login/") ||
     pathname.startsWith("/sign/") ||
     pathname.startsWith("/esign/bc-preview/") ||
-    pathname.startsWith("/esign/bc-editor/")
+    pathname.startsWith("/esign/bc-editor/") ||
+    pathname === "/esign/bc-templates" ||
+    pathname.startsWith("/esign/bc-templates/")
   );
 }
 
 function isBarePage(pathname: string) {
-  return pathname.startsWith("/esign/bc-preview/") || pathname.startsWith("/esign/bc-editor/");
+  return (
+    pathname.startsWith("/esign/bc-preview/") ||
+    pathname.startsWith("/esign/bc-editor/") ||
+    pathname === "/esign/bc-templates" ||
+    pathname.startsWith("/esign/bc-templates/")
+  );
 }
 async function getShellWorkspaceLayout(
   inputHeaders: Headers,
