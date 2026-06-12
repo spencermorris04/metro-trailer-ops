@@ -110,6 +110,7 @@ type DocusealApiField = {
   uuid?: string | null;
   type?: string | null;
   areas?: unknown[] | null;
+  [key: string]: unknown;
 };
 
 type DocusealApiSubmitter = {
@@ -1144,6 +1145,141 @@ export async function detectDocusealTemplateFields(docusealTemplateId: number) {
     detectedFieldCount: payload?.fields_count ?? template.fields.length,
     template,
   };
+}
+
+function renameFieldInList(fields: string[] | null | undefined, oldName: string, newName: string) {
+  const renamed = (fields ?? []).map((field) => (field === oldName ? newName : field));
+  return Array.from(new Set(renamed.map((field) => field.trim()).filter(Boolean)));
+}
+
+export async function renameDocusealTemplateField(input: {
+  docusealTemplateId: number;
+  fieldName: string;
+  newFieldName: string;
+  fieldUuid?: string;
+}) {
+  const fieldName = input.fieldName.trim();
+  const newFieldName = input.newFieldName.trim();
+  const fieldUuid = input.fieldUuid?.trim();
+
+  if (!fieldName) {
+    throw new ApiError(400, "Current field name is required.");
+  }
+  if (!newFieldName) {
+    throw new ApiError(400, "New field name is required.");
+  }
+  if (newFieldName.length > 100) {
+    throw new ApiError(400, "Field names must be 100 characters or fewer.");
+  }
+
+  const templateResponse = await fetchDocuseal(`/api/templates/${input.docusealTemplateId}`, {
+    headers: getDocusealAuthHeaders(),
+  });
+  const templatePayload = (await templateResponse.json().catch(() => null)) as
+    | (DocusealApiTemplate & { error?: string })
+    | null;
+
+  if (!templateResponse.ok) {
+    throw new ApiError(
+      templateResponse.status,
+      templatePayload?.error ?? "DocuSeal rejected the template lookup.",
+      templatePayload,
+    );
+  }
+
+  const fields = templatePayload?.fields ?? [];
+  const target = fields.find((field) =>
+    fieldUuid ? field.uuid === fieldUuid : field.name?.trim() === fieldName,
+  );
+
+  if (!target) {
+    throw new ApiError(404, "The E-Sign field to rename was not found.");
+  }
+
+  const oldName = target.name?.trim() || fieldName;
+  const duplicate = fields.find((field) => {
+    if (field === target) {
+      return false;
+    }
+
+    return field.name?.trim().toLowerCase() === newFieldName.toLowerCase();
+  });
+
+  if (duplicate) {
+    throw new ApiError(409, "Another E-Sign field already uses that name.");
+  }
+
+  if (oldName === newFieldName) {
+    const templates = await listDocusealPrefillTemplates();
+    const template = templates.find(
+      (candidate) => candidate.docusealTemplateId === input.docusealTemplateId,
+    );
+
+    if (!template) {
+      throw new ApiError(404, "DocuSeal template was not found.");
+    }
+
+    return { template };
+  }
+
+  const updatedFields = fields.map((field) =>
+    field === target ? { ...field, name: newFieldName } : field,
+  );
+  const response = await fetchDocuseal(`/api/templates/${input.docusealTemplateId}`, {
+    method: "PUT",
+    headers: {
+      ...getDocusealAuthHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields: updatedFields }),
+  });
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected the field rename.",
+      payload,
+    );
+  }
+
+  const classification = await db.query.docusealTemplateClassifications.findFirst({
+    where: (table, operators) =>
+      operators.eq(table.docusealTemplateId, input.docusealTemplateId),
+  });
+
+  if (classification) {
+    const customerEditableFields = renameFieldInList(
+      classification.customerEditableFields,
+      oldName,
+      newFieldName,
+    );
+    const customerRequiredFields = renameFieldInList(
+      classification.customerRequiredFields,
+      oldName,
+      newFieldName,
+    ).filter((field) => customerEditableFields.includes(field));
+
+    await db
+      .update(schema.docusealTemplateClassifications)
+      .set({
+        customerEditableFields,
+        customerRequiredFields,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.docusealTemplateClassifications.docusealTemplateId, input.docusealTemplateId));
+  }
+
+  const templates = await listDocusealPrefillTemplates();
+  const template = templates.find(
+    (candidate) => candidate.docusealTemplateId === input.docusealTemplateId,
+  );
+
+  if (!template) {
+    throw new ApiError(404, "Renamed DocuSeal template was not found.");
+  }
+
+  return { template };
 }
 
 export async function listDocusealDrafts() {

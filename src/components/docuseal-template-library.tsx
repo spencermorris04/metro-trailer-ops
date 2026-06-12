@@ -94,6 +94,8 @@ export function DocusealTemplateLibrary({
   const [pending, startTransition] = useTransition();
   const [templateList, setTemplateList] = useState(templates);
   const [templateEdits, setTemplateEdits] = useState<Record<string, TemplateEditState>>({});
+  const [fieldNameDrafts, setFieldNameDrafts] = useState<Record<string, string>>({});
+  const [renamingFieldKey, setRenamingFieldKey] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState("");
   const [uploadCategory, setUploadCategory] =
     useState<DocusealTemplateCategory>("payment_authorization");
@@ -198,6 +200,69 @@ export function DocusealTemplateLibrary({
       policy === "required" ? [...withoutRequiredField, fieldName] : withoutRequiredField;
 
     updateTemplateEdit(template, { customerEditableFields, customerRequiredFields });
+  }
+
+  function getFieldDraftKey(
+    template: DocusealTemplateDefinition,
+    field: DocusealTemplateDefinition["fields"][number],
+  ) {
+    return `${template.docusealTemplateId}:${field.uuid || field.name}`;
+  }
+
+  function resetFieldNameDraft(fieldKey: string) {
+    setFieldNameDrafts((current) => {
+      const next = { ...current };
+      delete next[fieldKey];
+      return next;
+    });
+  }
+
+  function renameTemplateField(
+    template: DocusealTemplateDefinition,
+    field: DocusealTemplateDefinition["fields"][number],
+    nextName: string,
+  ) {
+    const fieldKey = getFieldDraftKey(template, field);
+    const newFieldName = nextName.trim();
+
+    if (newFieldName === field.name) {
+      resetFieldNameDraft(fieldKey);
+      return;
+    }
+
+    if (!newFieldName) {
+      setFeedback("Field name cannot be blank.");
+      setFieldNameDrafts((current) => ({ ...current, [fieldKey]: field.name }));
+      return;
+    }
+
+    setRenamingFieldKey(fieldKey);
+    startTransition(async () => {
+      try {
+        setFeedback(null);
+        const result = await submitJson<{ template: DocusealTemplateDefinition }>(
+          buildApiUrl(`/api/docuseal/templates/${template.docusealTemplateId}/rename-field`),
+          "POST",
+          {
+            fieldName: field.name,
+            newFieldName,
+            fieldUuid: field.uuid,
+          },
+        );
+
+        if (result?.data?.template) {
+          replaceTemplate(result.data.template);
+        }
+        resetFieldNameDraft(fieldKey);
+        setFeedback(result?.message ?? "E-Sign field renamed.");
+        router.refresh();
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : "Field rename failed.");
+        setFieldNameDrafts((current) => ({ ...current, [fieldKey]: field.name }));
+      } finally {
+        setRenamingFieldKey(null);
+      }
+    });
   }
 
   function replaceTemplate(template: DocusealTemplateDefinition) {
@@ -734,7 +799,7 @@ export function DocusealTemplateLibrary({
                     </h3>
                     <p className="mt-1 text-[0.66rem] leading-4 text-slate-500">
                       Locked fields are read-only. Optional and required fields can be completed by
-                      the customer.
+                      the customer. Edit field names inline and press Enter or click away to save.
                     </p>
                   </div>
                   <div className="grid gap-2 p-2 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
@@ -746,10 +811,13 @@ export function DocusealTemplateLibrary({
                             ? "optional"
                             : "locked";
                       const policyStyles = getCustomerFieldPolicyStyles(policy);
+                      const fieldDraftKey = getFieldDraftKey(selectedTemplate, field);
+                      const fieldNameValue = fieldNameDrafts[fieldDraftKey] ?? field.name;
+                      const isRenamingField = renamingFieldKey === fieldDraftKey;
 
                       return (
                         <div
-                          key={field.name}
+                          key={field.uuid || field.name}
                           title={`${field.label} (${field.name})`}
                           className={`grid min-w-0 grid-cols-[minmax(0,1fr)_96px] items-center gap-2 rounded-md border px-2 py-2 transition-colors ${policyStyles.row}`}
                         >
@@ -762,9 +830,34 @@ export function DocusealTemplateLibrary({
                               <span className="block truncate text-[0.68rem] font-semibold text-slate-950">
                                 {field.label}
                               </span>
-                              <span className="mt-0.5 block truncate text-[0.58rem] text-slate-600">
-                                {field.name}
-                              </span>
+                              <input
+                                value={fieldNameValue}
+                                disabled={pending || isRenamingField}
+                                onChange={(event) =>
+                                  setFieldNameDrafts((current) => ({
+                                    ...current,
+                                    [fieldDraftKey]: event.target.value,
+                                  }))
+                                }
+                                onBlur={(event) =>
+                                  renameTemplateField(selectedTemplate, field, event.target.value)
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    event.currentTarget.blur();
+                                  }
+                                  if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    event.currentTarget.value = field.name;
+                                    resetFieldNameDraft(fieldDraftKey);
+                                    event.currentTarget.blur();
+                                  }
+                                }}
+                                className="mt-0.5 block h-5 w-full min-w-0 rounded border border-transparent bg-transparent px-0.5 font-mono text-[0.58rem] text-slate-600 outline-none transition-colors hover:border-slate-300 hover:bg-white focus:border-[#0071f4] focus:bg-white focus:text-slate-950 focus:ring-2 focus:ring-[#0071f4]/15 disabled:cursor-not-allowed disabled:opacity-70"
+                                aria-label={`Rename ${field.label} field`}
+                                title="Edit field name"
+                              />
                             </span>
                           </span>
                           <select
