@@ -11,6 +11,7 @@ import {
   buildFixedAssetIndexes,
   createTelematicsSyncError,
   createTelematicsSyncRun,
+  enrichTelematicsAddress,
   fetchAllFixedAssets,
   fetchExistingTelematicsTrackers,
   fetchLatestSuccessfulTelematicsRun,
@@ -134,7 +135,7 @@ async function main() {
       counters.unmatchedCount += 1;
     }
 
-    const payload = buildTelematicsPayload(status, match, syncedAt);
+    const payload = await enrichTelematicsAddress(buildTelematicsPayload(status, match, syncedAt));
     try {
       const result = await upsertTelematicsTracker(accessToken, companyId, existingState.existing, payload, options.write);
       if (result === "inserted") {

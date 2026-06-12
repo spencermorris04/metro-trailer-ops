@@ -283,7 +283,7 @@ export class DocusealRuntimeStack extends Stack {
         S3_ATTACHMENTS_BUCKET: attachmentsBucket.bucketName,
         SMTP_ADDRESS: "smtp.resend.com",
         SMTP_AUTHENTICATION: "plain",
-        SMTP_DOMAIN: "lumpkindevelopment.com",
+        SMTP_DOMAIN: "metrotrailer.com",
         SMTP_ENABLE_STARTTLS: "true",
         SMTP_PORT: "587",
         SMTP_USERNAME: "resend",

@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/dashboard-preferences.test.ts src/lib/search-core.test.ts src/lib/server/cache-tags.test.ts src/lib/server/pricing-engine.test.ts src/lib/server/work-orders.lifecycle.test.ts src/lib/server/esign-fields.test.ts src/lib/server/runtime-surface.test.ts src/lib/server/rental-history-core.test.ts src/lib/server/rental-history-route-surface.test.ts src/lib/server/inventory.lifecycle.integration.test.ts src/lib/server/commercial.lifecycle.integration.test.ts src/lib/legacy/tooling.test.ts src/lib/testing/perf-harness.test.ts src/lib/testing/security-audit.test.ts",
+    "test": "tsx --test src/lib/dashboard-preferences.test.ts src/lib/search-core.test.ts src/lib/server/cache-tags.test.ts src/lib/server/pricing-engine.test.ts src/lib/server/billing-preview.test.ts src/lib/server/work-orders.lifecycle.test.ts src/lib/server/esign-fields.test.ts src/lib/server/runtime-surface.test.ts src/lib/server/rental-history-core.test.ts src/lib/server/rental-history-route-surface.test.ts src/lib/server/inventory.lifecycle.integration.test.ts src/lib/server/commercial.lifecycle.integration.test.ts src/lib/legacy/tooling.test.ts src/lib/testing/perf-harness.test.ts src/lib/testing/security-audit.test.ts",
     "local:db:serve": "tsx scripts/local-db-serve.ts",
     "local:db:start": "tsx scripts/local-db-start.ts",
     "local:db:stop": "tsx scripts/local-db-stop.ts",
@@ -22,6 +22,8 @@
     "read-models:refresh": "tsx scripts/read-model-refresh.ts",
     "projections:rebuild": "tsx scripts/projections-rebuild.ts",
     "serving:rebuild": "tsx scripts/projections-rebuild.ts --serving-only",
+    "billing:inspect": "tsx scripts/billing-preview-inspect.ts",
+    "billing:validate": "tsx scripts/billing-preview-validate.ts",
     "projections:run": "tsx scripts/projections-run.ts",
     "search:sync": "tsx scripts/search-sync.ts",
     "search:rebuild": "tsx scripts/search-sync.ts --full",
@@ -57,6 +59,7 @@
     "orbcomm:fetch-status": "tsx orbcomm/scripts/fetch-status.ts",
     "orbcomm:sync:bc": "tsx orbcomm/scripts/orbcomm-sync-bc.ts",
     "telematics:backfill-skybitz": "tsx telematics/scripts/backfill-skybitz.ts",
+    "telematics:reverse-geocode": "tsx telematics/scripts/reverse-geocode-missing-addresses.ts",
     "perf:harness": "tsx scripts/perf-harness.ts",
     "security:audit": "tsx scripts/security-audit.ts",
     "e2e:smoke": "tsx scripts/e2e-smoke.ts",
@@ -66,6 +69,7 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-geo-places": "^3.1062.0",
     "@aws-sdk/client-s3": "^3.1029.0",
     "@aws-sdk/client-ses": "^3.1029.0",
     "@aws-sdk/client-sqs": "^3.1029.0",

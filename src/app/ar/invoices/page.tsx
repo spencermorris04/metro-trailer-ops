@@ -8,8 +8,6 @@ import { ListPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCompactNumber, formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getInvoiceRegisterView, type RentalSourceFilter } from "@/lib/server/platform";
 
-export const unstable_instant = { prefetch: "static" };
-
 type ArInvoicesPageProps = {
   searchParams: Promise<{
     q?: string | string[];

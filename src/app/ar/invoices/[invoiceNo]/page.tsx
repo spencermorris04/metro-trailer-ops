@@ -9,8 +9,6 @@ import { DetailPageSkeleton } from "@/components/workspace-skeletons";
 import { formatCurrency, formatDate, titleize } from "@/lib/format";
 import { getInvoiceDetailView } from "@/lib/server/platform";
 
-export const unstable_instant = { prefetch: "static" };
-
 type InvoiceDetailPageProps = {
   params: Promise<{
     invoiceNo: string;

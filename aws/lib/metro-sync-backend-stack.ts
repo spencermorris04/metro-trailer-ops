@@ -249,6 +249,8 @@ export class MetroSyncBackendStack extends Stack {
         ORBCOMM_REQUEST_TIMEOUT_SECONDS: "300",
         ORBCOMM_CONCURRENT_REQUEST_MAX_RETRIES: "10",
         ORBCOMM_CONCURRENT_REQUEST_RETRY_SECONDS: "90",
+        TELEMATICS_REVERSE_GEOCODE_ENABLED: "true",
+        TELEMATICS_REVERSE_GEOCODE_REGION: Stack.of(this).region,
         BC_INCREMENTAL_WINDOW_HOURS: "36",
         BC_RAW_HISTORY_PAGE_SIZE: "1000",
       },
@@ -285,6 +287,12 @@ export class MetroSyncBackendStack extends Stack {
     requestQueue.grantConsumeMessages(taskDefinition.taskRole);
     requestTable.grantReadWriteData(taskDefinition.taskRole);
     sourceBucket.grantReadWrite(taskDefinition.taskRole, "state/*");
+    taskDefinition.addToTaskRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["geo-places:ReverseGeocode"],
+        resources: [`arn:${Stack.of(this).partition}:geo-places:${Stack.of(this).region}::provider/default`],
+      }),
+    );
     orbcommSecret.grantRead(taskDefinition.taskRole);
     taskDefinition.addToTaskRolePolicy(
       new iam.PolicyStatement({

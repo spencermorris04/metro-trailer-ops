@@ -37,6 +37,11 @@ async function main() {
     return;
   }
 
+  if (mode === "maintenance:telematics-reverse-geocode" || mode === "telematics:reverse-geocode") {
+    await run("npm", ["run", "telematics:reverse-geocode", "--", "--write", ...buildReverseGeocodeArgs()]);
+    return;
+  }
+
   await runJob(parseDirectMode(mode));
 }
 
@@ -251,6 +256,23 @@ function buildSharePointStateArgs() {
     `--delta-state=s3://${bucket}/state/sharepoint-sync-state.json`,
     `--backfill-state=s3://${bucket}/state/sharepoint-backfill-state.json`,
   ];
+}
+
+function buildReverseGeocodeArgs() {
+  const args: string[] = [];
+  const provider = process.env.TELEMATICS_REVERSE_GEOCODE_PROVIDER?.trim();
+  const limit = process.env.TELEMATICS_REVERSE_GEOCODE_LIMIT?.trim();
+  const concurrency = process.env.TELEMATICS_REVERSE_GEOCODE_CONCURRENCY?.trim();
+  if (provider) {
+    args.push(`--provider=${provider}`);
+  }
+  if (limit) {
+    args.push(`--limit=${limit}`);
+  }
+  if (concurrency) {
+    args.push(`--concurrency=${concurrency}`);
+  }
+  return args;
 }
 
 function run(command: string, args: string[]) {

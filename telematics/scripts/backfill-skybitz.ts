@@ -3,6 +3,7 @@ import {
   TelematicsTrackerPayload,
   bcRequest,
   createTelematicsSyncRun,
+  enrichTelematicsAddress,
   fetchExistingTelematicsTrackers,
   getBcAccessToken,
   getBcBaseApiRoot,
@@ -102,7 +103,7 @@ async function main() {
   );
 
   await runWithConcurrency(limited, options.concurrency, async (row) => {
-    const payload = buildTelematicsPayload(row);
+    const payload = await enrichTelematicsAddress(buildTelematicsPayload(row));
     if (payload.matchStatus === "Matched") {
       counters.matchedCount += 1;
     } else {

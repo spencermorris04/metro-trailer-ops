@@ -30,13 +30,16 @@ page 50266 "Telematics FactBox"
                     ApplicationArea = All;
                     Caption = 'Observed';
                 }
-                field(Latitude; Latitude)
+                field(CoordinatesTxt; CoordinatesTxt)
                 {
                     ApplicationArea = All;
-                }
-                field(Longitude; Longitude)
-                {
-                    ApplicationArea = All;
+                    Caption = 'Coordinates';
+                    ToolTip = 'Shows the latest telematics latitude and longitude. Drill down to open the location in Google Maps.';
+
+                    trigger OnDrillDown()
+                    begin
+                        OpenMapForCurrentAsset();
+                    end;
                 }
                 field(BatteryTxt; BatteryTxt)
                 {
@@ -52,17 +55,6 @@ page 50266 "Telematics FactBox"
                 {
                     ApplicationArea = All;
                     Caption = 'Geofence';
-                }
-                field(OpenMapText; OpenMapText)
-                {
-                    ApplicationArea = All;
-                    Caption = 'Map';
-                    ToolTip = 'Open the latest telematics location in Google Maps.';
-
-                    trigger OnDrillDown()
-                    begin
-                        OpenMapForCurrentAsset();
-                    end;
                 }
                 field(RequestSyncText; RequestSyncText)
                 {
@@ -146,12 +138,10 @@ page 50266 "Telematics FactBox"
     begin
         Clear(ProviderTxt);
         Clear(ObservationDateTime);
-        Clear(Latitude);
-        Clear(Longitude);
+        Clear(CoordinatesTxt);
         Clear(BatteryTxt);
         Clear(AddressTxt);
         Clear(GeofenceTxt);
-        OpenMapText := '';
         RequestSyncText := 'Request Sync';
 
         if not FindLatestTracker(Tracker) then
@@ -159,14 +149,10 @@ page 50266 "Telematics FactBox"
 
         ProviderTxt := BuildProviderText(Tracker);
         ObservationDateTime := Tracker."Observation Date Time";
-        Latitude := Tracker.Latitude;
-        Longitude := Tracker.Longitude;
+        CoordinatesTxt := BuildCoordinatesText(Tracker);
         BatteryTxt := BuildBatteryText(Tracker);
         AddressTxt := Tracker.Address;
         GeofenceTxt := BuildGeofenceText(Tracker);
-
-        if (Tracker.Latitude <> 0) or (Tracker.Longitude <> 0) then
-            OpenMapText := 'Open';
     end;
 
     local procedure FindLatestTracker(var Tracker: Record "Telematics Tracker"): Boolean
@@ -239,6 +225,14 @@ page 50266 "Telematics FactBox"
         exit('');
     end;
 
+    local procedure BuildCoordinatesText(Tracker: Record "Telematics Tracker"): Text[80]
+    begin
+        if (Tracker.Latitude = 0) and (Tracker.Longitude = 0) then
+            exit('');
+
+        exit(CopyStr(StrSubstNo('%1, %2', Format(Tracker.Latitude), Format(Tracker.Longitude)), 1, 80));
+    end;
+
     local procedure BuildGeofenceText(Tracker: Record "Telematics Tracker"): Text[160]
     var
         Value: Text;
@@ -292,11 +286,9 @@ page 50266 "Telematics FactBox"
     var
         ProviderTxt: Text[80];
         ObservationDateTime: DateTime;
-        Latitude: Decimal;
-        Longitude: Decimal;
+        CoordinatesTxt: Text[80];
         BatteryTxt: Text[80];
         AddressTxt: Text[250];
         GeofenceTxt: Text[160];
-        OpenMapText: Text[30];
         RequestSyncText: Text[30];
 }

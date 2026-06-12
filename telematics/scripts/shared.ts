@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { GeoPlacesClient, ReverseGeocodeCommand } from "@aws-sdk/client-geo-places";
 import { config as loadEnv } from "dotenv";
 
 loadEnv();
@@ -101,7 +102,16 @@ export type TelematicsSyncErrorPayload = {
   resolved: boolean;
 };
 
+export type ReverseGeocodedAddress = {
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+};
+
 let cachedBcAccessToken: string | null = null;
+let cachedGeoPlacesClient: GeoPlacesClient | null = null;
+const reverseGeocodeCache = new Map<string, ReverseGeocodedAddress | null>();
 
 export function requireEnv(name: string) {
   const value = process.env[name]?.trim();
@@ -113,6 +123,96 @@ export function requireEnv(name: string) {
 
 export function optionalEnv(name: string, fallback = "") {
   return process.env[name]?.trim() || fallback;
+}
+
+export async function enrichTelematicsAddress(payload: TelematicsTrackerPayload) {
+  if (payload.address || !getCoordinates(payload.latitude, payload.longitude)) {
+    return payload;
+  }
+
+  const result = await reverseGeocodeCoordinates(payload.latitude, payload.longitude);
+  if (!result?.address) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    address: truncate(result.address, 250),
+    city: payload.city || truncate(result.city, 100),
+    state: payload.state || truncate(result.state, 50),
+    country: payload.country || truncate(result.country, 10),
+  };
+}
+
+async function reverseGeocodeCoordinates(latitude: number | undefined, longitude: number | undefined) {
+  if (process.env.TELEMATICS_REVERSE_GEOCODE_ENABLED?.trim().toLowerCase() === "false") {
+    return null;
+  }
+  const coordinates = getCoordinates(latitude, longitude);
+  if (!coordinates) {
+    return null;
+  }
+  const [lat, lon] = coordinates;
+
+  const cacheKey = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+  if (reverseGeocodeCache.has(cacheKey)) {
+    return reverseGeocodeCache.get(cacheKey) ?? null;
+  }
+
+  try {
+    const client = getGeoPlacesClient();
+    const response = await client.send(
+      new ReverseGeocodeCommand({
+        QueryPosition: [lon, lat],
+        MaxResults: 1,
+        IntendedUse: "Storage",
+      }),
+    );
+    const item = response.ResultItems?.[0];
+    const address = item?.Address;
+    const result = address?.Label
+      ? {
+          address: normalizeText(address.Label),
+          city: normalizeText(address.Locality),
+          state: normalizeText(address.Region?.Code || address.Region?.Name),
+          country: normalizeText(address.Country?.Code2 || address.Country?.Code3 || address.Country?.Name),
+        }
+      : null;
+    reverseGeocodeCache.set(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "telematics-reverse-geocode-failed",
+        latitude: lat,
+        longitude: lon,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    reverseGeocodeCache.set(cacheKey, null);
+    return null;
+  }
+}
+
+function getGeoPlacesClient() {
+  if (!cachedGeoPlacesClient) {
+    cachedGeoPlacesClient = new GeoPlacesClient({
+      region: optionalEnv("TELEMATICS_REVERSE_GEOCODE_REGION", optionalEnv("AWS_REGION", "us-east-2")),
+    });
+  }
+  return cachedGeoPlacesClient;
+}
+
+function getCoordinates(latitude: number | undefined, longitude: number | undefined): [number, number] | null {
+  if (typeof latitude === "number" &&
+    typeof longitude === "number" &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    (latitude !== 0 || longitude !== 0)) {
+    return [latitude, longitude];
+  }
+
+  return null;
 }
 
 export function normalizeText(value: unknown) {
@@ -483,6 +583,10 @@ export async function upsertTelematicsTracker(
 export function telematicsPayloadNeedsUpdate(existing: ExistingTelematicsTracker, payload: TelematicsTrackerPayload) {
   return existing.sourceHash !== payload.sourceHash ||
     existing.fixedAssetNo !== payload.fixedAssetNo ||
+    existing.address !== payload.address ||
+    existing.city !== payload.city ||
+    existing.state !== payload.state ||
+    existing.country !== payload.country ||
     existing.matchStatus !== payload.matchStatus ||
     existing.matchedBy !== payload.matchedBy ||
     existing.syncStatus !== payload.syncStatus ||
@@ -567,4 +671,3 @@ export async function runWithConcurrency<T>(items: T[], concurrency: number, wor
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
