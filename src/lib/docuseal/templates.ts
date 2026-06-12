@@ -18,6 +18,7 @@ export type DocusealFieldDefinition = {
   type?: string;
   multiline?: boolean;
   customerEditable?: boolean;
+  customerRequired?: boolean;
 };
 
 export type DocusealTemplateDefinition = {

@@ -56,6 +56,7 @@ export type DocusealTemplateClassification = {
   location: string;
   submitterRole: string;
   customerEditableFields: string[];
+  customerRequiredFields: string[];
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -382,6 +383,7 @@ function mapDocusealApiField(
       name,
       type: field.type,
     }),
+    customerRequired: false,
   };
 }
 
@@ -475,6 +477,9 @@ function mapTemplateClassificationRow(
     customerEditableFields: Array.isArray(row.customerEditableFields)
       ? row.customerEditableFields.filter((field): field is string => typeof field === "string")
       : [],
+    customerRequiredFields: Array.isArray(row.customerRequiredFields)
+      ? row.customerRequiredFields.filter((field): field is string => typeof field === "string")
+      : [],
     active: row.active,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -499,6 +504,7 @@ function mergeTemplateClassifications(
     }
 
     const customerEditableFields = classification.customerEditableFields;
+    const customerRequiredFields = classification.customerRequiredFields;
 
     return {
       ...template,
@@ -508,12 +514,18 @@ function mergeTemplateClassifications(
       folderName: classification.folderName,
       location: classification.location || classification.folderName,
       submitterRole: classification.submitterRole || template.submitterRole,
-      fields: template.fields.map((field) => ({
-        ...field,
-        customerEditable: customerEditableFields.length
+      fields: template.fields.map((field) => {
+        const customerEditable = customerEditableFields.length
           ? customerEditableFields.includes(field.name)
-          : Boolean(field.customerEditable),
-      })),
+          : Boolean(field.customerEditable);
+        const customerRequired = customerEditable && customerRequiredFields.includes(field.name);
+
+        return {
+          ...field,
+          customerEditable,
+          customerRequired,
+        };
+      }),
       active: classification.active,
     };
   });
@@ -537,6 +549,7 @@ export async function upsertDocusealTemplateClassification(input: {
   location?: string;
   submitterRole?: string;
   customerEditableFields?: string[];
+  customerRequiredFields?: string[];
   active?: boolean;
 }) {
   const existing = await db.query.docusealTemplateClassifications.findFirst({
@@ -554,6 +567,11 @@ export async function upsertDocusealTemplateClassification(input: {
     input.customerEditableFields?.map((field) => field.trim()).filter(Boolean) ??
     existing?.customerEditableFields ??
     [];
+  const customerRequiredFields = (
+    input.customerRequiredFields?.map((field) => field.trim()).filter(Boolean) ??
+    existing?.customerRequiredFields ??
+    []
+  ).filter((field) => customerEditableFields.includes(field));
   const values = {
     templateKey,
     name: input.name.trim(),
@@ -562,6 +580,7 @@ export async function upsertDocusealTemplateClassification(input: {
     location,
     submitterRole,
     customerEditableFields,
+    customerRequiredFields,
     active: input.active ?? existing?.active ?? true,
     updatedAt: new Date(),
   };
@@ -681,6 +700,17 @@ function buildReadonlyFields(template: DocusealTemplateDefinition) {
     .map((field) => field.name);
 }
 
+function buildSubmitterFields(template: DocusealTemplateDefinition) {
+  return template.fields
+    .filter((field) => field.customerEditable)
+    .map((field) => ({
+      name: field.name,
+      uuid: field.uuid,
+      readonly: false,
+      required: Boolean(field.customerRequired),
+    }));
+}
+
 function buildSubmissionValues(
   template: DocusealTemplateDefinition,
   values: Record<string, string>,
@@ -770,6 +800,7 @@ async function deleteDocusealSubmission(submissionId: number) {
 async function createDocusealSubmission(draft: DocusealDraft, sendEmail: boolean) {
   const template = await requireTemplate(draft.templateKey);
   const readonlyFields = buildReadonlyFields(template);
+  const submitterFields = buildSubmitterFields(template);
   const submissionValues = buildSubmissionValues(template, draft.values);
   const response = await fetchDocuseal("/api/submissions", {
     method: "POST",
@@ -787,6 +818,7 @@ async function createDocusealSubmission(draft: DocusealDraft, sendEmail: boolean
           email: draft.customerEmail,
           values: submissionValues,
           readonly_fields: readonlyFields,
+          fields: submitterFields,
           message: {
             subject: draft.subject,
             body: ensureSigningLinkInMessage(draft.message),
@@ -969,6 +1001,7 @@ export async function updateDocusealTemplateClassification(input: {
   location?: string;
   submitterRole?: string;
   customerEditableFields?: string[];
+  customerRequiredFields?: string[];
   active?: boolean;
 }) {
   const folderName = input.folderName?.trim() ?? "";

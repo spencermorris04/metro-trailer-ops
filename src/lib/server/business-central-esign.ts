@@ -202,7 +202,7 @@ export function requireBusinessCentralESignKey(request: Request) {
 }
 
 function mergeCommonValues(input: BusinessCentralDraftInput) {
-  return {
+  const merged: Record<string, unknown> = {
     customer_number: input.customerNo ?? "",
     customer_name: input.customerName ?? "",
     unit_number: input.fixedAssetNo ?? "",
@@ -210,6 +210,14 @@ function mergeCommonValues(input: BusinessCentralDraftInput) {
     rental_order_number: input.rentalOrderNo ?? "",
     ...input.values,
   };
+
+  const fixedAssetDescription = input.fixedAssetDescription?.trim();
+  if (fixedAssetDescription) {
+    merged.unit_description = fixedAssetDescription;
+    merged.unit_type = fixedAssetDescription;
+  }
+
+  return merged;
 }
 
 export function parseBusinessCentralDraftInput(value: unknown) {
@@ -237,6 +245,7 @@ export async function listBusinessCentralESignTemplates() {
       section: field.section,
       type: field.type ?? "",
       customerEditable: Boolean(field.customerEditable),
+      customerRequired: Boolean(field.customerRequired),
     })),
   }));
 }

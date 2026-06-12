@@ -23,6 +23,7 @@ const updateTemplateSchema = z.object({
   location: z.string().optional(),
   submitterRole: z.string().optional(),
   customerEditableFields: z.array(z.string()).optional(),
+  customerRequiredFields: z.array(z.string()).optional(),
   active: z.boolean().optional(),
 });
 

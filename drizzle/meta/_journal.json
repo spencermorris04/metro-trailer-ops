@@ -176,6 +176,13 @@
       "when": 1781203260000,
       "tag": "0024_docuseal_customer_editable_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1781284140000,
+      "tag": "0025_docuseal_customer_required_fields",
+      "breakpoints": true
     }
   ]
 }

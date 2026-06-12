@@ -3935,6 +3935,7 @@ export const docusealTemplateClassifications = pgTable(
     location: text().default("").notNull(),
     submitterRole: text().default("First Party").notNull(),
     customerEditableFields: jsonb().$type<string[]>().default([]).notNull(),
+    customerRequiredFields: jsonb().$type<string[]>().default([]).notNull(),
     active: boolean().default(true).notNull(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),

@@ -23,6 +23,7 @@ type TemplateEditState = {
   location: string;
   submitterRole: string;
   customerEditableFields: string[];
+  customerRequiredFields: string[];
   active: boolean;
 };
 
@@ -42,6 +43,9 @@ function buildTemplateEditState(template: DocusealTemplateDefinition): TemplateE
     submitterRole: "First Party",
     customerEditableFields: template.fields
       .filter((field) => field.customerEditable)
+      .map((field) => field.name),
+    customerRequiredFields: template.fields
+      .filter((field) => field.customerEditable && field.customerRequired)
       .map((field) => field.name),
     active: true,
   };
@@ -151,13 +155,24 @@ export function DocusealTemplateLibrary({
     return `${path}${path.includes("?") ? "&" : "?"}${apiAuthQuery}`;
   }
 
-  function toggleCustomerEditableField(template: DocusealTemplateDefinition, fieldName: string) {
+  function setCustomerFieldPolicy(
+    template: DocusealTemplateDefinition,
+    fieldName: string,
+    policy: "locked" | "optional" | "required",
+  ) {
     const edit = getTemplateEdit(template);
-    const customerEditableFields = edit.customerEditableFields.includes(fieldName)
-      ? edit.customerEditableFields.filter((name) => name !== fieldName)
-      : [...edit.customerEditableFields, fieldName];
+    const withoutEditableField = edit.customerEditableFields.filter(
+      (name) => name !== fieldName,
+    );
+    const withoutRequiredField = edit.customerRequiredFields.filter(
+      (name) => name !== fieldName,
+    );
+    const customerEditableFields =
+      policy === "locked" ? withoutEditableField : [...withoutEditableField, fieldName];
+    const customerRequiredFields =
+      policy === "required" ? [...withoutRequiredField, fieldName] : withoutRequiredField;
 
-    updateTemplateEdit(template, { customerEditableFields });
+    updateTemplateEdit(template, { customerEditableFields, customerRequiredFields });
   }
 
   function replaceTemplate(template: DocusealTemplateDefinition) {
@@ -690,31 +705,27 @@ export function DocusealTemplateLibrary({
                   <div className="sticky top-0 z-10 border-b border-[var(--line)] bg-white px-3 py-2">
                     <p className="eyebrow">Customer fields</p>
                     <h3 className="text-[0.82rem] font-semibold text-slate-950">
-                      Allowed to complete
+                      Completion rules
                     </h3>
                     <p className="mt-1 text-[0.66rem] leading-4 text-slate-500">
-                      Every field is locked on the customer signing link unless it is checked here.
+                      Locked fields are read-only. Optional and required fields can be completed by
+                      the customer.
                     </p>
                   </div>
                   <div className="grid gap-x-3 gap-y-1 p-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
                     {selectedTemplate.fields.map((field) => {
-                      const checked = selectedEdit.customerEditableFields.includes(field.name);
+                      const policy = selectedEdit.customerRequiredFields.includes(field.name)
+                        ? "required"
+                        : selectedEdit.customerEditableFields.includes(field.name)
+                          ? "optional"
+                          : "locked";
 
                       return (
-                        <label
+                        <div
                           key={field.name}
                           title={`${field.label} (${field.name})`}
-                          className="flex min-w-0 cursor-pointer gap-2 border-b border-[var(--line)] px-1 py-1.5 hover:bg-slate-50"
+                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_92px] items-center gap-2 border-b border-[var(--line)] px-1 py-1.5 hover:bg-slate-50"
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={pending}
-                            onChange={() =>
-                              toggleCustomerEditableField(selectedTemplate, field.name)
-                            }
-                            className="mt-0.5 h-4 w-4 shrink-0"
-                          />
                           <span className="min-w-0">
                             <span className="block truncate text-[0.68rem] font-semibold text-slate-900">
                               {field.label}
@@ -723,7 +734,24 @@ export function DocusealTemplateLibrary({
                               {field.name}
                             </span>
                           </span>
-                        </label>
+                          <select
+                            value={policy}
+                            disabled={pending}
+                            onChange={(event) =>
+                              setCustomerFieldPolicy(
+                                selectedTemplate,
+                                field.name,
+                                event.target.value as "locked" | "optional" | "required",
+                              )
+                            }
+                            className="workspace-input h-7 w-full bg-white px-1 text-[0.62rem]"
+                            aria-label={`${field.label} customer completion rule`}
+                          >
+                            <option value="locked">Locked</option>
+                            <option value="optional">Optional</option>
+                            <option value="required">Required</option>
+                          </select>
+                        </div>
                       );
                     })}
                   </div>
