@@ -108,6 +108,7 @@ const legacyDefaultEmailMessages = new Set([
   `Please review the prepared Metro Trailer document and complete the requested signer fields.\n\n${signingLinkMarkdown}`,
   `Please review the prepared Metro Trailer document and complete the requested signer fields. Click the Review and Submit link below to open the document. If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} ${signingLinkMarkdown}`,
   `Hello, Metro Trailer has prepared an E-Sign document for your review. Please click the Review and Submit link to open the document and complete the requested signer fields. ${signingLinkMarkdown} If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} Thank you, Metro Trailer`,
+  `Hello, Metro Trailer has prepared an E-Sign document for your review. Please click the Review and Submit link to open the document and complete any remaining fields. ${signingLinkMarkdown} If the button is missing, copy and paste this link into your browser: ${signingLinkVariable} Thank you, Metro Trailer`,
 ]);
 const defaultEmailMessage = `Hello,
 
@@ -258,13 +259,36 @@ function includesSigningLink(value: string) {
 
 function normalizeEmailMessage(value: string) {
   const trimmed = value.trim();
-  if (!trimmed || legacyDefaultEmailMessages.has(trimmed)) {
+  if (!trimmed || isLegacyDefaultEmailMessage(trimmed)) {
     return defaultEmailMessage;
   }
   return value;
 }
 
-function renderMessagePreview(value: string) {
+function normalizeMessageWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function isLegacyDefaultEmailMessage(value: string) {
+  const normalized = normalizeMessageWhitespace(value);
+
+  if (
+    Array.from(legacyDefaultEmailMessages).some(
+      (message) => normalizeMessageWhitespace(message) === normalized,
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    normalized.includes("Metro Trailer has prepared an E-Sign document for your review.") &&
+    normalized.includes("Review and Submit") &&
+    normalized.includes("{submitter.link}") &&
+    normalized.includes("Thank you, Metro Trailer")
+  );
+}
+
+function renderMessagePreviewLine(value: string, lineIndex: number) {
   const tokenRegex = /(\[Review and Submit\]\(\{submitter\.link\}\)|\{submitter\.link\})/gi;
   return value.split(tokenRegex).map((part, index) => {
     if (!part) {
@@ -277,7 +301,7 @@ function renderMessagePreview(value: string) {
     ) {
       return (
         <span
-          key={`${part}-${index}`}
+          key={`${lineIndex}-${part}-${index}`}
           className="mx-0.5 inline-flex rounded-sm border border-[#0071f4]/30 bg-[#0071f4]/10 px-1.5 py-0.5 font-semibold text-[#002b5c]"
         >
           {part}
@@ -285,8 +309,19 @@ function renderMessagePreview(value: string) {
       );
     }
 
-    return <span key={`${part}-${index}`}>{part}</span>;
+    return <span key={`${lineIndex}-${part}-${index}`}>{part}</span>;
   });
+}
+
+function renderMessagePreview(value: string) {
+  const lines = value.split("\n");
+
+  return lines.map((line, lineIndex) => (
+    <span key={lineIndex}>
+      {renderMessagePreviewLine(line, lineIndex)}
+      {lineIndex < lines.length - 1 ? <br /> : null}
+    </span>
+  ));
 }
 
 function FieldInput({
