@@ -17,7 +17,7 @@ page 50376 "MTE ESign Customer FB"
                 field(LeaseCountText; LeaseCountText)
                 {
                     ApplicationArea = All;
-                    Caption = 'Leases';
+                    Caption = 'Documents';
 
                     trigger OnDrillDown()
                     begin
@@ -31,7 +31,7 @@ page 50376 "MTE ESign Customer FB"
 
                     trigger OnDrillDown()
                     begin
-                        OpenLatestLease();
+                        ViewLatestSignedDocument();
                     end;
                 }
                 field(LatestStatusText; LatestStatusText)
@@ -54,7 +54,7 @@ page 50376 "MTE ESign Customer FB"
         {
             action(CreateLease)
             {
-                Caption = 'Create E-Sign Lease';
+                Caption = 'Create E-Sign Document';
                 ApplicationArea = All;
                 Image = CreateDocument;
 
@@ -65,7 +65,7 @@ page 50376 "MTE ESign Customer FB"
             }
             action(ViewLeases)
             {
-                Caption = 'View E-Sign Leases';
+                Caption = 'View E-Sign Documents';
                 ApplicationArea = All;
                 Image = List;
 
@@ -76,13 +76,13 @@ page 50376 "MTE ESign Customer FB"
             }
             action(OpenLatestESign)
             {
-                Caption = 'Open Latest Editor';
+                Caption = 'Open Latest Document';
                 ApplicationArea = All;
-                Image = EditLines;
+                Image = LinkWeb;
 
                 trigger OnAction()
                 begin
-                    OpenLatestLease();
+                    ViewLatestSignedDocument();
                 end;
             }
             action(ViewLatestDocument)

@@ -26,7 +26,7 @@ page 50370 "MTE ESign Setup"
                 field("Default Template Code"; Rec."Default Template Code")
                 {
                     ApplicationArea = All;
-                    ToolTip = 'Specifies the default E-Sign template for new leases.';
+                    ToolTip = 'Specifies the default E-Sign template for new documents.';
                 }
             }
         }

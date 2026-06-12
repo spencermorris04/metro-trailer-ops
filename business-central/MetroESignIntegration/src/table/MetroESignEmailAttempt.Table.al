@@ -12,7 +12,7 @@ table 50375 "MTE ESign Email Attempt"
         }
         field(2; "Lease ID"; Guid)
         {
-            Caption = 'Lease ID';
+            Caption = 'Document ID';
             DataClassification = SystemMetadata;
             TableRelation = "MTE ESign Lease"."Lease ID";
         }

@@ -4,7 +4,7 @@ page 50373 "MTE ESign Leases"
     SourceTable = "MTE ESign Lease";
     ApplicationArea = All;
     UsageCategory = Lists;
-    Caption = 'Metro E-Sign Leases';
+    Caption = 'Metro E-Sign Documents';
     CardPageId = "MTE ESign Lease Card";
     Editable = false;
 
@@ -113,7 +113,7 @@ page 50373 "MTE ESign Leases"
             DocumentUrl := Rec."Signing URL";
 
         if DocumentUrl = '' then
-            Error('No E-Sign document URL is available for this lease.');
+            Error('No E-Sign document URL is available for this document.');
 
         Hyperlink(DocumentUrl);
     end;

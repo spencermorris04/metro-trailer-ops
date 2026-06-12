@@ -18,7 +18,7 @@ pageextension 50371 "MTE ESign Customer Ext" extends "Customer Card"
         {
             action(CreateMetroESignLease)
             {
-                Caption = 'Create E-Sign Lease';
+                Caption = 'Create E-Sign Document';
                 ApplicationArea = All;
                 Image = CreateDocument;
                 Promoted = true;
@@ -37,7 +37,7 @@ pageextension 50371 "MTE ESign Customer Ext" extends "Customer Card"
             }
             action(ViewMetroESignLeases)
             {
-                Caption = 'Metro E-Sign Leases';
+                Caption = 'Metro E-Sign Documents';
                 ApplicationArea = All;
                 Image = List;
                 Promoted = true;

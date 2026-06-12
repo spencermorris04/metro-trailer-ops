@@ -1,6 +1,6 @@
 table 50373 "MTE ESign Lease Field"
 {
-    Caption = 'Metro E-Sign Lease Field';
+    Caption = 'Metro E-Sign Document Field';
     DataCaptionFields = "Field Name", Value;
     DataClassification = CustomerContent;
 
@@ -8,7 +8,7 @@ table 50373 "MTE ESign Lease Field"
     {
         field(1; "Lease ID"; Guid)
         {
-            Caption = 'Lease ID';
+            Caption = 'Document ID';
             DataClassification = SystemMetadata;
             TableRelation = "MTE ESign Lease"."Lease ID";
         }
@@ -73,6 +73,6 @@ table 50373 "MTE ESign Lease Field"
             exit;
 
         if Lease.Status = Lease.Status::Sent then
-            Error('Sent Metro E-Sign leases cannot be edited. Void the sent document first.');
+            Error('Sent Metro E-Sign documents cannot be edited. Void the sent document first.');
     end;
 }

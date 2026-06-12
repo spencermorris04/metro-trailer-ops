@@ -1,7 +1,7 @@
 enum 50370 "MTE ESign Lease Status"
 {
     Extensible = true;
-    Caption = 'Metro E-Sign Lease Status';
+    Caption = 'Metro E-Sign Document Status';
 
     value(0; Draft)
     {

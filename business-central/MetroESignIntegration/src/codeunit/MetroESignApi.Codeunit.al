@@ -155,7 +155,7 @@ codeunit 50370 "MTE ESign API"
         ResponseObject: JsonObject;
     begin
         if Lease."DocuSeal Draft ID" = '' then
-            Error('This lease does not have a Metro E-Sign draft to invalidate.');
+            Error('This document does not have a Metro E-Sign draft to invalidate.');
 
         ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/invalidate');
         ApplyDraftResponse(Lease, ResponseObject);
@@ -413,7 +413,7 @@ codeunit 50370 "MTE ESign API"
         ResponseObject: JsonObject;
     begin
         if (Lease.Status = Lease.Status::Sent) or (Lease.Status = Lease.Status::Signed) then
-            Error('This Metro E-Sign lease has already been sent. Void the sent document before sending again.');
+            Error('This Metro E-Sign document has already been sent. Void the sent document before sending again.');
 
         if Lease."DocuSeal Draft ID" <> '' then begin
             if not UpdateExisting then
@@ -452,7 +452,7 @@ codeunit 50370 "MTE ESign API"
         AddDraftValue(Values, 'agreement_date', FormatDateBlank(Lease."Date Signed"));
         AddDraftValue(Values, 'unit_number', Lease."Unit No.");
         AddDraftValue(Values, 'unit_description', Lease."Unit Description");
-        AddDraftValue(Values, 'unit_type', Lease."Product No.");
+        AddDraftValue(Values, 'unit_type', Lease."Unit Description");
         AddDraftValue(Values, 'vin_number', Lease.VIN);
         AddDraftValue(Values, 'tag_number', Lease."Tag No.");
         AddDraftValue(Values, 'rental_rate_per_day', FormatDecimalBlank(Lease."Per Day Rate"));
@@ -545,7 +545,7 @@ codeunit 50370 "MTE ESign API"
         SetLeaseFieldValue(Lease, 'lessee_name', Lease."Customer Name");
         SetLeaseFieldValue(Lease, 'lessee_location', BuildCustomerLocation(Lease));
         SetLeaseFieldValue(Lease, 'unit_number', Lease."Unit No.");
-        SetLeaseFieldValue(Lease, 'unit_type', Lease."Product No.");
+        SetLeaseFieldValue(Lease, 'unit_type', Lease."Unit Description");
         SetLeaseFieldValue(Lease, 'vin_number', Lease.VIN);
         SetLeaseFieldValue(Lease, 'tag_number', Lease."Tag No.");
         SetLeaseFieldValue(Lease, 'rental_rate_per_day', FormatDecimalBlank(Lease."Per Day Rate"));
@@ -697,6 +697,7 @@ codeunit 50370 "MTE ESign API"
                 TemplateField.Section := CopyStr(GetJsonText(FieldObject, 'section'), 1, MaxStrLen(TemplateField.Section));
                 TemplateField."Sort Order" := SortOrder;
                 TemplateField."Customer Editable" := GetJsonBoolean(FieldObject, 'customerEditable', false);
+                TemplateField."Customer Required" := GetJsonBoolean(FieldObject, 'customerRequired', false);
                 TemplateField.Insert();
             end;
         end;

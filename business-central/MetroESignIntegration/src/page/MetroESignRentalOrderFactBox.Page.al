@@ -52,7 +52,7 @@ page 50379 "MTE ESign Rental Order FB"
         {
             action(CreateLease)
             {
-                Caption = 'Create E-Sign Lease';
+                Caption = 'Create E-Sign Document';
                 ApplicationArea = All;
                 Image = CreateDocument;
 
@@ -85,7 +85,7 @@ page 50379 "MTE ESign Rental Order FB"
             }
             action(ViewAll)
             {
-                Caption = 'View E-Sign Leases';
+                Caption = 'View E-Sign Documents';
                 ApplicationArea = All;
                 Image = List;
 
@@ -124,7 +124,7 @@ page 50379 "MTE ESign Rental Order FB"
             DocumentUrl := Rec."Signing URL";
 
         if DocumentUrl = '' then
-            Error('No sent or signed E-Sign document URL is available for this lease.');
+            Error('No sent or signed E-Sign document URL is available for this document.');
 
         Hyperlink(DocumentUrl);
     end;

@@ -37,6 +37,11 @@ table 50374 "MTE ESign Template Field"
             Caption = 'Customer Editable';
             DataClassification = CustomerContent;
         }
+        field(7; "Customer Required"; Boolean)
+        {
+            Caption = 'Customer Required';
+            DataClassification = CustomerContent;
+        }
     }
 
     keys

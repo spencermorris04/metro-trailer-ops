@@ -1,6 +1,6 @@
 table 50372 "MTE ESign Lease"
 {
-    Caption = 'Metro E-Sign Lease';
+    Caption = 'Metro E-Sign Document';
     DataCaptionFields = "Customer Name", "Fixed Asset No.", "Rental Order No.";
     DataClassification = CustomerContent;
 
@@ -8,7 +8,7 @@ table 50372 "MTE ESign Lease"
     {
         field(1; "Lease ID"; Guid)
         {
-            Caption = 'Lease ID';
+            Caption = 'Document ID';
             DataClassification = SystemMetadata;
         }
         field(2; "Template Code"; Code[30])
@@ -117,9 +117,9 @@ table 50372 "MTE ESign Lease"
 
                 FixedAsset.Get("Fixed Asset No.");
                 if FixedAsset.Inactive then
-                    Error('Fixed asset %1 is inactive and cannot be added to an E-Sign lease.', "Fixed Asset No.");
+                    Error('Fixed asset %1 is inactive and cannot be added to an E-Sign document.', "Fixed Asset No.");
                 if FixedAsset.Blocked then
-                    Error('Fixed asset %1 is blocked and cannot be added to an E-Sign lease.', "Fixed Asset No.");
+                    Error('Fixed asset %1 is blocked and cannot be added to an E-Sign document.', "Fixed Asset No.");
 
                 "Unit Description" := FixedAsset.Description;
                 "Unit No." := FixedAsset."No.";
@@ -609,7 +609,7 @@ table 50372 "MTE ESign Lease"
 
     trigger OnRename()
     begin
-        Error('Metro E-Sign leases cannot be renamed.');
+        Error('Metro E-Sign documents cannot be renamed.');
     end;
 
     trigger OnModify()

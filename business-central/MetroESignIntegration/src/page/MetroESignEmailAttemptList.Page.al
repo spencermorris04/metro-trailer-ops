@@ -29,6 +29,11 @@ page 50378 "MTE ESign Email Attempts"
                 {
                     ApplicationArea = All;
                 }
+                field("Lease ID"; Rec."Lease ID")
+                {
+                    ApplicationArea = All;
+                    Visible = false;
+                }
                 field("E-Sign Submission ID"; Rec."E-Sign Submission ID")
                 {
                     ApplicationArea = All;
@@ -45,6 +50,50 @@ page 50378 "MTE ESign Email Attempts"
                 {
                     ApplicationArea = All;
                 }
+            }
+        }
+    }
+
+    actions
+    {
+        area(Processing)
+        {
+            action(OpenLease)
+            {
+                Caption = 'Open Document';
+                ApplicationArea = All;
+                Image = EditLines;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                var
+                    Lease: Record "MTE ESign Lease";
+                begin
+                    if IsNullGuid(Rec."Lease ID") then
+                        Error('This email attempt is not linked to a Metro E-Sign document.');
+
+                    if not Lease.Get(Rec."Lease ID") then
+                        Error('The Metro E-Sign document linked to this email attempt could not be found.');
+
+                    Page.Run(Page::"MTE ESign Lease Card", Lease);
+                end;
+            }
+            action(ViewDocument)
+            {
+                Caption = 'View E-Sign Document';
+                ApplicationArea = All;
+                Image = LinkWeb;
+                Promoted = true;
+                PromotedCategory = Process;
+
+                trigger OnAction()
+                begin
+                    if Rec."Signing URL" = '' then
+                        Error('No E-Sign document URL is available for this email attempt.');
+
+                    Hyperlink(Rec."Signing URL");
+                end;
             }
         }
     }

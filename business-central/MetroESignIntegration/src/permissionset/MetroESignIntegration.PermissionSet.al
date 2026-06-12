@@ -25,5 +25,6 @@ permissionset 50370 "MTE ESIGN"
         page "MTE ESign Email Attempts" = X,
         page "MTE ESign Preview Part" = X,
         page "MTE ESign Asset FB" = X,
-        page "MTE ESign Customer FB" = X;
+        page "MTE ESign Customer FB" = X,
+        page "MTE ESign Rental Order FB" = X;
 }

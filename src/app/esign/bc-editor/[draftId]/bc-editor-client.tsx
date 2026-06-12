@@ -240,16 +240,30 @@ function applyEquipmentToValues(
   current: Record<string, string>,
   equipment: EquipmentSearchResult,
 ) {
+  const unitDescription = [equipment.modelYear, equipment.manufacturer, getEquipmentType(equipment)]
+    .filter(Boolean)
+    .join(" ");
+
   return {
     ...current,
     unit_number: equipment.assetNumber,
-    unit_type: getEquipmentType(equipment),
-    unit_description: [equipment.modelYear, equipment.manufacturer, getEquipmentType(equipment)]
-      .filter(Boolean)
-      .join(" "),
+    unit_type: unitDescription || getEquipmentType(equipment),
+    unit_description: unitDescription,
     vin_number: equipment.serialNumber ?? "",
     tag_number: equipment.registrationNumber ?? "",
     rental_rate_per_day: current.rental_rate_per_day,
+  };
+}
+
+function preferUnitDescriptionForUnitType(values: Record<string, string>) {
+  const unitDescription = values.unit_description?.trim();
+  if (!unitDescription) {
+    return values;
+  }
+
+  return {
+    ...values,
+    unit_type: unitDescription,
   };
 }
 
@@ -569,8 +583,7 @@ export function BusinessCentralESignEditorClient({
   const [currentDraft, setCurrentDraft] = useState(draft);
   const [currentTemplate, setCurrentTemplate] = useState(template);
   const [values, setValues] = useState<Record<string, string>>({
-    ...emptyValues(template),
-    ...draft.values,
+    ...preferUnitDescriptionForUnitType({ ...emptyValues(template), ...draft.values }),
   });
   const [customerName, setCustomerName] = useState(draft.customerName);
   const [customerEmail, setCustomerEmail] = useState(draft.customerEmail);
@@ -827,7 +840,12 @@ export function BusinessCentralESignEditorClient({
   function loadPayload(payload: EditorPayload) {
     setCurrentDraft(payload.draft);
     setCurrentTemplate(payload.template);
-    setValues({ ...emptyValues(payload.template), ...payload.draft.values });
+    setValues(
+      preferUnitDescriptionForUnitType({
+        ...emptyValues(payload.template),
+        ...payload.draft.values,
+      }),
+    );
     setCustomerName(payload.draft.customerName);
     setCustomerEmail(payload.draft.customerEmail);
     setRentalOrderNo(payload.draft.values.rental_order_number ?? "");
