@@ -39,7 +39,8 @@ page 50377 "MTE ESign Preview Part"
         if not ControlReady then
             exit;
 
-        if (Rec."Editor URL" = '') and (not IsNullGuid(Rec."Lease ID")) then begin
+        if (not EditorUrlRefreshed) and (not IsNullGuid(Rec."Lease ID")) then begin
+            EditorUrlRefreshed := true;
             Api.OpenEditor(Rec);
             CurrPage.Update(false);
         end;
@@ -249,5 +250,6 @@ page 50377 "MTE ESign Preview Part"
 
     var
         ControlReady: Boolean;
+        EditorUrlRefreshed: Boolean;
         LoadedUrl: Text[2048];
 }

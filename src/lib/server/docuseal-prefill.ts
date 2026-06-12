@@ -170,7 +170,7 @@ function getDocusealAuthHeaders() {
 function createDocusealEmbeddedEditorUrl(docusealTemplateId: number) {
   const apiToken = getDocusealApiToken();
   const keySha = createHash("sha256").update(apiToken).digest("hex");
-  const expiresAt = Math.floor(Date.now() / 1000) + 4 * 60 * 60;
+  const expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
   const payload = `${docusealTemplateId}.${expiresAt}.${keySha}`;
   const token = createHmac("sha256", apiToken).update(payload).digest("hex");
   const url = new URL(

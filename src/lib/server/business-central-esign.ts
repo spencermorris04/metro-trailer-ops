@@ -19,7 +19,7 @@ import { ApiError } from "@/lib/server/api";
 
 const bcApiKeyHeader = "x-metro-sync-key";
 const previewTokenMaxAgeMs = 30 * 60 * 1000;
-const editorTokenMaxAgeMs = 4 * 60 * 60 * 1000;
+const editorTokenMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
 
 const bcDraftSchema = z.object({
   templateKey: z.string().min(1),
