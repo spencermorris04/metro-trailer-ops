@@ -168,6 +168,25 @@ codeunit 50370 "MTE ESign API"
         Message('Metro E-Sign document invalidated and reopened for editing.');
     end;
 
+    procedure RefreshLeaseStatus(var Lease: Record "MTE ESign Lease")
+    var
+        ResponseObject: JsonObject;
+    begin
+        if Lease."DocuSeal Draft ID" = '' then
+            exit;
+
+        ResponseObject := PostWithoutBody('/api/integrations/business-central/esign/drafts/' + Lease."DocuSeal Draft ID" + '/refresh');
+        ApplyDraftResponse(Lease, ResponseObject);
+        Lease."Last Error" := '';
+        Lease.Modify();
+    end;
+
+    [TryFunction]
+    procedure TryRefreshLeaseStatus(var Lease: Record "MTE ESign Lease")
+    begin
+        RefreshLeaseStatus(Lease);
+    end;
+
     procedure CreateLeaseForCustomer(CustomerNo: Code[20]): Guid
     var
         Lease: Record "MTE ESign Lease";
@@ -393,7 +412,7 @@ codeunit 50370 "MTE ESign API"
     var
         ResponseObject: JsonObject;
     begin
-        if Lease.Status = Lease.Status::Sent then
+        if (Lease.Status = Lease.Status::Sent) or (Lease.Status = Lease.Status::Signed) then
             Error('This Metro E-Sign lease has already been sent. Void the sent document before sending again.');
 
         if Lease."DocuSeal Draft ID" <> '' then begin
@@ -697,17 +716,21 @@ codeunit 50370 "MTE ESign API"
 
         Lease."DocuSeal Draft ID" := CopyStr(GetJsonText(Data, 'id'), 1, MaxStrLen(Lease."DocuSeal Draft ID"));
         Lease."Signing URL" := CopyStr(GetJsonText(Data, 'signingUrl'), 1, MaxStrLen(Lease."Signing URL"));
+        Lease."Signed Document URL" := CopyStr(GetJsonText(Data, 'signedDocumentUrl'), 1, MaxStrLen(Lease."Signed Document URL"));
 
         SubmissionId := GetJsonInteger(Data, 'docusealSubmissionId');
         if SubmissionId <> 0 then
             Lease."DocuSeal Submission ID" := SubmissionId;
 
+        Lease."Signed At" := GetJsonDateTime(Data, 'signedAt');
+
         StatusText := LowerCase(GetJsonText(Data, 'status'));
-        if StatusText = 'sent' then
+        if StatusText = 'signed' then
+            Lease.Status := Lease.Status::Signed
+        else if StatusText = 'sent' then
             Lease.Status := Lease.Status::Sent
-        else
-            if StatusText = 'draft' then
-                Lease.Status := Lease.Status::Draft;
+        else if StatusText = 'draft' then
+            Lease.Status := Lease.Status::Draft;
     end;
 
     local procedure ApplyPreviewUrlResponse(var Lease: Record "MTE ESign Lease"; Root: JsonObject)
@@ -842,6 +865,35 @@ codeunit 50370 "MTE ESign API"
             end;
 
         exit(DefaultValue);
+    end;
+
+    local procedure GetJsonDateTime(Object: JsonObject; Name: Text): DateTime
+    var
+        ValueText: Text;
+        Year: Integer;
+        Month: Integer;
+        Day: Integer;
+        ParsedDate: Date;
+        ParsedTime: Time;
+    begin
+        ValueText := GetJsonText(Object, Name);
+        if ValueText = '' then
+            exit(0DT);
+
+        if StrLen(ValueText) < 19 then
+            exit(0DT);
+
+        if not Evaluate(Year, CopyStr(ValueText, 1, 4)) then
+            exit(0DT);
+        if not Evaluate(Month, CopyStr(ValueText, 6, 2)) then
+            exit(0DT);
+        if not Evaluate(Day, CopyStr(ValueText, 9, 2)) then
+            exit(0DT);
+        if not Evaluate(ParsedTime, CopyStr(ValueText, 12, 8)) then
+            exit(0DT);
+
+        ParsedDate := DMY2Date(Day, Month, Year);
+        exit(CreateDateTime(ParsedDate, ParsedTime));
     end;
 
     local procedure TrimTrailingSlash(Value: Text): Text

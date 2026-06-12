@@ -76,13 +76,24 @@ page 50375 "MTE ESign Asset FB"
             }
             action(OpenLatestESign)
             {
-                Caption = 'Open Latest E-Sign';
+                Caption = 'Open Latest Editor';
                 ApplicationArea = All;
-                Image = Document;
+                Image = EditLines;
 
                 trigger OnAction()
                 begin
                     OpenLatestLease();
+                end;
+            }
+            action(ViewLatestDocument)
+            {
+                Caption = 'View Latest Sent/Signed Document';
+                ApplicationArea = All;
+                Image = LinkWeb;
+
+                trigger OnAction()
+                begin
+                    ViewLatestSignedDocument();
                 end;
             }
         }
@@ -114,6 +125,7 @@ page 50375 "MTE ESign Asset FB"
         Lease.SetCurrentKey("Fixed Asset No.", Status, "Updated At");
         Lease.Ascending(false);
         if Lease.FindFirst() then begin
+            RefreshLeaseStatusIfNeeded(Lease);
             LatestDocumentText := Lease."Template Name";
             if LatestDocumentText = '' then
                 LatestDocumentText := Format(Lease."Lease ID");
@@ -141,6 +153,39 @@ page 50375 "MTE ESign Asset FB"
             Error('No E-Sign documents exist for fixed asset %1.', Rec."No.");
 
         Page.Run(Page::"MTE ESign Lease Card", Lease);
+    end;
+
+    local procedure ViewLatestSignedDocument()
+    var
+        Lease: Record "MTE ESign Lease";
+    begin
+        Lease.SetRange("Fixed Asset No.", Rec."No.");
+        Lease.SetFilter("Signing URL", '<>%1', '');
+        Lease.SetCurrentKey("Fixed Asset No.", Status, "Updated At");
+        Lease.Ascending(false);
+        if not Lease.FindFirst() then
+            Error('No sent or signed E-Sign document URL exists for fixed asset %1.', Rec."No.");
+
+        RefreshLeaseStatusIfNeeded(Lease);
+
+        if Lease."Signed Document URL" <> '' then
+            Hyperlink(Lease."Signed Document URL")
+        else
+            Hyperlink(Lease."Signing URL");
+    end;
+
+    local procedure RefreshLeaseStatusIfNeeded(var Lease: Record "MTE ESign Lease")
+    var
+        Api: Codeunit "MTE ESign API";
+    begin
+        if Lease."DocuSeal Draft ID" = '' then
+            exit;
+
+        if (Lease.Status <> Lease.Status::Sent) and (Lease.Status <> Lease.Status::Signed) then
+            exit;
+
+        if not Api.TryRefreshLeaseStatus(Lease) then
+            exit;
     end;
 
     local procedure CreateLeaseForAsset()

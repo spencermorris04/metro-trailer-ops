@@ -11,7 +11,7 @@ import {
 } from "@/lib/docuseal/templates";
 import { ApiError } from "@/lib/server/api";
 
-export type DocusealDraftStatus = "draft" | "sent";
+export type DocusealDraftStatus = "draft" | "sent" | "signed";
 export type DocusealDefaultScope = "global" | "location" | "trailer_type";
 
 export type DocusealDraft = {
@@ -33,6 +33,8 @@ export type DocusealDraft = {
   docusealSubmissionId: number | null;
   docusealSubmitterSlug: string | null;
   docusealSubmitterUrl: string | null;
+  signedAt?: string | null;
+  signedDocumentUrl?: string | null;
 };
 
 export type DocusealPrefillDefault = {
@@ -76,6 +78,29 @@ type DocusealSubmitterPayload = {
 type DocusealSubmissionCreatePayload = {
   id?: number;
   submitters?: DocusealSubmitterPayload[];
+};
+
+type DocusealSubmissionStatusPayload = {
+  id?: number;
+  status?: string | null;
+  completed_at?: string | null;
+  combined_document_url?: string | null;
+  documents?: Array<{
+    url?: string | null;
+  }> | null;
+  submitters?: Array<{
+    id?: number;
+    slug?: string | null;
+    completed_at?: string | null;
+  }> | null;
+  error?: string;
+};
+
+type DocusealSubmissionDocumentsPayload = {
+  documents?: Array<{
+    url?: string | null;
+  }> | null;
+  error?: string;
 };
 
 type DocusealApiField = {
@@ -669,6 +694,10 @@ function buildDocusealSubmitterUrl(slug: string | null) {
   return slug ? `${getDocusealApiUrl()}/s/${slug}` : null;
 }
 
+function buildDocusealSubmissionViewUrl(submissionId: number | null) {
+  return submissionId ? `${getDocusealApiUrl()}/submissions/${submissionId}` : null;
+}
+
 function messageIncludesSigningLink(message: string) {
   return /\{+submitter\.link\}+/i.test(message);
 }
@@ -815,6 +844,75 @@ async function findSubmissionIdBySubmitterSlug(slug: string | null) {
   return payload?.data?.[0]?.submission_id ?? null;
 }
 
+function getCompletedAtFromSubmission(payload: DocusealSubmissionStatusPayload | null) {
+  if (!payload) {
+    return null;
+  }
+
+  const completedAt =
+    payload.completed_at ||
+    payload.submitters
+      ?.map((submitter) => submitter.completed_at)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ||
+    null;
+
+  return completedAt;
+}
+
+function getSignedDocumentUrlFromSubmission(payload: DocusealSubmissionStatusPayload | null) {
+  return (
+    payload?.combined_document_url ||
+    payload?.documents?.find((document) => document.url)?.url ||
+    null
+  );
+}
+
+async function fetchDocusealSubmissionStatus(submissionId: number) {
+  const response = await fetchDocuseal(
+    `/api/submissions/${submissionId}?include=combined_document_url`,
+    {
+      headers: getDocusealAuthHeaders(),
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | DocusealSubmissionStatusPayload
+    | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected the submission status lookup.",
+      payload,
+    );
+  }
+
+  return payload;
+}
+
+async function fetchDocusealSubmissionDocumentUrl(submissionId: number) {
+  const response = await fetchDocuseal(
+    `/api/submissions/${submissionId}/documents?merge=true`,
+    {
+      headers: getDocusealAuthHeaders(),
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | DocusealSubmissionDocumentsPayload
+    | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.error ?? "DocuSeal rejected the submission document lookup.",
+      payload,
+    );
+  }
+
+  return payload?.documents?.find((document) => document.url)?.url ?? null;
+}
+
 function mapDraftRow(row: typeof schema.docusealPrefillDrafts.$inferSelect): DocusealDraft {
   return {
     id: row.id,
@@ -828,13 +926,15 @@ function mapDraftRow(row: typeof schema.docusealPrefillDrafts.$inferSelect): Doc
     subject: row.subject,
     message: row.message,
     values: row.values ?? {},
-    status: row.status === "sent" ? "sent" : "draft",
+    status: row.status === "signed" ? "signed" : row.status === "sent" ? "sent" : "draft",
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     sentAt: row.sentAt?.toISOString() ?? null,
     docusealSubmissionId: row.docusealSubmissionId,
     docusealSubmitterSlug: row.docusealSubmitterSlug,
     docusealSubmitterUrl: row.docusealSubmitterUrl,
+    signedAt: null,
+    signedDocumentUrl: null,
   };
 }
 
@@ -1128,6 +1228,8 @@ Metro Trailer`,
     docusealSubmissionId: null,
     docusealSubmitterSlug: null,
     docusealSubmitterUrl: null,
+    signedAt: null,
+    signedDocumentUrl: null,
   };
 
   const [createdDraft] = await db
@@ -1165,7 +1267,7 @@ export async function updateDocusealDraft(
   },
 ) {
   const draft = await requireDraft(draftId);
-  if (draft.status === "sent") {
+  if (draft.status === "sent" || draft.status === "signed") {
     throw new ApiError(409, "Sent DocuSeal drafts cannot be edited.");
   }
 
@@ -1224,7 +1326,7 @@ export async function switchDocusealDraftTemplate(
   },
 ) {
   const draft = await requireDraft(draftId);
-  if (draft.status === "sent") {
+  if (draft.status === "sent" || draft.status === "signed") {
     throw new ApiError(409, "Sent DocuSeal drafts cannot be changed.");
   }
 
@@ -1262,7 +1364,7 @@ export async function switchDocusealDraftTemplate(
 
 export async function sendDocusealDraft(draftId: string) {
   const draft = await requireDraft(draftId);
-  if (draft.status === "sent") {
+  if (draft.status === "sent" || draft.status === "signed") {
     return draft;
   }
   if (!draft.customerEmail) {
@@ -1293,6 +1395,55 @@ export async function sendDocusealDraft(draftId: string) {
     .returning();
 
   return mapDraftRow(updatedDraft);
+}
+
+export async function refreshDocusealDraftStatus(draftId: string) {
+  const draft = await requireDraft(draftId);
+  const submissionId =
+    draft.docusealSubmissionId ??
+    (await findSubmissionIdBySubmitterSlug(draft.docusealSubmitterSlug));
+
+  if (!submissionId) {
+    return {
+      ...draft,
+      signedAt: null,
+      signedDocumentUrl: null,
+    };
+  }
+
+  const submission = await fetchDocusealSubmissionStatus(submissionId);
+  const signedAt = getCompletedAtFromSubmission(submission);
+  const signedDocumentUrl = signedAt
+    ? getSignedDocumentUrlFromSubmission(submission) ??
+      (await fetchDocusealSubmissionDocumentUrl(submissionId)) ??
+      buildDocusealSubmissionViewUrl(submissionId)
+    : null;
+  const status: DocusealDraftStatus = signedAt ? "signed" : draft.status;
+  const timestamp = nowIso();
+  const [updatedDraft] = await db
+    .update(schema.docusealPrefillDrafts)
+    .set({
+      status,
+      docusealSubmissionId: submissionId,
+      docusealSubmitterSlug:
+        draft.docusealSubmitterSlug ??
+        submission?.submitters?.find((submitter) => submitter.slug)?.slug ??
+        null,
+      docusealSubmitterUrl:
+        draft.docusealSubmitterUrl ??
+        buildDocusealSubmitterUrl(
+          submission?.submitters?.find((submitter) => submitter.slug)?.slug ?? null,
+        ),
+      updatedAt: new Date(timestamp),
+    })
+    .where(eq(schema.docusealPrefillDrafts.id, draftId))
+    .returning();
+
+  return {
+    ...mapDraftRow(updatedDraft),
+    signedAt,
+    signedDocumentUrl,
+  };
 }
 
 export async function prepareDocusealDraftPreview(draftId: string) {
@@ -1330,7 +1481,7 @@ export async function prepareDocusealDraftPreview(draftId: string) {
 
 export async function invalidateDocusealDraft(draftId: string) {
   const draft = await requireDraft(draftId);
-  if (draft.status !== "sent") {
+  if (draft.status !== "sent" && draft.status !== "signed") {
     return draft;
   }
   const submissionId =

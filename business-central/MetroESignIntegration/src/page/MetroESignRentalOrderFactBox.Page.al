@@ -1,45 +1,36 @@
-page 50373 "MTE ESign Leases"
+page 50379 "MTE ESign Rental Order FB"
 {
-    PageType = List;
+    PageType = ListPart;
     SourceTable = "MTE ESign Lease";
     ApplicationArea = All;
-    UsageCategory = Lists;
-    Caption = 'Metro E-Sign Leases';
-    CardPageId = "MTE ESign Lease Card";
+    Caption = 'Metro E-Sign';
     Editable = false;
 
     layout
     {
         area(Content)
         {
-            repeater(Leases)
+            repeater(Documents)
             {
+                field("Template Name"; Rec."Template Name")
+                {
+                    ApplicationArea = All;
+                    Caption = 'Document';
+                }
                 field(Status; Rec.Status)
                 {
                     ApplicationArea = All;
 
                     trigger OnDrillDown()
                     begin
-                        OpenSentSignedDocument();
+                        OpenSignedDocument();
                     end;
-                }
-                field("Customer No."; Rec."Customer No.")
-                {
-                    ApplicationArea = All;
                 }
                 field("Customer Name"; Rec."Customer Name")
                 {
                     ApplicationArea = All;
                 }
                 field("Fixed Asset No."; Rec."Fixed Asset No.")
-                {
-                    ApplicationArea = All;
-                }
-                field("Rental Order No."; Rec."Rental Order No.")
-                {
-                    ApplicationArea = All;
-                }
-                field("Template Name"; Rec."Template Name")
                 {
                     ApplicationArea = All;
                 }
@@ -51,15 +42,6 @@ page 50373 "MTE ESign Leases"
                 {
                     ApplicationArea = All;
                 }
-                field("DocuSeal Submission ID"; Rec."DocuSeal Submission ID")
-                {
-                    ApplicationArea = All;
-                    Caption = 'E-Sign Submission ID';
-                }
-                field("Updated At"; Rec."Updated At")
-                {
-                    ApplicationArea = All;
-                }
             }
         }
     }
@@ -68,30 +50,48 @@ page 50373 "MTE ESign Leases"
     {
         area(Processing)
         {
+            action(CreateLease)
+            {
+                Caption = 'Create E-Sign Lease';
+                ApplicationArea = All;
+                Image = CreateDocument;
+
+                trigger OnAction()
+                begin
+                    CreateLeaseForRentalOrder();
+                end;
+            }
             action(OpenEditor)
             {
                 Caption = 'Open Editor';
                 ApplicationArea = All;
                 Image = EditLines;
-                Promoted = true;
-                PromotedCategory = Process;
 
                 trigger OnAction()
                 begin
-                    Page.Run(Page::"MTE ESign Lease Card", Rec);
+                    OpenLeaseEditor();
                 end;
             }
-            action(OpenSigningLink)
+            action(ViewDocument)
             {
                 Caption = 'View Sent/Signed Document';
                 ApplicationArea = All;
                 Image = LinkWeb;
-                Promoted = true;
-                PromotedCategory = Process;
 
                 trigger OnAction()
                 begin
-                    OpenSentSignedDocument();
+                    OpenSignedDocument();
+                end;
+            }
+            action(ViewAll)
+            {
+                Caption = 'View E-Sign Leases';
+                ApplicationArea = All;
+                Image = List;
+
+                trigger OnAction()
+                begin
+                    OpenRelatedLeases();
                 end;
             }
         }
@@ -102,10 +102,21 @@ page 50373 "MTE ESign Leases"
         RefreshCurrentStatus(false);
     end;
 
-    local procedure OpenSentSignedDocument()
+    local procedure OpenLeaseEditor()
+    begin
+        if IsNullGuid(Rec."Lease ID") then
+            Error('Select an E-Sign document first.');
+
+        Page.Run(Page::"MTE ESign Lease Card", Rec);
+    end;
+
+    local procedure OpenSignedDocument()
     var
         DocumentUrl: Text;
     begin
+        if IsNullGuid(Rec."Lease ID") then
+            Error('Select an E-Sign document first.');
+
         RefreshCurrentStatus(true);
 
         DocumentUrl := Rec."Signed Document URL";
@@ -113,7 +124,7 @@ page 50373 "MTE ESign Leases"
             DocumentUrl := Rec."Signing URL";
 
         if DocumentUrl = '' then
-            Error('No E-Sign document URL is available for this lease.');
+            Error('No sent or signed E-Sign document URL is available for this lease.');
 
         Hyperlink(DocumentUrl);
     end;
@@ -133,5 +144,29 @@ page 50373 "MTE ESign Leases"
         else
             if not Api.TryRefreshLeaseStatus(Rec) then
                 exit;
+    end;
+
+    local procedure OpenRelatedLeases()
+    var
+        Lease: Record "MTE ESign Lease";
+    begin
+        Lease.CopyFilters(Rec);
+        Page.Run(Page::"MTE ESign Leases", Lease);
+    end;
+
+    local procedure CreateLeaseForRentalOrder()
+    var
+        Api: Codeunit "MTE ESign API";
+        Lease: Record "MTE ESign Lease";
+        LeaseId: Guid;
+        RentalOrderNo: Code[30];
+    begin
+        RentalOrderNo := CopyStr(Rec.GetFilter("Rental Order No."), 1, MaxStrLen(RentalOrderNo));
+        if RentalOrderNo = '' then
+            Error('No rental order number is available.');
+
+        LeaseId := Api.CreateLeaseForRentalOrder(RentalOrderNo);
+        Lease.Get(LeaseId);
+        Page.Run(Page::"MTE ESign Lease Card", Lease);
     end;
 }

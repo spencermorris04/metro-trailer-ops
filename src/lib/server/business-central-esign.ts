@@ -11,6 +11,7 @@ import {
   createDocusealDraft,
   invalidateDocusealDraft,
   prepareDocusealDraftPreview,
+  refreshDocusealDraftStatus,
   sendDocusealDraft,
   switchDocusealDraftTemplate,
   updateDocusealDraft,
@@ -250,6 +251,8 @@ function mapBusinessCentralDraft(draft: DocusealDraft) {
     updatedAt: draft.updatedAt,
     docusealSubmissionId: draft.docusealSubmissionId ?? 0,
     signingUrl: draft.docusealSubmitterUrl ?? "",
+    signedAt: draft.signedAt ?? "",
+    signedDocumentUrl: draft.signedDocumentUrl ?? "",
   };
 }
 
@@ -285,6 +288,10 @@ export async function updateBusinessCentralESignDraft(
 
 export async function sendBusinessCentralESignDraft(draftId: string) {
   return mapBusinessCentralDraft(await sendDocusealDraft(draftId));
+}
+
+export async function refreshBusinessCentralESignDraftStatus(draftId: string) {
+  return mapBusinessCentralDraft(await refreshDocusealDraftStatus(draftId));
 }
 
 export async function prepareBusinessCentralESignDraftPreview(draftId: string) {
