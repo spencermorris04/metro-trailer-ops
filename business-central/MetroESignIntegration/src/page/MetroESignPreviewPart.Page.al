@@ -16,6 +16,7 @@ page 50377 "MTE ESign Preview Part"
                 trigger ControlAddInReady()
                 begin
                     ControlReady := true;
+                    ShowLoadingEditor();
                     LoadPreview();
                 end;
 
@@ -41,18 +42,13 @@ page 50377 "MTE ESign Preview Part"
 
         if (not EditorUrlRefreshed) and (not IsNullGuid(Rec."Lease ID")) then begin
             EditorUrlRefreshed := true;
+            ShowLoadingEditor();
             Api.OpenEditor(Rec);
             CurrPage.Update(false);
         end;
 
         if (Rec."Editor URL" = '') and (Rec."Preview URL" = '') then begin
-            CurrPage.Preview.SetContent(
-                '<div style="box-sizing:border-box;height:100%;min-height:360px;padding:24px;font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;color:#334155;">' +
-                '<div style="border:1px solid #cbd5e1;background:white;padding:16px;max-width:560px;">' +
-                '<div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">Metro E-Sign Editor</div>' +
-                '<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a;">No editor loaded</div>' +
-                '<div style="margin-top:6px;font-size:13px;line-height:1.45;">The E-Sign control record is still being created. Refresh this page if the editor does not load automatically.</div>' +
-                '</div></div>');
+            ShowEmptyEditor();
             exit;
         end;
 
@@ -60,6 +56,51 @@ page 50377 "MTE ESign Preview Part"
             NavigateOnce(Rec."Editor URL")
         else
             NavigateOnce(Rec."Preview URL");
+    end;
+
+    local procedure ShowLoadingEditor()
+    begin
+        if not ControlReady then
+            exit;
+
+        CurrPage.Preview.SetContent(GetShellHtml(
+            'Preparing editor',
+            'Creating the E-Sign draft and opening the editor. This usually takes a few seconds.',
+            true));
+    end;
+
+    local procedure ShowEmptyEditor()
+    begin
+        if not ControlReady then
+            exit;
+
+        CurrPage.Preview.SetContent(GetShellHtml(
+            'No editor loaded',
+            'The E-Sign control record is still being created. Refresh this page if the editor does not load automatically.',
+            false));
+    end;
+
+    local procedure GetShellHtml(Title: Text; Message: Text; Loading: Boolean): Text
+    var
+        LoadingBar: Text;
+    begin
+        if Loading then
+            LoadingBar :=
+                '<div style="margin-top:14px;height:4px;overflow:hidden;background:#dbeafe;">' +
+                '<div style="width:42%;height:100%;background:#0071f4;animation:mte-esign-slide 1.1s ease-in-out infinite;"></div>' +
+                '</div>';
+
+        exit(
+            '<!doctype html><html><head><meta charset="utf-8">' +
+            '<style>@keyframes mte-esign-slide{0%{transform:translateX(-100%)}50%{transform:translateX(85%)}100%{transform:translateX(260%)}}</style>' +
+            '</head><body style="margin:0;">' +
+            '<div style="box-sizing:border-box;height:100vh;min-height:720px;padding:24px;font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;color:#334155;">' +
+            '<div style="border:1px solid #cbd5e1;background:white;padding:16px;max-width:560px;box-shadow:0 8px 20px rgba(15,23,42,.08);">' +
+            '<div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#002b5c;">Metro E-Sign Editor</div>' +
+            '<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a;">' + Title + '</div>' +
+            '<div style="margin-top:6px;font-size:13px;line-height:1.45;">' + Message + '</div>' +
+            LoadingBar +
+            '</div></div></body></html>');
     end;
 
     local procedure NavigateOnce(Url: Text)
