@@ -55,6 +55,31 @@ function formatCategory(category: DocusealTemplateCategory) {
   return templateCategoryLabels[category] ?? category;
 }
 
+type CustomerFieldPolicy = "locked" | "optional" | "required";
+
+function getCustomerFieldPolicyStyles(policy: CustomerFieldPolicy) {
+  switch (policy) {
+    case "required":
+      return {
+        row: "border-emerald-200 bg-emerald-50/70 hover:bg-emerald-50",
+        dot: "bg-emerald-500",
+        select: "border-emerald-300 bg-emerald-50 text-emerald-900 focus:border-emerald-500",
+      };
+    case "optional":
+      return {
+        row: "border-amber-200 bg-amber-50/70 hover:bg-amber-50",
+        dot: "bg-amber-400",
+        select: "border-amber-300 bg-amber-50 text-amber-950 focus:border-amber-500",
+      };
+    default:
+      return {
+        row: "border-slate-200 bg-slate-50/60 hover:bg-slate-100/70",
+        dot: "bg-slate-400",
+        select: "border-slate-300 bg-white text-slate-700 focus:border-slate-500",
+      };
+  }
+}
+
 export function DocusealTemplateLibrary({
   templates,
   embedMode = "app",
@@ -158,7 +183,7 @@ export function DocusealTemplateLibrary({
   function setCustomerFieldPolicy(
     template: DocusealTemplateDefinition,
     fieldName: string,
-    policy: "locked" | "optional" | "required",
+    policy: CustomerFieldPolicy,
   ) {
     const edit = getTemplateEdit(template);
     const withoutEditableField = edit.customerEditableFields.filter(
@@ -712,26 +737,34 @@ export function DocusealTemplateLibrary({
                       the customer.
                     </p>
                   </div>
-                  <div className="grid gap-x-3 gap-y-1 p-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
+                  <div className="grid gap-2 p-2 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
                     {selectedTemplate.fields.map((field) => {
-                      const policy = selectedEdit.customerRequiredFields.includes(field.name)
-                        ? "required"
-                        : selectedEdit.customerEditableFields.includes(field.name)
-                          ? "optional"
-                          : "locked";
+                      const policy: CustomerFieldPolicy =
+                        selectedEdit.customerRequiredFields.includes(field.name)
+                          ? "required"
+                          : selectedEdit.customerEditableFields.includes(field.name)
+                            ? "optional"
+                            : "locked";
+                      const policyStyles = getCustomerFieldPolicyStyles(policy);
 
                       return (
                         <div
                           key={field.name}
                           title={`${field.label} (${field.name})`}
-                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_92px] items-center gap-2 border-b border-[var(--line)] px-1 py-1.5 hover:bg-slate-50"
+                          className={`grid min-w-0 grid-cols-[minmax(0,1fr)_96px] items-center gap-2 rounded-md border px-2 py-2 transition-colors ${policyStyles.row}`}
                         >
-                          <span className="min-w-0">
-                            <span className="block truncate text-[0.68rem] font-semibold text-slate-900">
-                              {field.label}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[0.58rem] text-slate-500">
-                              {field.name}
+                          <span className="flex min-w-0 items-start gap-2">
+                            <span
+                              className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${policyStyles.dot}`}
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate text-[0.68rem] font-semibold text-slate-950">
+                                {field.label}
+                              </span>
+                              <span className="mt-0.5 block truncate text-[0.58rem] text-slate-600">
+                                {field.name}
+                              </span>
                             </span>
                           </span>
                           <select
@@ -741,10 +774,10 @@ export function DocusealTemplateLibrary({
                               setCustomerFieldPolicy(
                                 selectedTemplate,
                                 field.name,
-                                event.target.value as "locked" | "optional" | "required",
+                                event.target.value as CustomerFieldPolicy,
                               )
                             }
-                            className="workspace-input h-7 w-full bg-white px-1 text-[0.62rem]"
+                            className={`h-8 w-full rounded-md border px-2 text-[0.64rem] font-semibold shadow-sm outline-none transition-colors focus:ring-2 focus:ring-[#0071f4]/20 disabled:cursor-not-allowed disabled:opacity-60 ${policyStyles.select}`}
                             aria-label={`${field.label} customer completion rule`}
                           >
                             <option value="locked">Locked</option>
