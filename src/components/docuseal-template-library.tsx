@@ -39,11 +39,11 @@ function buildTemplateEditState(template: DocusealTemplateDefinition): TemplateE
     category: template.category,
     folderName: template.folderName,
     location: template.location,
-    submitterRole: template.submitterRole,
+    submitterRole: "First Party",
     customerEditableFields: template.fields
       .filter((field) => field.customerEditable)
       .map((field) => field.name),
-    active: template.active,
+    active: true,
   };
 }
 
@@ -77,6 +77,12 @@ export function DocusealTemplateLibrary({
   );
   const [templateQuery, setTemplateQuery] = useState("");
   const [showUpload, setShowUpload] = useState(false);
+  const [customFolderTemplates, setCustomFolderTemplates] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [customLocationTemplates, setCustomLocationTemplates] = useState<Record<string, boolean>>(
+    {},
+  );
 
   const filteredTemplates = useMemo(() => {
     const query = templateQuery.trim().toLowerCase();
@@ -105,6 +111,20 @@ export function DocusealTemplateLibrary({
     templateList[0] ??
     null;
   const selectedEdit = selectedTemplate ? getTemplateEdit(selectedTemplate) : null;
+  const folderOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(templateList.map((template) => template.folderName.trim()).filter(Boolean)),
+      ).sort((left, right) => left.localeCompare(right)),
+    [templateList],
+  );
+  const locationOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(templateList.map((template) => template.location.trim()).filter(Boolean)),
+      ).sort((left, right) => left.localeCompare(right)),
+    [templateList],
+  );
 
   function getTemplateEdit(template: DocusealTemplateDefinition) {
     return templateEdits[template.key] ?? buildTemplateEditState(template);
@@ -242,7 +262,11 @@ export function DocusealTemplateLibrary({
   }
 
   function saveTemplateClassification(template: DocusealTemplateDefinition) {
-    const edit = getTemplateEdit(template);
+    const edit = {
+      ...getTemplateEdit(template),
+      submitterRole: "First Party",
+      active: true,
+    };
 
     startTransition(async () => {
       try {
@@ -295,24 +319,16 @@ export function DocusealTemplateLibrary({
           ) : null}
           <div className="hidden min-w-0 leading-tight xl:block">
             <p className="eyebrow">Template</p>
-            <p className="truncate text-[0.78rem] font-semibold text-slate-900">
+            <p
+              className="truncate text-[0.78rem] font-semibold text-slate-900"
+              title={selectedTemplate ? selectedTemplate.name : undefined}
+            >
               {selectedTemplate ? selectedTemplate.name : "No template selected"}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            className={`btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem] ${
-              showUpload ? "border-slate-400 bg-slate-100" : ""
-            }`}
-            onClick={() => setShowUpload((current) => !current)}
-          >
-            <Icon name="folder" size={14} />
-            Upload PDF
-          </button>
-          <span className="mx-0.5 hidden h-6 w-px bg-[var(--line)] sm:block" />
           <button
             type="button"
             className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 text-[0.7rem]"
@@ -345,9 +361,20 @@ export function DocusealTemplateLibrary({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="panel flex min-h-0 flex-col overflow-hidden bg-[var(--surface-soft)]">
-          <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-2.5 py-2">
+          <div className="border-b border-[var(--line)] px-2.5 py-2">
+            <button
+              type="button"
+              className={`btn-secondary mb-2 inline-flex h-8 w-full items-center justify-center gap-1.5 px-2.5 text-[0.7rem] ${
+                showUpload ? "border-slate-400 bg-slate-100" : ""
+              }`}
+              onClick={() => setShowUpload((current) => !current)}
+            >
+              <Icon name="folder" size={14} />
+              New template
+            </button>
+            <div className="flex items-center justify-between gap-2">
             <label className="flex-1">
               <span className="sr-only">Find template</span>
               <input
@@ -358,6 +385,7 @@ export function DocusealTemplateLibrary({
               />
             </label>
             <span className="workspace-chip shrink-0">{filteredTemplates.length}</span>
+            </div>
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2">
 
@@ -460,13 +488,17 @@ export function DocusealTemplateLibrary({
                     <button
                       key={template.docusealTemplateId}
                       type="button"
+                      title={template.name}
                       className={`block w-full border-b border-[var(--line)] px-3 py-2 text-left last:border-b-0 transition hover:bg-slate-50 ${
                         selected ? "bg-slate-100" : "bg-white"
                       }`}
                       onClick={() => setSelectedTemplateId(template.docusealTemplateId)}
                     >
                       <span className="flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-[0.75rem] font-semibold text-slate-900">
+                        <span
+                          className="min-w-0 truncate text-[0.75rem] font-semibold text-slate-900"
+                          title={template.name}
+                        >
                           {template.name}
                         </span>
                         <span className="shrink-0 text-[0.62rem] font-medium text-slate-500">
@@ -502,7 +534,7 @@ export function DocusealTemplateLibrary({
           {selectedTemplate && selectedEdit ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="border-b border-[var(--line)] bg-slate-50 px-3 py-2">
-                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_180px_160px_160px_170px_90px]">
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_180px_180px_180px]">
                   <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
                     <span>Name</span>
                     <input
@@ -535,50 +567,97 @@ export function DocusealTemplateLibrary({
                   </label>
                   <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
                     <span>Folder</span>
-                    <input
-                      value={selectedEdit.folderName}
-                      onChange={(event) =>
-                        updateTemplateEdit(selectedTemplate, { folderName: event.target.value })
-                      }
-                      disabled={pending}
-                      className="workspace-input h-8 w-full bg-white"
-                    />
+                    {customFolderTemplates[selectedTemplate.key] ? (
+                      <input
+                        value={selectedEdit.folderName}
+                        onChange={(event) =>
+                          updateTemplateEdit(selectedTemplate, { folderName: event.target.value })
+                        }
+                        disabled={pending}
+                        placeholder="New folder"
+                        className="workspace-input h-8 w-full bg-white"
+                      />
+                    ) : (
+                      <select
+                        value={
+                          folderOptions.includes(selectedEdit.folderName)
+                            ? selectedEdit.folderName
+                            : ""
+                        }
+                        onChange={(event) => {
+                          if (event.target.value === "__new__") {
+                            setCustomFolderTemplates((current) => ({
+                              ...current,
+                              [selectedTemplate.key]: true,
+                            }));
+                            updateTemplateEdit(selectedTemplate, { folderName: "" });
+                          } else {
+                            updateTemplateEdit(selectedTemplate, {
+                              folderName: event.target.value,
+                            });
+                          }
+                        }}
+                        disabled={pending}
+                        className="workspace-input h-8 w-full bg-white"
+                      >
+                        <option value="" disabled>
+                          Select folder
+                        </option>
+                        {folderOptions.map((folder) => (
+                          <option key={folder} value={folder}>
+                            {folder}
+                          </option>
+                        ))}
+                        <option value="__new__">Create new folder...</option>
+                      </select>
+                    )}
                   </label>
                   <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
                     <span>Location</span>
-                    <input
-                      value={selectedEdit.location}
-                      onChange={(event) =>
-                        updateTemplateEdit(selectedTemplate, { location: event.target.value })
-                      }
-                      disabled={pending}
-                      className="workspace-input h-8 w-full bg-white"
-                    />
-                  </label>
-                  <label className="space-y-1 text-[0.68rem] font-medium text-slate-600">
-                    <span>Signer role</span>
-                    <input
-                      value={selectedEdit.submitterRole}
-                      onChange={(event) =>
-                        updateTemplateEdit(selectedTemplate, {
-                          submitterRole: event.target.value,
-                        })
-                      }
-                      disabled={pending}
-                      className="workspace-input h-8 w-full bg-white"
-                    />
-                  </label>
-                  <label className="flex items-end gap-2 pb-1 text-[0.68rem] font-medium text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={selectedEdit.active}
-                      onChange={(event) =>
-                        updateTemplateEdit(selectedTemplate, { active: event.target.checked })
-                      }
-                      disabled={pending}
-                      className="h-4 w-4"
-                    />
-                    Active
+                    {customLocationTemplates[selectedTemplate.key] ? (
+                      <input
+                        value={selectedEdit.location}
+                        onChange={(event) =>
+                          updateTemplateEdit(selectedTemplate, { location: event.target.value })
+                        }
+                        disabled={pending}
+                        placeholder="New location"
+                        className="workspace-input h-8 w-full bg-white"
+                      />
+                    ) : (
+                      <select
+                        value={
+                          locationOptions.includes(selectedEdit.location)
+                            ? selectedEdit.location
+                            : ""
+                        }
+                        onChange={(event) => {
+                          if (event.target.value === "__new__") {
+                            setCustomLocationTemplates((current) => ({
+                              ...current,
+                              [selectedTemplate.key]: true,
+                            }));
+                            updateTemplateEdit(selectedTemplate, { location: "" });
+                          } else {
+                            updateTemplateEdit(selectedTemplate, {
+                              location: event.target.value,
+                            });
+                          }
+                        }}
+                        disabled={pending}
+                        className="workspace-input h-8 w-full bg-white"
+                      >
+                        <option value="" disabled>
+                          Select location
+                        </option>
+                        {locationOptions.map((location) => (
+                          <option key={location} value={location}>
+                            {location}
+                          </option>
+                        ))}
+                        <option value="__new__">Create new location...</option>
+                      </select>
+                    )}
                   </label>
                 </div>
 
@@ -596,7 +675,7 @@ export function DocusealTemplateLibrary({
                 </div>
               </div>
 
-              <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(380px,30vw)]">
                 <iframe
                   key={selectedTemplate.editorUrl}
                   title={`${selectedTemplate.name} E-Sign editor`}
@@ -613,14 +692,15 @@ export function DocusealTemplateLibrary({
                       Every field is locked on the customer signing link unless it is checked here.
                     </p>
                   </div>
-                  <div className="divide-y divide-[var(--line)]">
+                  <div className="grid gap-x-3 gap-y-1 p-2 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
                     {selectedTemplate.fields.map((field) => {
                       const checked = selectedEdit.customerEditableFields.includes(field.name);
 
                       return (
                         <label
                           key={field.name}
-                          className="flex cursor-pointer gap-2 px-3 py-2 hover:bg-slate-50"
+                          title={`${field.label} (${field.name})`}
+                          className="flex min-w-0 cursor-pointer gap-2 border-b border-[var(--line)] px-1 py-1.5 hover:bg-slate-50"
                         >
                           <input
                             type="checkbox"
@@ -632,14 +712,11 @@ export function DocusealTemplateLibrary({
                             className="mt-0.5 h-4 w-4 shrink-0"
                           />
                           <span className="min-w-0">
-                            <span className="block truncate text-[0.72rem] font-semibold text-slate-900">
+                            <span className="block truncate text-[0.68rem] font-semibold text-slate-900">
                               {field.label}
                             </span>
-                            <span className="mt-0.5 block truncate text-[0.62rem] text-slate-500">
+                            <span className="mt-0.5 block truncate text-[0.58rem] text-slate-500">
                               {field.name}
-                            </span>
-                            <span className="mt-0.5 block text-[0.6rem] uppercase tracking-[0.1em] text-slate-400">
-                              {field.section}
                             </span>
                           </span>
                         </label>
