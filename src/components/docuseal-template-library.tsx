@@ -310,7 +310,11 @@ export function DocusealTemplateLibrary({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
+    <div
+      className={`flex min-h-0 flex-col gap-2 ${
+        embedMode === "bc" ? "h-screen overflow-hidden" : "h-full"
+      }`}
+    >
       <div className="panel flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
         <div className="flex min-w-0 items-center gap-2.5">
           {embedMode === "app" ? <DocusealModeTabs active="manage" /> : null}
@@ -361,7 +365,7 @@ export function DocusealTemplateLibrary({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 overflow-hidden gap-2 lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="panel flex min-h-0 flex-col overflow-hidden bg-[var(--surface-soft)]">
           <div className="border-b border-[var(--line)] px-2.5 py-2">
             <button
@@ -680,7 +684,7 @@ export function DocusealTemplateLibrary({
                   key={selectedTemplate.editorUrl}
                   title={`${selectedTemplate.name} E-Sign editor`}
                   src={selectedTemplate.editorUrl}
-                  className="min-h-[720px] w-full border-0 bg-white xl:min-h-0"
+                  className="h-full min-h-[720px] w-full border-0 bg-white xl:min-h-0"
                 />
                 <aside className="min-h-0 overflow-auto border-t border-[var(--line)] bg-white xl:border-l xl:border-t-0">
                   <div className="sticky top-0 z-10 border-b border-[var(--line)] bg-white px-3 py-2">
