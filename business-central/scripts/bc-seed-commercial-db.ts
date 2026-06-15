@@ -958,14 +958,6 @@ async function run() {
   }
 }
 
-function getNumberAny(record: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = getNumber(record, key);
-    if (value) return value;
-  }
-  return 0;
-}
-
 function getNumericValueAny(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = record[key];

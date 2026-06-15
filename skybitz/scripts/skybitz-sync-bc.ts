@@ -1764,7 +1764,6 @@ async function syncLocationBatch(params: {
     companyId,
     options,
     existingTrackers,
-    customApiAvailable,
     indexesCache,
     source,
     windowMode,
@@ -2055,7 +2054,7 @@ async function main() {
   let overallWindowMode = "latest-snapshot";
   let overallWindowStart: string | null = null;
   let overallWindowEnd: string | null = null;
-  let remainingLimit = options.limit;
+  const remainingLimit = options.limit;
   let stoppedOnError: string | null = null;
 
   const persistOverallSummary = async () => {

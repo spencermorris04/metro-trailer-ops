@@ -5,7 +5,6 @@ import {
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  ExistingTelematicsTracker,
   MatchResult,
   TelematicsTrackerPayload,
   buildFixedAssetIndexes,

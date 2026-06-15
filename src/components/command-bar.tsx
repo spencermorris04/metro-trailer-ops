@@ -69,13 +69,12 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
     : commands;
 
   useEffect(() => {
-    setSelectedIndex(0);
-  }, [query, open]);
-
-  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        if (!open) {
+          setSelectedIndex(0);
+        }
         setOpen((current) => !current);
         return;
       }
@@ -88,6 +87,7 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
         event.preventDefault();
         setOpen(false);
         setQuery("");
+        setSelectedIndex(0);
         return;
       }
 
@@ -121,7 +121,10 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setSelectedIndex(0);
+          setOpen(true);
+        }}
         className="flex h-7 w-full items-center gap-2 border border-[var(--line)] bg-[var(--surface-soft)] px-2 text-left text-[0.75rem] text-slate-400 transition hover:border-[var(--line-strong)]"
       >
         <IconSearch size={13} className="text-slate-300" />
@@ -138,7 +141,10 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
                 autoFocus
                 type="text"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setSelectedIndex(0);
+                  setQuery(event.target.value);
+                }}
                 placeholder="Type a route, queue, or command"
                 className="flex-1 bg-transparent text-[0.8rem] text-slate-100 outline-none placeholder:text-slate-500"
               />
@@ -147,6 +153,7 @@ export function CommandBar({ actions = [] }: { actions?: CommandAction[] }) {
                 onClick={() => {
                   setOpen(false);
                   setQuery("");
+                  setSelectedIndex(0);
                 }}
                 className="p-1 text-slate-500 transition hover:text-slate-300"
               >

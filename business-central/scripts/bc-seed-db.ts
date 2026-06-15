@@ -2,7 +2,6 @@ import "dotenv/config";
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { eq } from "drizzle-orm";
 
 import { db, schema } from "../../src/lib/db";
 import {
@@ -153,19 +152,6 @@ function normalizeInvoiceStatus(value: string) {
   if (normalized.includes("void")) return "voided" as const;
   if (normalized.includes("post") || normalized.includes("sent")) return "sent" as const;
   return "draft" as const;
-}
-
-function inferCommercialEventType(itemNo: string | null, description: string | null) {
-  const haystack = `${itemNo ?? ""} ${description ?? ""}`.toUpperCase();
-  if (haystack.includes("DELIVERY")) return "delivery" as const;
-  if (haystack.includes("PICKUP")) return "pickup" as const;
-  if (haystack.includes("TAX")) return "tax" as const;
-  if (haystack.includes("CREDIT") || haystack.includes("DISCOUNT")) return "credit" as const;
-  if (haystack.includes("DAMAGE")) return "damage" as const;
-  if (haystack.includes("SURCHARGE") || haystack.includes("FEE")) return "surcharge" as const;
-  if (haystack.includes("DEPOSIT")) return "deposit_request" as const;
-  if (haystack.includes("ADJUST")) return "adjustment" as const;
-  return "rent" as const;
 }
 
 function addLineToDocument(

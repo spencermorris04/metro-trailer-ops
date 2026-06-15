@@ -248,7 +248,6 @@ async function getTableEstimates(tableNames: string[]) {
 
 export async function getAccountingDashboardView(input: ReportPeriodInput = {}) {
   const period = resolveReportPeriod(input);
-  const params = [period.start, period.end, period.comparisonStart, period.comparisonEnd];
   const [
     revenueResult,
     comparisonResult,

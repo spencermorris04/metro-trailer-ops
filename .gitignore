@@ -27,6 +27,7 @@ business-central/**/.alpackages/
 *.pem
 /artifacts/
 /.codex-logs/
+/.codex-tmp/
 /cdk.out/
 
 # debug

@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { config as loadEnv } from "dotenv";
 
 import {
-  ExistingTelematicsTracker,
   MatchResult,
   TelematicsTrackerPayload,
   buildFixedAssetIndexes,

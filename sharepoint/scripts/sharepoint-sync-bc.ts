@@ -2023,18 +2023,6 @@ async function writeJsonToS3(bucket: string, key: string, payload: unknown) {
   );
 }
 
-async function clearBackfillState(backfillStatePath: string) {
-  await writeBackfillState(backfillStatePath, {
-    siteId: "",
-    driveId: "",
-    baseFolderPath: "",
-    totalQueued: 0,
-    pendingFolders: [],
-    seenEmptyFolders: [],
-    updatedAt: nowIso(),
-  });
-}
-
 function isSuccessfulSeenStatus(status: FolderSeenStatus | "") {
   return status === "SeenWithDocuments" || status === "SeenEmpty";
 }
@@ -2361,7 +2349,7 @@ async function main() {
 
   let foldersToProcess: FolderRef[] = [];
   let nextDeltaLink: string | null = null;
-  let mode = options.folders ? "targeted" : deltaOnly ? "delta" : "hybrid";
+  const mode = options.folders ? "targeted" : deltaOnly ? "delta" : "hybrid";
   let deltaPagesRead = 0;
   let deltaStateInitialized = false;
   let skippedExistingFolders = 0;

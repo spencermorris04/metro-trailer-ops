@@ -56,6 +56,15 @@ export type OrbcommAssetStatusResponse = {
   code?: number;
 };
 
+type OrbcommTokenResponse = {
+  data?: {
+    accessToken?: string;
+    refreshToken?: string;
+    accessTokenexpireOn?: string;
+    refreshTokenexpireOn?: string;
+  };
+};
+
 const secretsClient = new SecretsManagerClient({});
 
 export function getOrbcommBaseUrl() {
@@ -172,7 +181,7 @@ async function refreshOrbcommToken(refreshToken: string, state: OrbcommTokenStat
   if (!response.ok) {
     throw new Error(`ORBCOMM refreshToken failed (${response.status}): ${bodyText}`);
   }
-  return persistTokenResponse(JSON.parse(bodyText), state);
+  return persistTokenResponse(JSON.parse(bodyText) as OrbcommTokenResponse, state);
 }
 
 async function generateOrbcommToken(state: OrbcommTokenState) {
@@ -192,10 +201,10 @@ async function generateOrbcommToken(state: OrbcommTokenState) {
   if (!response.ok) {
     throw new Error(`ORBCOMM generateToken failed (${response.status}): ${bodyText}`);
   }
-  return persistTokenResponse(JSON.parse(bodyText), { ...state, ORBCOMM_USER_ID: userName, ORBCOMM_PASSWORD: password });
+  return persistTokenResponse(JSON.parse(bodyText) as OrbcommTokenResponse, { ...state, ORBCOMM_USER_ID: userName, ORBCOMM_PASSWORD: password });
 }
 
-async function persistTokenResponse(parsed: any, state: OrbcommTokenState) {
+async function persistTokenResponse(parsed: OrbcommTokenResponse, state: OrbcommTokenState) {
   const data = parsed?.data;
   if (!data?.accessToken) {
     throw new Error(`ORBCOMM token response did not include data.accessToken: ${JSON.stringify(parsed)}`);

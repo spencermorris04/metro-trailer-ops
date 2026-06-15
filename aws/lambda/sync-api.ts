@@ -15,6 +15,14 @@ type RequestBody = {
   mode?: "daily" | "ondemand";
 };
 
+type ApiGatewayEvent = {
+  httpMethod?: string;
+  path?: string;
+  pathParameters?: Record<string, string | undefined> | null;
+  headers?: Record<string, string | undefined>;
+  body?: string | null;
+};
+
 const queueUrl = mustEnv("SYNC_REQUEST_QUEUE_URL");
 const tableName = mustEnv("SYNC_REQUEST_TABLE_NAME");
 const apiSecretArn = mustEnv("SYNC_API_SECRET_ARN");
@@ -32,7 +40,7 @@ const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 let cachedApiKey: string | null = null;
 
-export async function handler(event: any) {
+export async function handler(event: ApiGatewayEvent) {
   try {
     if (event.httpMethod === "OPTIONS") {
       return response(204, {});
@@ -209,7 +217,7 @@ function mustEnv(name: string) {
   return value;
 }
 
-async function validateApiKey(event: any) {
+async function validateApiKey(event: Pick<ApiGatewayEvent, "headers">) {
   const provided = getHeader(event.headers, "x-metro-sync-key");
   const expected = await getApiKey();
   if (!provided || provided !== expected) {

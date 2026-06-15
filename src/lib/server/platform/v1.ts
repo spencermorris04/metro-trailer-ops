@@ -1,8 +1,7 @@
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db, pool, schema } from "@/lib/db";
 import {
-  listAssets,
   listAssetsPage,
   listContracts,
   listCustomers,
@@ -88,32 +87,6 @@ function matchesBooleanFilter(filter: string | undefined, value: boolean) {
     return true;
   }
   return filter === "true" ? value : !value;
-}
-
-function textContains(value: string | null | undefined, q: string) {
-  return (value ?? "").toLowerCase().includes(q.toLowerCase());
-}
-
-function formatAddress(value: Record<string, unknown> | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
-  return [
-    typeof value.line1 === "string" ? value.line1 : "",
-    typeof value.city === "string" ? value.city : "",
-    typeof value.state === "string" ? value.state : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
-}
-
-function formatContact(value: Record<string, unknown> | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
-  return typeof value.name === "string" ? value.name : "";
 }
 
 function payloadText(

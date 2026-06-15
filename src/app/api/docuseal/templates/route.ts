@@ -1,8 +1,7 @@
 import { z } from "zod";
 
 import { created, errorResponse, ok, readJson } from "@/lib/server/api";
-import { requireStaffApiPermission } from "@/lib/server/authorization";
-import { validateBusinessCentralTemplateManagerAuth } from "@/lib/server/business-central-esign";
+import { requireDocusealTemplatePermission } from "@/lib/server/docuseal-template-routes";
 import {
   createDocusealTemplateFromPdf,
   listDocusealPrefillTemplates,
@@ -29,25 +28,8 @@ const updateTemplateSchema = z.object({
 
 const maxTemplateUploadBytes = 25 * 1024 * 1024;
 
-async function requireTemplatePermission(request: Request, permission: "documents.view" | "documents.manage") {
-  const searchParams = new URL(request.url).searchParams;
-  const session = searchParams.get("session");
-  const token = searchParams.get("token");
-
-  if (session && token) {
-    validateBusinessCentralTemplateManagerAuth({
-      expires: searchParams.get("expires") ?? undefined,
-      session,
-      token,
-    });
-    return;
-  }
-
-  await requireStaffApiPermission(request, permission);
-}
-
 export async function GET(request: Request) {
-  await requireTemplatePermission(request, "documents.view");
+  await requireDocusealTemplatePermission(request, "documents.view");
 
   return ok({
     data: await listDocusealPrefillTemplates(),
@@ -56,7 +38,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requireTemplatePermission(request, "documents.manage");
+    await requireDocusealTemplatePermission(request, "documents.manage");
 
     const formData = await request.formData();
     const file = formData.get("file");
@@ -103,7 +85,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    await requireTemplatePermission(request, "documents.manage");
+    await requireDocusealTemplatePermission(request, "documents.manage");
 
     const payload = updateTemplateSchema.parse(await readJson(request));
     const data = await updateDocusealTemplateClassification(payload);

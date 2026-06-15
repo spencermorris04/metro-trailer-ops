@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Repo-generated or local scratch output:
+    ".codex-logs/**",
+    ".codex-tmp/**",
+    "artifacts/**",
+    "business-central/**/.alpackages/**",
+    "business-central/**/build/**",
+    "cdk.out/**",
+    "wordpress/scripts/**",
   ]),
 ]);
 
